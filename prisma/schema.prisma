@@ -1,0 +1,294 @@
+// EDMISSION — Prisma schema (BACKEND-PLAN.md)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  student
+  university
+  admin
+}
+
+enum InterestStatus {
+  interested
+  under_review
+  chat_opened
+  offer_sent
+  rejected
+  accepted
+}
+
+enum OfferStatus {
+  pending
+  accepted
+  declined
+}
+
+enum NotificationType {
+  offer
+  message
+  status_update
+}
+
+model User {
+  id            String    @id @default(uuid())
+  role          Role
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  emailVerified Boolean   @default(false) @map("email_verified")
+  suspended     Boolean   @default(false)
+  verifyToken   String?   @map("verify_token")
+  verifyTokenExpires DateTime? @map("verify_token_expires")
+  resetToken    String?   @map("reset_token")
+  resetTokenExpires DateTime? @map("reset_token_expires")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  studentProfile   StudentProfile?
+  universityProfile UniversityProfile?
+  refreshTokens    RefreshToken[]
+  messagesSent     Message[]       @relation("MessageSender")
+  notifications    Notification[]
+  activityLogs     ActivityLog[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model StudentProfile {
+  id                        String   @id @default(uuid())
+  userId                    String   @unique @map("user_id")
+  firstName                 String?  @map("first_name")
+  lastName                  String?  @map("last_name")
+  birthDate                 DateTime? @map("birth_date")
+  country                   String?
+  gradeLevel                String?  @map("grade_level")
+  gpa                       Decimal? @db.Decimal(3, 2)
+  languageLevel             String?  @map("language_level")
+  bio                       String?
+  avatarUrl                 String?  @map("avatar_url")
+  portfolioCompletionPercent Int     @default(0) @map("portfolio_completion_percent")
+  needsRecalculation       Boolean  @default(true) @map("needs_recalculation")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  interests      Interest[]
+  offers         Offer[]
+  chats          Chat[]          @relation("ChatStudent")
+  recommendations Recommendation[]
+  @@index([userId])
+  @@index([gpa])
+  @@index([gradeLevel])
+  @@index([country])
+}
+
+model UniversityProfile {
+  id                   String   @id @default(uuid())
+  userId               String   @unique @map("user_id")
+  universityName       String   @map("university_name")
+  tagline              String?
+  establishedYear      Int?     @map("established_year")
+  studentCount         Int?     @map("student_count")
+  country              String?
+  city                 String?
+  description          String?
+  logoUrl              String?  @map("logo_url")
+  verified             Boolean  @default(false)
+  onboardingCompleted  Boolean  @default(false) @map("onboarding_completed")
+  needsRecalculation   Boolean  @default(true) @map("needs_recalculation")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  programs    Program[]
+  scholarships Scholarship[]
+  interests   Interest[]
+  offers      Offer[]
+  chats       Chat[]       @relation("ChatUniversity")
+  recommendations Recommendation[]
+  documents   UniversityDocument[]
+  @@index([userId])
+  @@index([country])
+  @@index([city])
+  @@index([verified])
+}
+
+model Program {
+  id                 String   @id @default(uuid())
+  universityId       String   @map("university_id")
+  name               String
+  degreeLevel        String   @map("degree_level")
+  field              String
+  durationYears      Decimal? @map("duration_years") @db.Decimal(3, 1)
+  tuitionFee         Decimal? @map("tuition_fee") @db.Decimal(12, 2)
+  language           String?
+  entryRequirements  String?  @map("entry_requirements")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  university UniversityProfile @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  @@index([universityId])
+  @@index([degreeLevel])
+  @@index([field])
+}
+
+model Scholarship {
+  id             String    @id @default(uuid())
+  universityId   String    @map("university_id")
+  name           String
+  coveragePercent Int      @map("coverage_percent")
+  maxSlots       Int       @map("max_slots")
+  remainingSlots Int       @map("remaining_slots")
+  deadline       DateTime? @db.Date
+  eligibility    String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  university UniversityProfile @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  offers      Offer[]
+  @@index([universityId])
+  @@index([deadline])
+}
+
+model Interest {
+  id          String         @id @default(uuid())
+  studentId   String         @map("student_id")
+  universityId String        @map("university_id")
+  status      InterestStatus @default(interested)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  student    StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  university UniversityProfile @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  @@unique([studentId, universityId])
+  @@index([studentId])
+  @@index([universityId])
+  @@index([status])
+}
+
+model Offer {
+  id             String      @id @default(uuid())
+  studentId      String      @map("student_id")
+  universityId   String      @map("university_id")
+  scholarshipId  String?     @map("scholarship_id")
+  coveragePercent Int        @map("coverage_percent")
+  status         OfferStatus @default(pending)
+  deadline       DateTime?   @db.Date
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  student     StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  university  UniversityProfile @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  scholarship Scholarship?      @relation(fields: [scholarshipId], references: [id], onDelete: SetNull)
+  @@index([studentId])
+  @@index([universityId])
+  @@index([status])
+}
+
+model Chat {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  universityId String   @map("university_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  student    StudentProfile    @relation("ChatStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  university UniversityProfile @relation("ChatUniversity", fields: [universityId], references: [id], onDelete: Cascade)
+  messages   Message[]
+  @@unique([studentId, universityId])
+  @@index([studentId])
+  @@index([universityId])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  chatId    String   @map("chat_id")
+  senderId  String   @map("sender_id")
+  message   String   @db.Text
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender User @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  @@index([chatId])
+  @@index([createdAt])
+}
+
+model Recommendation {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  universityId String   @map("university_id")
+  matchScore   Float    @map("match_score")
+  breakdown    Json?    // { fieldMatch, gpa, language, tuitionFit, scholarshipFit, location }
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  student    StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  university UniversityProfile @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  @@unique([studentId, universityId])
+  @@index([studentId])
+  @@index([universityId])
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String           @map("user_id")
+  type        NotificationType
+  title       String?
+  body        String?
+  referenceId String?           @map("reference_id")
+  readAt      DateTime?        @map("read_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([readAt])
+  @@index([createdAt])
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String
+  resource   String?
+  resourceId String?  @map("resource_id")
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model UniversityDocument {
+  id           String    @id @default(uuid())
+  universityId String    @map("university_id")
+  documentType String    @map("document_type")
+  fileUrl      String    @map("file_url")
+  status       String?   // pending | approved | rejected
+  reviewedBy   String?   @map("reviewed_by")
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  university UniversityProfile @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  @@index([universityId])
+  @@index([status])
+}
