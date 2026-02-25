@@ -1,6 +1,6 @@
+import mongoose from 'mongoose';
 import { Request, Response, NextFunction } from 'express';
 import * as adminService from '../services/admin.service';
-import { prisma } from '../config/database';
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -80,7 +80,9 @@ export async function getLogs(req: Request, res: Response, next: NextFunction): 
 
 export async function getHealth(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('Database not connected');
+    }
     res.json({
       status: 'ok',
       database: 'connected',

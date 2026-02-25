@@ -1,5 +1,5 @@
 import { Socket } from 'socket.io';
-import type { Role } from '@prisma/client';
+import type { Role } from '../types/role';
 
 export interface SocketUser {
   id: string;

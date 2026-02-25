@@ -1,4 +1,4 @@
-import type { Role } from '@prisma/client';
+import type { Role } from '../types/role';
 
 export function getSystemPrompt(role: 'student' | 'university', context: string): string {
   const base = `You are Edmission assistant for university admissions. You help users with application process, recommendations, and decisions. Answer in the same language the user writes. Do not invent facts; use only the context provided. Do not give medical or legal advice. Keep answers concise and helpful.`;

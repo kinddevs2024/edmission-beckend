@@ -1,14 +1,4 @@
-import { Decimal } from '@prisma/client/runtime/library';
-import { prisma } from '../config/database';
-
-const WEIGHTS = {
-  fieldMatch: 0.25,
-  gpa: 0.2,
-  language: 0.15,
-  tuitionFit: 0.2,
-  scholarshipFit: 0.1,
-  location: 0.1,
-};
+import { StudentProfile, UniversityProfile, Program, Scholarship, Recommendation } from '../models';
 
 export interface MatchBreakdown {
   fieldMatch: number;
@@ -19,17 +9,25 @@ export interface MatchBreakdown {
   location: number;
 }
 
-function normalizeGpa(gpa: number | Decimal | null): number {
+const WEIGHTS = {
+  fieldMatch: 0.25,
+  gpa: 0.2,
+  language: 0.15,
+  tuitionFit: 0.2,
+  scholarshipFit: 0.1,
+  location: 0.1,
+};
+
+function normalizeGpa(gpa: number | null | undefined): number {
   if (gpa == null) return 0.5;
-  const n = typeof gpa === 'object' && 'toNumber' in gpa ? (gpa as Decimal).toNumber() : Number(gpa);
-  if (n <= 0) return 0;
-  if (n >= 4) return 1;
-  return n / 4;
+  if (gpa <= 0) return 0;
+  if (gpa >= 4) return 1;
+  return gpa / 4;
 }
 
 export function calculateMatchScore(
   student: {
-    gpa?: Decimal | null;
+    gpa?: number | null;
     country?: string | null;
     languageLevel?: string | null;
     gradeLevel?: string | null;
@@ -37,7 +35,7 @@ export function calculateMatchScore(
   university: {
     country?: string | null;
     city?: string | null;
-    programs: Array<{ field: string; language?: string | null; tuitionFee?: Decimal | null }>;
+    programs: Array<{ field: string; language?: string | null; tuitionFee?: number | null }>;
     scholarships: Array<{ eligibility?: string | null }>;
   }
 ): { score: number; breakdown: MatchBreakdown } {
@@ -92,52 +90,55 @@ export function calculateMatchScore(
 }
 
 export async function recalculateForStudent(studentId: string): Promise<void> {
-  const student = await prisma.studentProfile.findUnique({
-    where: { id: studentId },
-  });
+  const student = await StudentProfile.findById(studentId).lean();
   if (!student) return;
 
-  const universities = await prisma.universityProfile.findMany({
-    where: { verified: true },
-    include: {
-      programs: true,
-      scholarships: true,
-    },
-  });
+  const universities = await UniversityProfile.find({ verified: true }).lean();
+  const uniIds = universities.map((u) => (u as { _id: unknown })._id);
 
-  for (const uni of universities) {
-    const { score, breakdown } = calculateMatchScore(student, uni);
-    await prisma.recommendation.upsert({
-      where: {
-        studentId_universityId: { studentId, universityId: uni.id },
-      },
-      create: {
-        studentId,
-        universityId: uni.id,
-        matchScore: score,
-        breakdown: breakdown as object,
-      },
-      update: {
-        matchScore: score,
-        breakdown: breakdown as object,
-      },
+  const programsMap: Record<string, { field: string; language?: string; tuitionFee?: number }[]> = {};
+  const programs = await Program.find({ universityId: { $in: uniIds } }).lean();
+  for (const p of programs) {
+    const uid = String((p as { universityId: unknown }).universityId);
+    if (!programsMap[uid]) programsMap[uid] = [];
+    programsMap[uid].push({
+      field: (p as { field: string }).field,
+      language: (p as { language?: string }).language,
+      tuitionFee: (p as { tuitionFee?: number }).tuitionFee,
     });
   }
 
-  await prisma.studentProfile.update({
-    where: { id: studentId },
-    data: { needsRecalculation: false },
-  });
+  const scholarshipsMap: Record<string, { eligibility?: string }[]> = {};
+  const scholarships = await Scholarship.find({ universityId: { $in: uniIds } }).lean();
+  for (const s of scholarships) {
+    const uid = String((s as { universityId: unknown }).universityId);
+    if (!scholarshipsMap[uid]) scholarshipsMap[uid] = [];
+    scholarshipsMap[uid].push({ eligibility: (s as { eligibility?: string }).eligibility });
+  }
+
+  for (const uni of universities) {
+    const id = String((uni as { _id: unknown })._id);
+    const uniWithRelations = {
+      ...uni,
+      programs: programsMap[id] ?? [],
+      scholarships: scholarshipsMap[id] ?? [],
+    };
+    const { score, breakdown } = calculateMatchScore(student as Parameters<typeof calculateMatchScore>[0], uniWithRelations as Parameters<typeof calculateMatchScore>[1]);
+
+    await Recommendation.findOneAndUpdate(
+      { studentId, universityId: id },
+      { matchScore: score, breakdown },
+      { upsert: true }
+    );
+  }
+
+  await StudentProfile.findByIdAndUpdate(studentId, { needsRecalculation: false });
 }
 
 export async function runRecommendationWorker(): Promise<number> {
-  const students = await prisma.studentProfile.findMany({
-    where: { needsRecalculation: true },
-    select: { id: true },
-    take: 50,
-  });
+  const students = await StudentProfile.find({ needsRecalculation: true }).limit(50).select('_id').lean();
   for (const s of students) {
-    await recalculateForStudent(s.id);
+    await recalculateForStudent(String((s as { _id: unknown })._id));
   }
   return students.length;
 }

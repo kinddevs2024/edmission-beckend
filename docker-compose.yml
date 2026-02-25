@@ -1,0 +1,14 @@
+# MongoDB для локальной разработки. Запуск: docker compose up -d
+# После запуска: npm run db:seed && npm run dev
+services:
+  db:
+    image: mongo:7
+    container_name: edmission-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

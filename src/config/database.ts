@@ -1,25 +1,13 @@
-import { PrismaClient } from '@prisma/client';
+import mongoose from 'mongoose';
+import { config } from './index';
 import { logger } from '../utils/logger';
-
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-
-export const prisma =
-  globalForPrisma.prisma ||
-  new PrismaClient({
-    log:
-      process.env.NODE_ENV === 'development'
-        ? ['query', 'error', 'warn']
-        : ['error'],
-  });
-
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
 
 export async function connectDatabase(): Promise<void> {
   try {
-    await prisma.$connect();
-    logger.info('Database connected');
+    const uri = config.mongodbUri;
+    if (!uri) throw new Error('MONGODB_URI or DATABASE_URL is required');
+    await mongoose.connect(uri);
+    logger.info('Database (MongoDB) connected');
   } catch (e) {
     logger.error(e, 'Database connection failed');
     throw e;
@@ -27,6 +15,6 @@ export async function connectDatabase(): Promise<void> {
 }
 
 export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
+  await mongoose.disconnect();
   logger.info('Database disconnected');
 }

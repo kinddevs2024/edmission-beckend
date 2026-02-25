@@ -2,7 +2,7 @@ import { buildContext } from '../ai/context.builder';
 import { getSystemPrompt } from '../ai/prompts';
 import * as ollama from '../ai/ollama.client';
 import { AppError, ErrorCodes } from '../utils/errors';
-import type { Role } from '@prisma/client';
+import type { Role } from '../types/role';
 
 export async function chat(userId: string, role: Role, userMessage: string): Promise<string> {
   if (role !== 'student' && role !== 'university') {

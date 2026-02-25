@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { Role } from '@prisma/client';
+import type { Role } from '../types/role';
 import { AppError, ErrorCodes } from '../utils/errors';
 
 export function requireRole(...allowedRoles: Role[]) {

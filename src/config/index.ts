@@ -5,7 +5,7 @@ dotenv.config();
 export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '4000', 10),
-  databaseUrl: process.env.DATABASE_URL!,
+  mongodbUri: process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/edmission',
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-secret',
     refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret',
@@ -13,7 +13,7 @@ export const config = {
     refreshTtl: process.env.JWT_REFRESH_TTL || '7d',
   },
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) || ['http://localhost:3000'],
+    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) || ['http://localhost:5173', 'http://localhost:3000'],
   },
   ollama: {
     baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',

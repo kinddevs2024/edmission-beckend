@@ -7,7 +7,7 @@ Backend платформы Edmission: Express, TypeScript, Prisma, Socket.io, Ol
 - **Runtime:** Node.js 20+
 - **Framework:** Express
 - **Язык:** TypeScript
-- **БД:** PostgreSQL 15+, Prisma
+- **БД:** MongoDB (Mongoose)
 - **Аутентификация:** JWT (access + refresh)
 - **Чат (real-time):** Socket.io
 - **AI:** Ollama (модель DeepSeek 7B)
@@ -15,29 +15,28 @@ Backend платформы Edmission: Express, TypeScript, Prisma, Socket.io, Ol
 
 ## Установка
 
-```bash
-npm install
-cp .env.example .env
-# Заполнить DATABASE_URL, JWT_SECRET и при необходимости OLLAMA_*
-npx prisma generate
-npx prisma migrate dev
-```
+1. Установите и запустите **MongoDB** (локально или Docker: `docker run -d -p 27017:27017 mongo`).
+2. Установите зависимости и настройте БД:
+   ```bash
+   npm install
+   cp .env.example .env
+   # В .env уже указано: MONGODB_URI=mongodb://localhost:27017/edmission
+   npm run db:seed
+   ```
 
 ## Запуск
 
 ```bash
-# API + Socket.io (воркер рекомендаций запускается в том же процессе)
 npm run dev
-
-# Отдельно воркер рекомендаций (опционально)
-npm run worker
 ```
+
+Проверка API (при запущенном бэкенде): `node scripts/test-api.js`
 
 ## Переменные окружения
 
 См. `.env.example`. Основные:
 
-- `DATABASE_URL` — строка подключения PostgreSQL
+- `MONGODB_URI` — строка подключения MongoDB (по умолчанию mongodb://localhost:27017/edmission)
 - `JWT_SECRET`, `JWT_REFRESH_SECRET` — секреты для JWT
 - `OLLAMA_BASE_URL` — URL Ollama (по умолчанию http://localhost:11434)
 - `OLLAMA_MODEL` — модель (по умолчанию deepseek-llm:7b)

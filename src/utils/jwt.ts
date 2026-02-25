@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
-import type { Role } from '@prisma/client';
+import type { Role } from '../types/role';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret';
