@@ -15,8 +15,14 @@ app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json());
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+/** IP Health: проверка состояния API, возвращает статус и IP запроса (удобно при проверке по IP). */
+app.get('/health', (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || '';
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    ip,
+  });
 });
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));

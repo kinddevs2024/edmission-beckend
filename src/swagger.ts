@@ -26,8 +26,8 @@ export const swaggerSpec = {
     '/health': {
       get: {
         tags: ['Health'],
-        summary: 'Проверка здоровья API',
-        description: 'Возвращает статус сервера. Используется для health-check (в т.ч. по IP).',
+        summary: 'IP Health — проверка здоровья API',
+        description: 'Возвращает статус сервера и IP запроса. Удобно для health-check по IP (мониторинг, балансировщики).',
         responses: {
           200: {
             description: 'Сервер работает',
@@ -38,6 +38,7 @@ export const swaggerSpec = {
                   properties: {
                     status: { type: 'string', example: 'ok' },
                     timestamp: { type: 'string', format: 'date-time' },
+                    ip: { type: 'string', description: 'IP клиента (или из X-Forwarded-For)' },
                   },
                 },
               },
