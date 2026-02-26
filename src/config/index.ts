@@ -18,6 +18,8 @@ export const config = {
       'http://localhost:5173',
       'http://localhost:3000',
       'http://localhost:8080',
+      'https://edmission.uz',
+      'http://edmission.uz',
     ],
   },
   ollama: {

@@ -8,11 +8,12 @@ import type { RegisterBody, LoginBody } from '../validators/auth.validator';
 
 const BCRYPT_ROUNDS = 12;
 
-function toPlainUser(doc: { _id: unknown; email: string; role: string }) {
+function toPlainUser(doc: { _id: unknown; email: string; role: string; name?: string }) {
   return {
     id: String(doc._id),
     email: doc.email,
     role: doc.role as Role,
+    name: doc.name ?? '',
   };
 }
 
@@ -28,6 +29,7 @@ export async function register(data: RegisterBody) {
 
   const user = await User.create({
     email: data.email,
+    name: data.name ?? '',
     passwordHash,
     role: data.role,
     verifyToken,
@@ -158,7 +160,7 @@ export async function logout(userId: string, refreshToken?: string) {
 
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
-    .select('email role emailVerified suspended createdAt')
+    .select('email name role emailVerified suspended createdAt')
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
@@ -168,6 +170,7 @@ export async function getMe(userId: string) {
   return {
     id: String(user._id),
     email: user.email,
+    name: (user as { name?: string }).name ?? '',
     role: user.role,
     emailVerified: user.emailVerified,
     suspended: user.suspended,
