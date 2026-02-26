@@ -16,8 +16,8 @@ if (config.nodeEnv !== 'test') {
 
 async function start() {
   await connectDatabase();
-  httpServer.listen(config.port, () => {
-    logger.info({ port: config.port }, 'Server listening');
+  httpServer.listen(config.port, config.host, () => {
+    logger.info({ port: config.port, host: config.host }, 'Server listening');
   });
 }
 
