@@ -34,3 +34,19 @@ export async function markRead(req: Request, res: Response, next: NextFunction):
     next(e);
   }
 }
+
+export async function sendMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const text = (req.body && typeof req.body.text === 'string') ? req.body.text.trim() : '';
+    if (!text) {
+      res.status(400).json({ message: 'Message text is required' });
+      return;
+    }
+    const result = await chatService.saveMessage(req.params.chatId, req.user.id, text);
+    const msg = result.message as Record<string, unknown>;
+    res.status(201).json({ ...msg, text: msg.message ?? msg.text });
+  } catch (e) {
+    next(e);
+  }
+}

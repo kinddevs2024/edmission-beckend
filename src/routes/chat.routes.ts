@@ -8,6 +8,7 @@ router.use(authMiddleware);
 
 router.get('/', chatController.getChats);
 router.get('/:chatId/messages', chatController.getMessages);
+router.post('/:chatId/messages', chatController.sendMessage);
 router.post('/:chatId/read', chatController.markRead);
 
 export default router;

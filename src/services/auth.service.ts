@@ -180,6 +180,27 @@ export async function getMe(userId: string) {
   };
 }
 
+export async function updateMe(userId: string, data: { name?: string }) {
+  const update: Record<string, unknown> = {};
+  if (data.name !== undefined) update.name = String(data.name);
+  if (Object.keys(update).length === 0) return getMe(userId);
+  const user = await User.findByIdAndUpdate(userId, update, { new: true })
+    .select('email name role emailVerified suspended createdAt')
+    .lean();
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+  return {
+    id: String(user._id),
+    email: user.email,
+    name: (user as { name?: string }).name ?? '',
+    role: user.role,
+    emailVerified: user.emailVerified,
+    suspended: user.suspended,
+    createdAt: user.createdAt,
+  };
+}
+
 export async function verifyEmail(token: string) {
   const user = await User.findOne({
     verifyToken: token,

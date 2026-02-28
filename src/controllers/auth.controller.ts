@@ -83,6 +83,25 @@ export async function me(
   }
 }
 
+export async function patchMe(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const name = typeof body.name === 'string' ? body.name.trim() : undefined;
+    const user = await authService.updateMe(req.user.id, { name });
+    res.json(user);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function verifyEmail(
   req: Request,
   res: Response,
