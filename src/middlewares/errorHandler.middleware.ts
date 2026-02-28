@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
 import type { ApiErrorBody } from '../types/api.types';
@@ -36,10 +37,27 @@ export function errorHandler(
     return;
   }
 
+  if (err instanceof ZodError) {
+    const errors = err.errors.map((e) => ({
+      field: e.path.join('.'),
+      message: e.message,
+    }));
+    sendErrorResponse(res, 400, {
+      message: 'Validation failed',
+      code: ErrorCodes.VALIDATION,
+      errors,
+    });
+    return;
+  }
+
   logger.error(err, 'Unhandled error');
 
+  const message =
+    process.env.NODE_ENV === 'development' && err instanceof Error
+      ? err.message
+      : 'Internal server error';
   const body: ApiErrorBody = {
-    message: 'Internal server error',
+    message,
     code: ErrorCodes.INTERNAL_ERROR,
     errors: undefined,
   };

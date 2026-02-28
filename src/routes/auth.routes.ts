@@ -3,6 +3,7 @@ import * as authController from '../controllers/auth.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
 import { authRateLimiter } from '../middlewares/rateLimit.middleware';
+import { requireDb } from '../middlewares/requireDb.middleware';
 import {
   registerSchema,
   loginSchema,
@@ -13,6 +14,7 @@ import {
 const router = Router();
 
 router.use(authRateLimiter);
+router.use(requireDb);
 
 router.post(
   '/register',

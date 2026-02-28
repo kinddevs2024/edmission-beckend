@@ -37,6 +37,11 @@ app.get('/health', healthHandler);
 /** Health под /api (фронт дергает /api/health через baseURL /api) */
 app.get('/api/health', healthHandler);
 
+/** Проверка: бэкенд отвечает на любой /api (фронт шлёт на /api/auth/register и т.д.) */
+app.get('/api', (_req, res) => {
+  res.json({ ok: true, message: 'Edmission API', paths: ['/api/health', '/api/auth/register', '/api/auth/login', '/api/auth/me'] });
+});
+
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 
 app.use('/api', routes);
