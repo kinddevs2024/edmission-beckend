@@ -38,10 +38,16 @@ async function buildStudentContext(userId: string): Promise<string> {
   ]);
 
   const lines: string[] = [];
-  lines.push(`Student: ${(profile as { firstName?: string }).firstName ?? ''} ${(profile as { lastName?: string }).lastName ?? ''}. Country: ${(profile as { country?: string }).country ?? '—'}.`);
-  if ((profile as { gpa?: number }).gpa != null) lines.push(`GPA: ${(profile as { gpa: number }).gpa}.`);
-  if ((profile as { gradeLevel?: string }).gradeLevel) lines.push(`Grade level: ${(profile as { gradeLevel: string }).gradeLevel}.`);
-  if ((profile as { languageLevel?: string }).languageLevel) lines.push(`Language level: ${(profile as { languageLevel: string }).languageLevel}.`);
+  const p = profile as Record<string, unknown>;
+  lines.push(`Student: ${[p.firstName, p.lastName].filter(Boolean).join(' ') || '—'}. Country: ${p.country ?? '—'}.`);
+  if (p.birthDate != null) lines.push(`Birth date: ${p.birthDate}.`);
+  if (p.gpa != null) lines.push(`GPA: ${p.gpa}.`);
+  if (p.gradeLevel) lines.push(`Grade level: ${p.gradeLevel}.`);
+  if (p.languageLevel) lines.push(`Language level: ${p.languageLevel}.`);
+  if (p.bio) lines.push(`Bio: ${String(p.bio).slice(0, 300)}.`);
+  if (p.portfolioCompletionPercent != null) lines.push(`Profile completion: ${p.portfolioCompletionPercent}%.`);
+  lines.push('');
+  lines.push('Use this data to help the student fill in missing info, find the right sections, or explain what to add. Do not invent data; suggest they complete their profile where relevant.');
   lines.push('');
   lines.push('Top recommendations:');
   recommendations.forEach((r: unknown) => {
@@ -84,7 +90,14 @@ async function buildUniversityContext(userId: string): Promise<string> {
   ]);
 
   const lines: string[] = [];
-  lines.push(`University: ${(profile as { universityName: string }).universityName}. Country: ${(profile as { country?: string }).country ?? '—'}, City: ${(profile as { city?: string }).city ?? '—'}.`);
+  const p = profile as Record<string, unknown>;
+  lines.push(`University: ${p.universityName}. Country: ${p.country ?? '—'}, City: ${p.city ?? '—'}.`);
+  if (p.tagline) lines.push(`Tagline: ${p.tagline}.`);
+  if (p.description) lines.push(`Description: ${String(p.description).slice(0, 400)}.`);
+  if (p.studentCount != null) lines.push(`Student count: ${p.studentCount}.`);
+  if (p.verified != null) lines.push(`Verified: ${p.verified}.`);
+  lines.push('');
+  lines.push('Use this data to help the university complete their profile or explain where to edit information.');
   lines.push('');
   lines.push('Pipeline (applications by status):');
   byStatusAgg.forEach((s: { _id: string; _count: number }) => {

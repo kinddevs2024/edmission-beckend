@@ -11,6 +11,8 @@ router.use(requireRole('university'));
 router.get('/profile', universityController.getProfile);
 router.put('/profile', universityController.updateProfile);
 router.get('/dashboard', universityController.getDashboard);
+router.get('/analytics/funnel', universityController.getFunnelAnalytics);
+router.get('/students/:studentId/profile', universityController.getStudentProfile);
 router.get('/students', universityController.getStudents);
 router.get('/pipeline', universityController.getPipeline);
 router.patch('/interests/:id', universityController.updateInterest);

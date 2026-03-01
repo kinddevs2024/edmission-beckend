@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as studentService from '../services/student.service';
+import * as studentDocumentService from '../services/studentDocument.service';
 
 export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -34,11 +35,12 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
 export async function getUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const { page, limit, country } = req.query;
+    const { page, limit, country, city } = req.query;
     const data = await studentService.getUniversities(req.user.id, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       country: country as string,
+      city: city as string,
     });
     res.json(data);
   } catch (e) {
@@ -61,6 +63,16 @@ export async function addInterest(req: Request, res: Response, next: NextFunctio
     if (!req.user) return next();
     const data = await studentService.addInterest(req.user.id, req.params.id);
     res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getInterestLimit(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await studentService.getInterestLimit(req.user.id);
+    res.json(data);
   } catch (e) {
     next(e);
   }
@@ -121,6 +133,31 @@ export async function getCompare(req: Request, res: Response, next: NextFunction
     if (!req.user) return next();
     const ids = (req.query.ids as string)?.split(',').filter(Boolean) || [];
     const data = await studentService.getCompare(req.user.id, ids);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function addDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const { type, fileUrl } = req.body;
+    if (!type || !fileUrl) {
+      res.status(400).json({ message: 'type and fileUrl required' });
+      return;
+    }
+    const data = await studentDocumentService.addDocument(req.user.id, { type, fileUrl });
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getMyDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await studentDocumentService.getMyDocuments(req.user.id);
     res.json(data);
   } catch (e) {
     next(e);

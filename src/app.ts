@@ -13,7 +13,11 @@ const app = express();
 app.use(helmet());
 app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({
+  verify: (req: express.Request, _res, buf: Buffer) => {
+    if (req.originalUrl === '/api/payment/webhook') (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+  },
+}));
 
 /** Единый обработчик health: JSON со статусом и IP */
 function healthHandler(

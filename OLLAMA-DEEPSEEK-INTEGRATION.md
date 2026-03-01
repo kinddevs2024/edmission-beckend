@@ -20,25 +20,25 @@
 
 | Модель | Команда | Описание | Размер |
 |--------|---------|----------|--------|
-| **DeepSeek LLM 7B** (чат) | `ollama pull deepseek-llm:7b` | Универсальная чат-модель 7B, подходит для ассистента | ~4–5 GB |
+| **DeepSeek R1 8B** (по умолчанию) | `ollama pull deepseek-r1:8b` | Рассуждения, 8B, рекомендуется для чата | ~5 GB |
+| DeepSeek LLM 7B | `ollama pull deepseek-llm:7b` | Универсальная чат-модель 7B | ~4–5 GB |
 | DeepSeek R1 1.5B | `ollama pull deepseek-r1:1.5b` | Самая лёгкая, быстрая | ~1 GB |
-| DeepSeek R1 8B | `ollama pull deepseek-r1:8b` | Рассуждения, сильнее 7B | ~5 GB |
 
-Для Edmission в блюпринте указан **DeepSeek 7B** — используй **deepseek-llm:7b**.
+Для Edmission по умолчанию используется **deepseek-r1:8b** (задаётся в `OLLAMA_MODEL`).
 
 ### Загрузка модели
 
 В терминале (Ollama должен быть запущен):
 
 ```bash
-ollama pull deepseek-llm:7b
+ollama pull deepseek-r1:8b
 ```
 
 Проверка:
 
 ```bash
 ollama list
-ollama run deepseek-llm:7b "Привет, как дела?"
+ollama run deepseek-r1:8b "Привет, как дела?"
 ```
 
 Если всё отвечает — модель готова к использованию из бэкенда.
@@ -61,7 +61,7 @@ ollama run deepseek-llm:7b "Привет, как дела?"
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=deepseek-llm:7b
+OLLAMA_MODEL=deepseek-r1:8b
 AI_CHAT_RATE_LIMIT_PER_MINUTE=10
 AI_CHAT_TIMEOUT_MS=60000
 ```

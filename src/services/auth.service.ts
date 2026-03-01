@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, RefreshToken, StudentProfile, UniversityProfile } from '../models';
+import * as subscriptionService from './subscription.service';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
@@ -41,6 +42,7 @@ export async function register(data: RegisterBody) {
   } else if (data.role === 'university') {
     await UniversityProfile.create({ userId: user._id, universityName: 'New University' });
   }
+  await subscriptionService.createForNewUser(String(user._id), data.role);
 
   const accessToken = signAccessToken({
     sub: String(user._id),
@@ -160,32 +162,40 @@ export async function logout(userId: string, refreshToken?: string) {
 
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
-    .select('email name role emailVerified suspended createdAt')
+    .select('email name role emailVerified suspended createdAt notificationPreferences totpEnabled')
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
   }
-  const studentProfile = await StudentProfile.findOne({ userId }).lean();
-  const universityProfile = await UniversityProfile.findOne({ userId }).lean();
+  const [studentProfile, universityProfile, subscription] = await Promise.all([
+    StudentProfile.findOne({ userId }).lean(),
+    UniversityProfile.findOne({ userId }).lean(),
+    subscriptionService.getSubscriptionSummary(userId),
+  ]);
+  const u = user as { _id: unknown; email: string; name?: string; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean };
   return {
-    id: String(user._id),
-    email: user.email,
-    name: (user as { name?: string }).name ?? '',
-    role: user.role,
-    emailVerified: user.emailVerified,
-    suspended: user.suspended,
-    createdAt: user.createdAt,
-    studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id) } : null,
+    id: String(u._id),
+    email: u.email,
+    name: u.name ?? '',
+    role: u.role,
+    emailVerified: u.emailVerified,
+    suspended: u.suspended,
+    createdAt: u.createdAt,
+    totpEnabled: !!u.totpEnabled,
+    notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
+    studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
     universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id) } : null,
+    subscription,
   };
 }
 
-export async function updateMe(userId: string, data: { name?: string }) {
+export async function updateMe(userId: string, data: { name?: string; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean } }) {
   const update: Record<string, unknown> = {};
   if (data.name !== undefined) update.name = String(data.name);
+  if (data.notificationPreferences !== undefined) update.notificationPreferences = data.notificationPreferences;
   if (Object.keys(update).length === 0) return getMe(userId);
   const user = await User.findByIdAndUpdate(userId, update, { new: true })
-    .select('email name role emailVerified suspended createdAt')
+    .select('email name role emailVerified suspended createdAt notificationPreferences')
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);

@@ -7,8 +7,10 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get('/', chatController.getChats);
+router.post('/', chatController.createChat);
 router.get('/:chatId/messages', chatController.getMessages);
 router.post('/:chatId/messages', chatController.sendMessage);
 router.post('/:chatId/read', chatController.markRead);
+router.post('/:chatId/accept', chatController.acceptStudent);
 
 export default router;

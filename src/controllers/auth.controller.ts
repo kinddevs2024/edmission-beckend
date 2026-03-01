@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service';
+import * as twoFactorService from '../services/twoFactor.service';
 import { loginSchema, registerSchema, refreshSchema, forgotPasswordSchema, resetPasswordSchema } from '../validators/auth.validator';
 
 export async function register(
@@ -95,7 +96,13 @@ export async function patchMe(
     }
     const body = (req.body && typeof req.body === 'object') ? req.body : {};
     const name = typeof body.name === 'string' ? body.name.trim() : undefined;
-    const user = await authService.updateMe(req.user.id, { name });
+    const notificationPreferences = body.notificationPreferences && typeof body.notificationPreferences === 'object'
+      ? {
+          emailApplicationUpdates: body.notificationPreferences.emailApplicationUpdates,
+          emailTrialReminder: body.notificationPreferences.emailTrialReminder,
+        }
+      : undefined;
+    const user = await authService.updateMe(req.user.id, { name, notificationPreferences });
     res.json(user);
   } catch (e) {
     next(e);
@@ -142,6 +149,54 @@ export async function resetPassword(
   try {
     const { token, newPassword } = resetPasswordSchema.shape.body.parse(req.body);
     await authService.resetPassword(token, newPassword);
+    res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function setup2FA(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const result = await twoFactorService.setup2FA(req.user.id);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function verify2FA(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const code = req.body?.code;
+    if (!code || typeof code !== 'string') {
+      res.status(400).json({ message: 'Code required' });
+      return;
+    }
+    const ok = await twoFactorService.verifyAndEnable2FA(req.user.id, code);
+    if (!ok) {
+      res.status(400).json({ message: 'Invalid code' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function disable2FA(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const code = req.body?.code;
+    if (!code || typeof code !== 'string') {
+      res.status(400).json({ message: 'Code required' });
+      return;
+    }
+    const ok = await twoFactorService.disable2FA(req.user.id, code);
+    if (!ok) {
+      res.status(400).json({ message: 'Invalid code' });
+      return;
+    }
     res.json({ success: true });
   } catch (e) {
     next(e);

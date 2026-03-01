@@ -14,6 +14,12 @@ const userSchema = new mongoose.Schema(
     verifyTokenExpires: Date,
     resetToken: String,
     resetTokenExpires: Date,
+    totpSecret: { type: String },
+    totpEnabled: { type: Boolean, default: false },
+    notificationPreferences: {
+      emailApplicationUpdates: { type: Boolean, default: true },
+      emailTrialReminder: { type: Boolean, default: true },
+    },
   },
   { timestamps: true }
 );

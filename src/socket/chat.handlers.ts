@@ -20,16 +20,20 @@ export function registerChatHandlers(io: Server): void {
       }
     });
 
-    socket.on('send_message', async (payload: { chatId: string; message: string }) => {
-      const { chatId, message } = payload || {};
-      if (!chatId || !message?.trim()) return;
+    socket.on('send_message', async (payload: { chatId: string; message?: string; type?: string; attachmentUrl?: string; metadata?: Record<string, unknown> }) => {
+      const { chatId, message, type, attachmentUrl, metadata } = payload || {};
+      if (!chatId) return;
+      const params = type && type !== 'text' ? { type: type as 'voice' | 'emotion', text: message, attachmentUrl, metadata } : (message ?? '').trim();
+      if (!params) return;
+      if (typeof params === 'string' && !params) return;
       try {
         const { message: msg, recipientId } = await chatService.saveMessage(
           chatId,
           socket.user!.id,
-          message.trim()
+          typeof params === 'string' ? params : params
         );
-        io.to(`chat:${chatId}`).emit('new_message', msg);
+        const payloadOut = msg as Record<string, unknown>;
+        io.to(`chat:${chatId}`).emit('new_message', { chatId, message: { ...payloadOut, id: payloadOut.id ?? payloadOut._id, text: payloadOut.message ?? payloadOut.text } });
         io.to(`user:${recipientId}`).emit('notification', {
           type: 'message',
           title: 'New message',

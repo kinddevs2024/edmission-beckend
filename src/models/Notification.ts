@@ -1,6 +1,19 @@
 import mongoose from 'mongoose';
 
-const NOTIFICATION_TYPES = ['offer', 'message', 'status_update'] as const;
+export const NOTIFICATION_TYPES = [
+  'message',
+  'offer',
+  'offer_accepted',
+  'offer_declined',
+  'interest',
+  'status_update',
+  'new_university',
+  'recommendation',
+  'deadline_reminder',
+  'profile_reminder',
+  'verification',
+  'system',
+] as const;
 
 const notificationSchema = new mongoose.Schema(
   {
@@ -8,14 +21,17 @@ const notificationSchema = new mongoose.Schema(
     type: { type: String, required: true, enum: NOTIFICATION_TYPES },
     title: String,
     body: String,
+    referenceType: String,
     referenceId: String,
+    metadata: mongoose.Schema.Types.Mixed,
     readAt: Date,
   },
   { timestamps: true }
 );
 
 notificationSchema.index({ userId: 1 });
-notificationSchema.index({ readAt: 1 });
-notificationSchema.index({ createdAt: 1 });
+notificationSchema.index({ userId: 1, readAt: 1 });
+notificationSchema.index({ userId: 1, createdAt: -1 });
+notificationSchema.index({ userId: 1, type: 1 });
 
 export const Notification = mongoose.model('Notification', notificationSchema);

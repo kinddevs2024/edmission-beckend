@@ -1,14 +1,26 @@
-import { User, UniversityProfile, Offer, Scholarship, ActivityLog, UniversityDocument } from '../models';
+import { User, UniversityProfile, Offer, Scholarship, ActivityLog, UniversityDocument, Subscription } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
+import * as subscriptionService from './subscription.service';
+import * as ticketService from './ticket.service';
+import * as studentDocumentService from './studentDocument.service';
 
 export async function getDashboard() {
-  const [users, universities, offers, pendingVerification] = await Promise.all([
+  const [users, universities, offers, pendingVerification, subStats] = await Promise.all([
     User.countDocuments(),
     UniversityProfile.countDocuments(),
     Offer.countDocuments({ status: 'pending' }),
     UniversityProfile.countDocuments({ verified: false }),
+    Subscription.aggregate([
+      { $match: { status: 'active' } },
+      { $group: { _id: '$plan', count: { $sum: 1 } } },
+    ]),
   ]);
-  return { users, universities, pendingOffers: offers, pendingVerification };
+  const byPlan: Record<string, number> = {};
+  for (const s of subStats) {
+    byPlan[s._id] = s.count;
+  }
+  const mrr = (byPlan['student_standard'] ?? 0) * 9.99 + (byPlan['student_max_premium'] ?? 0) * 19.99 + (byPlan['university_premium'] ?? 0) * 29.99;
+  return { users, universities, pendingOffers: offers, pendingVerification, subscriptionsByPlan: byPlan, mrr: Math.round(mrr * 100) / 100 };
 }
 
 export async function getUsers(query: { page?: number; limit?: number; role?: string }) {
@@ -93,4 +105,49 @@ export async function getLogs(query: { page?: number; limit?: number; userId?: s
     limit,
     totalPages: Math.ceil(total / limit),
   };
+}
+
+export async function getSubscriptions(query: {
+  page?: number;
+  limit?: number;
+  role?: string;
+  plan?: string;
+  status?: string;
+}) {
+  return subscriptionService.listSubscriptions(query);
+}
+
+export async function getSubscriptionByUser(userId: string) {
+  return subscriptionService.getSubscriptionByUserId(userId);
+}
+
+export async function updateUserSubscription(
+  userId: string,
+  data: { plan?: string; status?: string; trialEndsAt?: Date | null; currentPeriodEnd?: Date | null }
+) {
+  return subscriptionService.updateSubscription(userId, data);
+}
+
+export async function getTickets(query: { page?: number; limit?: number; status?: string; role?: string }) {
+  return ticketService.listTickets(query);
+}
+
+export async function getTicketById(ticketId: string, adminUserId: string) {
+  return ticketService.getTicketById(ticketId, adminUserId, true);
+}
+
+export async function updateTicketStatus(ticketId: string, status: string) {
+  return ticketService.updateTicketStatus(ticketId, status);
+}
+
+export async function addTicketReply(ticketId: string, adminUserId: string, message: string) {
+  return ticketService.addReply(ticketId, adminUserId, 'admin', message, true);
+}
+
+export async function getPendingDocuments() {
+  return studentDocumentService.listPendingForAdmin();
+}
+
+export async function reviewDocument(docId: string, adminUserId: string, decision: 'approved' | 'rejected', rejectionReason?: string) {
+  return studentDocumentService.reviewDocument(docId, adminUserId, decision, rejectionReason);
 }

@@ -17,4 +17,15 @@ router.get('/scholarships', adminController.getScholarships);
 router.get('/logs', adminController.getLogs);
 router.get('/health', adminController.getHealth);
 
+router.get('/subscriptions', adminController.getSubscriptions);
+router.get('/subscriptions/:userId', adminController.getSubscriptionByUser);
+router.patch('/subscriptions/:userId', adminController.updateSubscription);
+
+router.get('/tickets', adminController.getTickets);
+router.get('/tickets/:id', adminController.getTicket);
+router.patch('/tickets/:id/status', adminController.updateTicketStatus);
+router.post('/tickets/:id/reply', adminController.addTicketReply);
+router.get('/documents/pending', adminController.getPendingDocuments);
+router.patch('/documents/:id/review', adminController.reviewDocument);
+
 export default router;

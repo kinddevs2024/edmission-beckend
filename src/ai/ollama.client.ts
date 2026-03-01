@@ -6,12 +6,13 @@ export interface ChatMessage {
   content: string;
 }
 
-const { baseUrl, model, chatTimeoutMs } = config.ollama;
+const { baseUrl, model: defaultModel, chatTimeoutMs } = config.ollama;
 
-export async function chat(messages: ChatMessage[]): Promise<string> {
+export async function chat(messages: ChatMessage[], model?: string): Promise<string> {
   const url = `${baseUrl}/api/chat`;
+  const modelName = model ?? defaultModel;
   const body = {
-    model,
+    model: modelName,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     stream: false,
   };

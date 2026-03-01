@@ -5,6 +5,12 @@ import { registerChatHandlers } from './chat.handlers';
 import { registerNotificationHandlers } from './notification.handlers';
 import { logger } from '../utils/logger';
 
+let ioInstance: Server | null = null;
+
+export function getIO(): Server | null {
+  return ioInstance;
+}
+
 export function initSocket(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
     cors: {
@@ -21,5 +27,6 @@ export function initSocket(httpServer: HttpServer): Server {
   registerChatHandlers(io);
   registerNotificationHandlers(io);
 
+  ioInstance = io;
   return io;
 }

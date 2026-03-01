@@ -44,5 +44,8 @@ router.post(
   validate(resetPasswordSchema.shape.body, 'body'),
   authController.resetPassword
 );
+router.post('/2fa/setup', authMiddleware, authController.setup2FA);
+router.post('/2fa/verify', authMiddleware, authController.verify2FA);
+router.post('/2fa/disable', authMiddleware, authController.disable2FA);
 
 export default router;

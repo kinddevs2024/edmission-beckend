@@ -12,3 +12,7 @@ export { Recommendation } from './Recommendation';
 export { Notification } from './Notification';
 export { ActivityLog } from './ActivityLog';
 export { UniversityDocument } from './UniversityDocument';
+export { Subscription, STUDENT_PLANS, UNIVERSITY_PLANS, SUBSCRIPTION_STATUS } from './Subscription';
+export { Ticket } from './Ticket';
+export { StudentDocument } from './StudentDocument';
+export { AIConversation } from './AIConversation';

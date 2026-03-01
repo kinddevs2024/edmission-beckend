@@ -7,15 +7,18 @@ export interface MatchBreakdown {
   tuitionFit: number;
   scholarshipFit: number;
   location: number;
+  criteriaMatch: number;
+  criteriaOverlap?: { skills: number; interests: number; hobbies: number };
 }
 
 const WEIGHTS = {
-  fieldMatch: 0.25,
-  gpa: 0.2,
-  language: 0.15,
-  tuitionFit: 0.2,
+  fieldMatch: 0.2,
+  gpa: 0.15,
+  language: 0.1,
+  tuitionFit: 0.15,
   scholarshipFit: 0.1,
   location: 0.1,
+  criteriaMatch: 0.2,
 };
 
 function normalizeGpa(gpa: number | null | undefined): number {
@@ -25,18 +28,30 @@ function normalizeGpa(gpa: number | null | undefined): number {
   return gpa / 4;
 }
 
+function overlapScore(arr1: string[] | undefined, arr2: string[] | undefined): number {
+  if (!arr1?.length || !arr2?.length) return 0.5;
+  const set2 = new Set(arr2);
+  const match = arr1.filter((s) => set2.has(s)).length;
+  return Math.min(1, 0.3 + 0.7 * (match / Math.max(arr1.length, arr2.length)));
+}
+
 export function calculateMatchScore(
   student: {
     gpa?: number | null;
     country?: string | null;
     languageLevel?: string | null;
     gradeLevel?: string | null;
+    skills?: string[];
+    interests?: string[];
+    hobbies?: string[];
   },
   university: {
     country?: string | null;
     city?: string | null;
     programs: Array<{ field: string; language?: string | null; tuitionFee?: number | null }>;
     scholarships: Array<{ eligibility?: string | null }>;
+    preferredSkills?: string[];
+    preferredInterests?: string[];
   }
 ): { score: number; breakdown: MatchBreakdown } {
   let fieldMatch = 0.5;
@@ -69,13 +84,23 @@ export function calculateMatchScore(
     location = 1;
   }
 
+  const programFields = university.programs.map((p) => (p.field ?? '').toLowerCase()).filter(Boolean);
+  const skillOverlap = programFields.length
+    ? overlapScore(student.skills, programFields)
+    : overlapScore(student.skills, university.preferredSkills);
+  const interestOverlap = overlapScore(student.interests, university.preferredInterests);
+  const hobbyOverlap = overlapScore(student.hobbies, university.preferredInterests);
+  const criteriaOverlap = { skills: skillOverlap, interests: interestOverlap, hobbies: hobbyOverlap };
+  const criteriaMatch = (skillOverlap + interestOverlap + hobbyOverlap) / 3;
+
   const score =
     WEIGHTS.fieldMatch * fieldMatch +
     WEIGHTS.gpa * gpa +
     WEIGHTS.language * language +
     WEIGHTS.tuitionFit * tuitionFit +
     WEIGHTS.scholarshipFit * scholarshipFit +
-    WEIGHTS.location * location;
+    WEIGHTS.location * location +
+    WEIGHTS.criteriaMatch * criteriaMatch;
 
   const breakdown: MatchBreakdown = {
     fieldMatch,
@@ -84,6 +109,8 @@ export function calculateMatchScore(
     tuitionFit,
     scholarshipFit,
     location,
+    criteriaMatch,
+    criteriaOverlap,
   };
 
   return { score: Math.min(1, Math.max(0, score)), breakdown };

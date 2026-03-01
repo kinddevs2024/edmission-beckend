@@ -24,9 +24,21 @@ export const config = {
   },
   ollama: {
     baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-    model: process.env.OLLAMA_MODEL || 'deepseek-llm:7b',
+    model: process.env.OLLAMA_MODEL || 'deepseek-r1:8b',
     chatRateLimitPerMinute: parseInt(process.env.AI_CHAT_RATE_LIMIT_PER_MINUTE || '10', 10),
     chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
   },
   uploadDir: process.env.UPLOAD_DIR || './uploads',
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY || '',
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+    studentStandardPriceId: process.env.STRIPE_STUDENT_STANDARD_PRICE_ID || '',
+    studentMaxPriceId: process.env.STRIPE_STUDENT_MAX_PRICE_ID || '',
+    universityPremiumPriceId: process.env.STRIPE_UNIVERSITY_PREMIUM_PRICE_ID || '',
+  },
+  email: {
+    from: process.env.EMAIL_FROM || 'noreply@edmission.com',
+    sendgridApiKey: process.env.SENDGRID_API_KEY || '',
+    enabled: process.env.EMAIL_ENABLED === 'true',
+  },
 };

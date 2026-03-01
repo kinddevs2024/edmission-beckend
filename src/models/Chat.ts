@@ -4,6 +4,9 @@ const chatSchema = new mongoose.Schema(
   {
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'StudentProfile', required: true },
     universityId: { type: mongoose.Schema.Types.ObjectId, ref: 'UniversityProfile', required: true },
+    acceptedAt: { type: Date },
+    acceptancePositionType: { type: String },
+    acceptancePositionLabel: { type: String },
   },
   { timestamps: true }
 );
