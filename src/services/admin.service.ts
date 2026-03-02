@@ -1,5 +1,6 @@
 import { User, UniversityProfile, Offer, Scholarship, ActivityLog, UniversityDocument, Subscription } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
 import * as subscriptionService from './subscription.service';
 import * as ticketService from './ticket.service';
 import * as studentDocumentService from './studentDocument.service';
@@ -44,6 +45,7 @@ export async function getUsers(query: { page?: number; limit?: number; role?: st
 export async function suspendUser(userId: string, suspend: boolean) {
   const user = await User.findById(userId);
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot suspend default admin', ErrorCodes.FORBIDDEN);
   if (user.role === 'admin') throw new AppError(403, 'Cannot suspend admin', ErrorCodes.FORBIDDEN);
   const updated = await User.findByIdAndUpdate(userId, { suspended: suspend }, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;

@@ -6,6 +6,7 @@ import { initSocket } from './socket';
 import { startRecommendationWorker } from './workers/recommendation.worker';
 import { logger } from './utils/logger';
 import * as ollama from './ai/ollama.client';
+import { ensureDefaultAdmin } from './services/auth.service';
 
 const httpServer = http.createServer(app);
 
@@ -25,6 +26,8 @@ async function start() {
   try {
     await connectDatabase();
     logger.info('Database connected');
+    await ensureDefaultAdmin();
+    logger.info('Default admin ensured');
   } catch (e) {
     logger.error(e, 'Database connection failed — server keeps listening; /api/health works, auth/register will return 503 until MongoDB is up');
     // Не выходим: порт 4000 остаётся слушать, фронт получит ответ на /api/health. Регистрация и т.д. вернут 503, пока не поднимется MongoDB.

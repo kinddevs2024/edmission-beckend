@@ -7,8 +7,29 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
 import type { RegisterBody, LoginBody } from '../validators/auth.validator';
+import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
 const BCRYPT_ROUNDS = 12;
+
+/** Вызывается при старте сервера: создаёт или обновляет дефолтного админа. */
+export async function ensureDefaultAdmin(): Promise<void> {
+  const passwordHash = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, BCRYPT_ROUNDS);
+  const existing = await User.findOne({ email: DEFAULT_ADMIN_EMAIL });
+  if (existing) {
+    existing.role = 'admin';
+    existing.passwordHash = passwordHash;
+    existing.name = DEFAULT_ADMIN_NAME;
+    existing.suspended = false;
+    await existing.save();
+    return;
+  }
+  await User.create({
+    email: DEFAULT_ADMIN_EMAIL,
+    name: DEFAULT_ADMIN_NAME,
+    passwordHash,
+    role: 'admin',
+  });
+}
 
 function toPlainUser(doc: { _id: unknown; email: string; role: string; name?: string }) {
   return {
