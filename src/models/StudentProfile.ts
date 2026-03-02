@@ -34,6 +34,8 @@ const schoolAttendedSchema = new mongoose.Schema(
   {
     country: String,
     institutionName: String,
+    /** 'school' | 'university' — for labels and minimal-profile logic */
+    institutionType: { type: String, enum: ['school', 'university'] },
     educationLevel: String,
     gradingScheme: String,
     gradeScale: Number,
@@ -60,6 +62,8 @@ const studentProfileSchema = new mongoose.Schema(
     languages: [languageLevelSchema],
     bio: String,
     avatarUrl: String,
+    /** 'in_school' | 'finished_school' | 'in_university' | 'finished_university' — drives labels and minimal profile */
+    educationStatus: { type: String, enum: ['in_school', 'finished_school', 'in_university', 'finished_university'] },
     schoolCompleted: Boolean,
     schoolName: String,
     graduationYear: Number,

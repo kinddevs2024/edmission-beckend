@@ -14,11 +14,15 @@ import * as subscriptionService from './subscription.service';
 import { filterSkills, filterInterests, filterHobbies } from '../constants/profileCriteria';
 import { AppError, ErrorCodes } from '../utils/errors';
 
-/** Minimal profile: name, surname, where born (country/city), where studied (school/level/year). */
+/** Minimal profile: name, surname, where born (country/city), where studied (educationStatus + at least one schoolsAttended or legacy school fields). */
 function isMinimalPortfolioComplete(doc: Record<string, unknown>): boolean {
   const hasName = (doc.firstName != null && String(doc.firstName).trim() !== '') || (doc.lastName != null && String(doc.lastName).trim() !== '');
   const hasLocation = (doc.country != null && String(doc.country).trim() !== '') || (doc.city != null && String(doc.city).trim() !== '');
-  const hasEducation = (doc.schoolName != null && String(doc.schoolName).trim() !== '') || (doc.gradeLevel != null && String(doc.gradeLevel).trim() !== '') || (doc.graduationYear != null);
+  const status = doc.educationStatus as string | undefined;
+  const schools = Array.isArray(doc.schoolsAttended) ? doc.schoolsAttended as Array<Record<string, unknown>> : [];
+  const hasSchoolEntry = schools.some((s) => (s.institutionName != null && String(s.institutionName).trim() !== ''));
+  const legacyEducation = (doc.schoolName != null && String(doc.schoolName).trim() !== '') || (doc.gradeLevel != null && String(doc.gradeLevel).trim() !== '') || (doc.graduationYear != null);
+  const hasEducation = hasSchoolEntry || legacyEducation;
   return Boolean(hasName && hasLocation && hasEducation);
 }
 
@@ -78,6 +82,10 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   }
   if (data.bio !== undefined) update.bio = String(data.bio);
   if (data.avatarUrl !== undefined) update.avatarUrl = String(data.avatarUrl);
+  if (data.educationStatus !== undefined) {
+    const v = data.educationStatus as string;
+    update.educationStatus = ['in_school', 'finished_school', 'in_university', 'finished_university'].includes(v) ? v : null;
+  }
   if (data.schoolCompleted !== undefined) update.schoolCompleted = Boolean(data.schoolCompleted);
   if (data.schoolName !== undefined) update.schoolName = String(data.schoolName);
   if (data.graduationYear !== undefined) update.graduationYear = data.graduationYear != null ? Number(data.graduationYear) : null;
@@ -90,6 +98,7 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     ? (data.schoolsAttended as Array<Record<string, unknown>>).slice(0, MAX_SCHOOLS).map((s) => ({
         country: s.country != null ? String(s.country) : undefined,
         institutionName: s.institutionName != null ? String(s.institutionName) : undefined,
+        institutionType: (s.institutionType === 'school' || s.institutionType === 'university') ? s.institutionType : undefined,
         educationLevel: s.educationLevel != null ? String(s.educationLevel) : undefined,
         gradingScheme: s.gradingScheme != null ? String(s.gradingScheme) : undefined,
         gradeScale: s.gradeScale != null ? Number(s.gradeScale) : undefined,
