@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as universityService from '../services/university.service';
+import * as facultyService from '../services/faculty.service';
 
 export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -178,6 +179,61 @@ export async function getRecommendations(req: Request, res: Response, next: Next
     if (!req.user) return next();
     const data = await universityService.getRecommendations(req.user.id);
     res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getFaculties(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await facultyService.getFaculties(req.user.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getFacultyById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await facultyService.getFacultyById(req.user.id, req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const body = req.body as { name?: string; description?: string; order?: number };
+    const data = await facultyService.createFaculty(req.user.id, {
+      name: body.name ?? '',
+      description: body.description ?? '',
+      order: body.order,
+    });
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await facultyService.updateFaculty(req.user.id, req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    await facultyService.deleteFaculty(req.user.id, req.params.id);
+    res.status(204).send();
   } catch (e) {
     next(e);
   }

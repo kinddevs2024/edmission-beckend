@@ -4,6 +4,7 @@ import {
   UniversityProfile,
   Program,
   Scholarship,
+  Faculty,
   Interest,
   Offer,
   Recommendation,
@@ -285,12 +286,14 @@ export async function getUniversityById(userId: string, universityId: string) {
 
   const programs = await Program.find({ universityId }).lean();
   const scholarships = await Scholarship.find({ universityId }).lean();
+  const faculties = await Faculty.find({ universityId }).sort({ order: 1, name: 1 }).lean();
 
   return {
     ...university,
     id: String((university as { _id: unknown })._id),
     programs,
     scholarships,
+    faculties: faculties.map((f) => ({ ...f, id: String((f as { _id: unknown })._id) })),
     matchScore: rec ? (rec as { matchScore: number }).matchScore : null,
     breakdown: rec ? (rec as { breakdown?: unknown }).breakdown : null,
     interest: interest ? { ...interest, id: String((interest as { _id: unknown })._id) } : null,

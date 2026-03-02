@@ -4,6 +4,7 @@ import {
   UniversityProfile,
   Program,
   Scholarship,
+  Faculty,
   Interest,
   Offer,
   Recommendation,
@@ -19,6 +20,7 @@ export async function getProfile(userId: string) {
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
   const programs = await Program.find({ universityId: profile._id }).lean();
   const scholarships = await Scholarship.find({ universityId: profile._id }).lean();
+  const faculties = await Faculty.find({ universityId: profile._id }).sort({ order: 1, name: 1 }).lean();
   const user = await User.findById(userId).select('email').lean();
   return {
     ...profile,
@@ -26,6 +28,7 @@ export async function getProfile(userId: string) {
     user: user ? { email: (user as { email: string }).email } : undefined,
     programs,
     scholarships,
+    faculties: faculties.map((f) => ({ ...f, id: String((f as { _id: unknown })._id) })),
   };
 }
 

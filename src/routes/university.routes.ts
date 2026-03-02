@@ -23,4 +23,10 @@ router.delete('/scholarships/:id', universityController.deleteScholarship);
 router.post('/offers', universityController.createOffer);
 router.get('/recommendations', universityController.getRecommendations);
 
+router.get('/faculties', universityController.getFaculties);
+router.post('/faculties', universityController.createFaculty);
+router.get('/faculties/:id', universityController.getFacultyById);
+router.patch('/faculties/:id', universityController.updateFaculty);
+router.delete('/faculties/:id', universityController.deleteFaculty);
+
 export default router;
