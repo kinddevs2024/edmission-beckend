@@ -30,6 +30,22 @@ const languageLevelSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const schoolAttendedSchema = new mongoose.Schema(
+  {
+    country: String,
+    institutionName: String,
+    educationLevel: String,
+    gradingScheme: String,
+    gradeScale: Number,
+    gradeAverage: Number,
+    primaryLanguage: String,
+    attendedFrom: Date,
+    attendedTo: Date,
+    degreeName: String,
+  },
+  { _id: true }
+);
+
 const studentProfileSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
@@ -47,6 +63,11 @@ const studentProfileSchema = new mongoose.Schema(
     schoolCompleted: Boolean,
     schoolName: String,
     graduationYear: Number,
+    gradingScheme: String,
+    gradeScale: Number,
+    highestEducationLevel: String,
+    schoolsAttended: [schoolAttendedSchema],
+    targetDegreeLevel: { type: String, enum: ['bachelor', 'master', 'phd'] },
     skills: [String],
     interests: [String],
     hobbies: [String],

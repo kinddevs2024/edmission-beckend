@@ -4,7 +4,7 @@ import { AppError, ErrorCodes } from '../utils/errors';
 export async function addDocument(userId: string, data: { type: string; fileUrl: string; name?: string; certificateType?: string; score?: string }) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
-  const allowed = ['transcript', 'diploma', 'language_certificate', 'course_certificate', 'other'];
+  const allowed = ['transcript', 'diploma', 'language_certificate', 'course_certificate', 'passport', 'id_card', 'other'];
   if (!allowed.includes(data.type)) throw new AppError(400, 'Invalid document type', ErrorCodes.VALIDATION);
   const doc = await StudentDocument.create({
     studentId: profile._id,

@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, RefreshToken, StudentProfile, UniversityProfile } from '../models';
 import * as subscriptionService from './subscription.service';
+import * as notificationService from './notification.service';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
@@ -40,7 +41,19 @@ export async function register(data: RegisterBody) {
   if (data.role === 'student') {
     await StudentProfile.create({ userId: user._id });
   } else if (data.role === 'university') {
-    await UniversityProfile.create({ userId: user._id, universityName: 'New University' });
+    await UniversityProfile.create({ userId: user._id, universityName: 'New University', verified: false });
+    const admins = await User.find({ role: 'admin' }).select('_id').lean();
+    for (const admin of admins) {
+      const adminId = String((admin as { _id: unknown })._id);
+      await notificationService.createNotification(adminId, {
+        type: 'university_verification_request',
+        title: 'New university registration',
+        body: `${data.email} registered as a university. Please review and verify in Admin → Verification.`,
+        referenceType: 'university',
+        referenceId: String(user._id),
+        metadata: { email: data.email, universityName: 'New University' },
+      });
+    }
   }
   await subscriptionService.createForNewUser(String(user._id), data.role);
 
@@ -96,8 +109,17 @@ export async function login(data: LoginBody) {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   });
 
+  const plainUser = toPlainUser(user) as ReturnType<typeof toPlainUser> & { universityProfile?: { id: string; verified: boolean; universityName?: string } };
+  if (user.role === 'university') {
+    const up = await UniversityProfile.findOne({ userId: user._id }).lean();
+    if (up) {
+      const u = up as { _id: unknown; verified?: boolean; universityName?: string };
+      plainUser.universityProfile = { id: String(u._id), verified: !!u.verified, universityName: u.universityName };
+    }
+  }
+
   return {
-    user: toPlainUser(user),
+    user: plainUser,
     accessToken,
     refreshToken,
   };
@@ -184,7 +206,7 @@ export async function getMe(userId: string) {
     totpEnabled: !!u.totpEnabled,
     notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
-    universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id) } : null,
+    universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id), verified: (universityProfile as { verified?: boolean }).verified } : null,
     subscription,
   };
 }

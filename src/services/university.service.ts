@@ -217,12 +217,24 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     fileUrl: (d as { fileUrl: string }).fileUrl,
   }));
 
+  const s = student as Record<string, unknown>;
+  const hasProfile = (s.country != null && String(s.country).trim() !== '') || (s.city != null && String(s.city).trim() !== '');
+  const hasEducation = (s.gpa != null) || (s.gradeLevel != null && String(s.gradeLevel).trim() !== '') || (s.schoolName != null && String(s.schoolName).trim() !== '') || (s.graduationYear != null) || (s.gradeScale != null) || (Array.isArray(s.schoolsAttended) && s.schoolsAttended.length > 0);
+  const hasCertificates = docList.some((d) => d.type === 'language_certificate' || d.type === 'course_certificate' || (d.type === 'other' && d.name && /ielts|toefl|sat/i.test(String(d.name))));
+  const readiness = {
+    profile: hasProfile,
+    education: hasEducation,
+    certificates: hasCertificates,
+    ready: hasProfile && hasEducation && hasCertificates,
+  };
+
   const out = { ...student };
   delete (out as Record<string, unknown>).userId;
   return {
     ...out,
     id: String((out as { _id: unknown })._id),
     documents: docList,
+    readiness,
   };
 }
 

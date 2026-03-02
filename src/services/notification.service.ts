@@ -88,6 +88,8 @@ function buildNotificationLink(
       return '/university/pipeline';
     case 'status_update':
       return '/student/applications';
+    case 'university_verification_request':
+      return '/admin/verification';
     default:
       return null;
   }

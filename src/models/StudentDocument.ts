@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const studentDocumentSchema = new mongoose.Schema(
   {
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'StudentProfile', required: true },
-    type: { type: String, required: true, enum: ['transcript', 'diploma', 'language_certificate', 'course_certificate', 'other'] },
+    type: { type: String, required: true, enum: ['transcript', 'diploma', 'language_certificate', 'course_certificate', 'passport', 'id_card', 'other'] },
     name: { type: String },
     certificateType: { type: String },
     score: { type: String },

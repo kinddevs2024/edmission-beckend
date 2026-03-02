@@ -14,6 +14,14 @@ import * as subscriptionService from './subscription.service';
 import { filterSkills, filterInterests, filterHobbies } from '../constants/profileCriteria';
 import { AppError, ErrorCodes } from '../utils/errors';
 
+/** Minimal profile: name, surname, where born (country/city), where studied (school/level/year). */
+function isMinimalPortfolioComplete(doc: Record<string, unknown>): boolean {
+  const hasName = (doc.firstName != null && String(doc.firstName).trim() !== '') || (doc.lastName != null && String(doc.lastName).trim() !== '');
+  const hasLocation = (doc.country != null && String(doc.country).trim() !== '') || (doc.city != null && String(doc.city).trim() !== '');
+  const hasEducation = (doc.schoolName != null && String(doc.schoolName).trim() !== '') || (doc.gradeLevel != null && String(doc.gradeLevel).trim() !== '') || (doc.graduationYear != null);
+  return Boolean(hasName && hasLocation && hasEducation);
+}
+
 function computePortfolioCompletion(doc: Record<string, unknown>): number {
   const sections = [
     (doc.firstName != null && String(doc.firstName).trim() !== '') || (doc.lastName != null && String(doc.lastName).trim() !== ''),
@@ -36,10 +44,12 @@ export async function getProfile(userId: string) {
   const user = await mongoose.model('User').findById(userId).select('email emailVerified').lean() as Record<string, unknown> | null;
   const profileObj = profile as Record<string, unknown>;
   const portfolioCompletionPercent = computePortfolioCompletion(profileObj);
+  const minimalPortfolioComplete = isMinimalPortfolioComplete(profileObj);
   return {
     ...profile,
     id: String(profileObj._id),
     portfolioCompletionPercent,
+    minimalPortfolioComplete,
     verifiedAt: profileObj.verifiedAt,
     user: user ? { email: String(user.email), emailVerified: Boolean(user.emailVerified) } : undefined,
   };
@@ -71,6 +81,25 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   if (data.schoolCompleted !== undefined) update.schoolCompleted = Boolean(data.schoolCompleted);
   if (data.schoolName !== undefined) update.schoolName = String(data.schoolName);
   if (data.graduationYear !== undefined) update.graduationYear = data.graduationYear != null ? Number(data.graduationYear) : null;
+  if (data.gradingScheme !== undefined) update.gradingScheme = data.gradingScheme != null ? String(data.gradingScheme) : null;
+  if (data.gradeScale !== undefined) update.gradeScale = data.gradeScale != null ? Number(data.gradeScale) : null;
+  if (data.highestEducationLevel !== undefined) update.highestEducationLevel = data.highestEducationLevel != null ? String(data.highestEducationLevel) : null;
+  if (data.targetDegreeLevel !== undefined) update.targetDegreeLevel = ['bachelor', 'master', 'phd'].includes(String(data.targetDegreeLevel)) ? data.targetDegreeLevel : null;
+  const MAX_SCHOOLS = 10;
+  if (data.schoolsAttended !== undefined) update.schoolsAttended = Array.isArray(data.schoolsAttended)
+    ? (data.schoolsAttended as Array<Record<string, unknown>>).slice(0, MAX_SCHOOLS).map((s) => ({
+        country: s.country != null ? String(s.country) : undefined,
+        institutionName: s.institutionName != null ? String(s.institutionName) : undefined,
+        educationLevel: s.educationLevel != null ? String(s.educationLevel) : undefined,
+        gradingScheme: s.gradingScheme != null ? String(s.gradingScheme) : undefined,
+        gradeScale: s.gradeScale != null ? Number(s.gradeScale) : undefined,
+        gradeAverage: s.gradeAverage != null ? Number(s.gradeAverage) : undefined,
+        primaryLanguage: s.primaryLanguage != null ? String(s.primaryLanguage) : undefined,
+        attendedFrom: s.attendedFrom ? new Date(s.attendedFrom as string) : undefined,
+        attendedTo: s.attendedTo ? new Date(s.attendedTo as string) : undefined,
+        degreeName: s.degreeName != null ? String(s.degreeName) : undefined,
+      }))
+    : [];
   const MAX_SKILLS = 50;
   const MAX_INTERESTS = 30;
   const MAX_HOBBIES = 30;
