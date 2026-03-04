@@ -33,10 +33,12 @@ async function start() {
     // Не выходим: порт 4000 остаётся слушать, фронт получит ответ на /api/health. Регистрация и т.д. вернут 503, пока не поднимется MongoDB.
   }
 
-  if (aiProvider.useDeepSeek()) {
+  if (aiProvider.useOpenAI()) {
+    logger.info({ model: aiProvider.getModelName() }, 'OpenAI (ChatGPT) — AI assistant ready');
+  } else if (aiProvider.useDeepSeek()) {
     aiProvider.healthCheck().then((ok) => {
       if (ok) logger.info({ model: aiProvider.getModelName() }, 'DeepSeek API — AI assistant ready');
-      else logger.warn('DeepSeek API key set but health check failed; AI chat may return 503');
+      else logger.warn('DeepSeek API key set but health check failed');
     }).catch(() => logger.warn('DeepSeek API health check failed'));
   } else {
     aiProvider.healthCheck().then((ok) => {

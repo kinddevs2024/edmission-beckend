@@ -24,13 +24,18 @@ export const config = {
   },
   ollama: {
     baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-    model: process.env.OLLAMA_MODEL || 'deepseek-r1:8b',
+    model: process.env.OLLAMA_MODEL || 'deepseek-r1:1.5b',
     chatRateLimitPerMinute: parseInt(process.env.AI_CHAT_RATE_LIMIT_PER_MINUTE || '10', 10),
-    chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
+    chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '180000', 10),
   },
   deepseek: {
     apiKey: process.env.DEEPSEEK_API_KEY || '',
     model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+    chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '180000', 10),
+  },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || '',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
   },
   uploadDir: process.env.UPLOAD_DIR || './uploads',

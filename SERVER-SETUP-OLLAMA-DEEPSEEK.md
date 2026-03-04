@@ -152,6 +152,9 @@ nano .env
    ```env
    OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_MODEL=deepseek-r1:8b
+
+# На сервере без GPU (CPU-only) ответы долгие — увеличь таймаут (в миллисекундах)
+AI_CHAT_TIMEOUT_MS=180000
    ```
 
 Сохрани: `Ctrl+O`, Enter, выход: `Ctrl+X`.
@@ -194,6 +197,26 @@ docker restart имя_контейнера_бэкенда
    `Ollama reachable — AI chat ready` (или аналогичное сообщение об успешной проверке Ollama).
 
 2. В приложении открой чат (Edmission AI), отправь сообщение — ответ должен приходить от локального DeepSeek на сервере.
+
+---
+
+## Сервер без GPU (CPU-only)
+
+Ollama в режиме CPU генерирует ответы **медленно**. DeepSeek R1 8B на CPU может отвечать 2–5 минут. Поэтому:
+
+1. **Увеличь таймаут** в `.env`:
+   ```env
+   AI_CHAT_TIMEOUT_MS=300000
+   ```
+   (300000 мс = 5 минут)
+
+2. **Либо перейди на лёгкую модель** — она быстрее:
+   ```bash
+   ollama pull deepseek-r1:1.5b
+   ```
+   В `.env` укажи: `OLLAMA_MODEL=deepseek-r1:1.5b`
+
+3. Перезапусти бэкенд: `pm2 restart edmission-back`
 
 ---
 
