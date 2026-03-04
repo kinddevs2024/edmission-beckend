@@ -80,6 +80,10 @@ const studentProfileSchema = new mongoose.Schema(
     portfolioCompletionPercent: { type: Number, default: 0 },
     needsRecalculation: { type: Boolean, default: true },
     verifiedAt: { type: Date },
+    /** Codes of faculties student is interested in (from predefined catalog) */
+    interestedFaculties: [String],
+    /** Country codes where student wants to study (e.g. 'UZ', 'KZ') */
+    preferredCountries: [String],
   },
   { timestamps: true }
 );
@@ -92,5 +96,7 @@ studentProfileSchema.index({ city: 1 });
 studentProfileSchema.index({ skills: 1 });
 studentProfileSchema.index({ interests: 1 });
 studentProfileSchema.index({ hobbies: 1 });
+studentProfileSchema.index({ interestedFaculties: 1 });
+studentProfileSchema.index({ preferredCountries: 1 });
 
 export const StudentProfile = mongoose.model('StudentProfile', studentProfileSchema);

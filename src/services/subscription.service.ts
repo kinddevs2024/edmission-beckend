@@ -119,6 +119,12 @@ export function getEffectivePlan(sub: SubscriptionInfo | null): string | null {
   return sub.plan;
 }
 
+/** Check if university has premium plan with active status (unlimited student profile views, offers, etc.) */
+export function hasPremiumUniversityPlan(sub: SubscriptionInfo | null): boolean {
+  const effective = getEffectivePlan(sub);
+  return effective === UNIVERSITY_PLAN.PREMIUM;
+}
+
 /** Check if student can send one more application (interest). Returns { allowed, current, limit } */
 export async function canSendApplication(userId: string): Promise<{
   allowed: boolean;

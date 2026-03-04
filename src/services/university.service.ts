@@ -9,6 +9,7 @@ import {
   Offer,
   Recommendation,
   StudentDocument,
+  StudentProfileView,
 } from '../models';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
@@ -47,6 +48,8 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     description?: string;
     logoUrl?: string;
     onboardingCompleted?: boolean;
+    facultyCodes?: string[];
+    targetStudentCountries?: string[];
   };
   const { programs, ...rest } = raw;
 
@@ -60,6 +63,14 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   if (rest.description !== undefined) update.description = rest.description;
   if (rest.logoUrl !== undefined) update.logoUrl = rest.logoUrl;
   if (rest.onboardingCompleted !== undefined) update.onboardingCompleted = rest.onboardingCompleted;
+  if (rest.facultyCodes !== undefined) {
+    const arr = Array.isArray(rest.facultyCodes) ? rest.facultyCodes : [];
+    update.facultyCodes = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 50);
+  }
+  if (rest.targetStudentCountries !== undefined) {
+    const arr = Array.isArray(rest.targetStudentCountries) ? rest.targetStudentCountries : [];
+    update.targetStudentCountries = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 50);
+  }
 
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
 
@@ -143,6 +154,22 @@ export async function getStudents(
   if (query.country?.trim()) filter.country = query.country.trim();
   if (query.city?.trim()) filter.city = new RegExp(query.city.trim(), 'i');
 
+  // Filter by university's targetStudentCountries if set
+  const targetCountries = Array.isArray((profile as { targetStudentCountries?: string[] }).targetStudentCountries)
+    ? ((profile as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
+    : [];
+  if (targetCountries.length > 0) {
+    filter.country = { $in: targetCountries };
+  }
+
+  // Filter by faculties: student interestedFaculties intersect university facultyCodes
+  const facultyCodes = Array.isArray((profile as { facultyCodes?: string[] }).facultyCodes)
+    ? ((profile as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean)
+    : [];
+  if (facultyCodes.length > 0) {
+    filter.interestedFaculties = { $in: facultyCodes };
+  }
+
   const skills = Array.isArray(query.skills) ? query.skills.filter(Boolean) : [];
   const interests = Array.isArray(query.interests) ? query.interests.filter(Boolean) : [];
   const hobbies = Array.isArray(query.hobbies) ? query.hobbies.filter(Boolean) : [];
@@ -171,7 +198,7 @@ export async function getStudents(
 
   const [students, total, interestStudentIds] = await Promise.all([
     StudentProfile.find(filter)
-      .select('firstName lastName country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear')
+      .select('firstName lastName avatarUrl country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries')
       .sort({ gpa: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -206,6 +233,30 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
 
   const student = await StudentProfile.findById(studentId).lean();
   if (!student) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+
+  // Enforce profile view limits based on university subscription.
+  const sub = await subscriptionService.getSubscription(_userId);
+  const isPremium = subscriptionService.hasPremiumUniversityPlan(sub);
+
+  if (!isPremium) {
+    // Count distinct viewed students for this university user (including this one if already viewed).
+    const existingView = await StudentProfileView.findOne({
+      universityUserId: _userId,
+      studentProfileId: student._id,
+    }).lean();
+
+    if (!existingView) {
+      const totalViews = await StudentProfileView.countDocuments({ universityUserId: _userId });
+      const LIMIT = 15;
+      if (totalViews >= LIMIT) {
+        throw new AppError(403, 'Student profile view limit reached for your current plan', ErrorCodes.FORBIDDEN);
+      }
+      await StudentProfileView.create({
+        universityUserId: _userId,
+        studentProfileId: student._id,
+      });
+    }
+  }
 
   const documents = await StudentDocument.find({ studentId, status: 'approved' })
     .select('type name certificateType score fileUrl')

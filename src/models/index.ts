@@ -17,3 +17,4 @@ export { Subscription, STUDENT_PLANS, UNIVERSITY_PLANS, SUBSCRIPTION_STATUS } fr
 export { Ticket } from './Ticket';
 export { StudentDocument } from './StudentDocument';
 export { AIConversation } from './AIConversation';
+export { StudentProfileView } from './StudentProfileView';

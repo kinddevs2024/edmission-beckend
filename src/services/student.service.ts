@@ -149,6 +149,15 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   const merged = { ...(profile.toObject ? profile.toObject() : profile), ...update } as Record<string, unknown>;
   update.portfolioCompletionPercent = computePortfolioCompletion(merged);
 
+  if (data.interestedFaculties !== undefined) {
+    const arr = Array.isArray(data.interestedFaculties) ? data.interestedFaculties : [];
+    update.interestedFaculties = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 30);
+  }
+  if (data.preferredCountries !== undefined) {
+    const arr = Array.isArray(data.preferredCountries) ? data.preferredCountries : [];
+    update.preferredCountries = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 30);
+  }
+
   const updated = await StudentProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
   return { ...updated, id: String((updated as { _id: unknown })._id) };
 }
@@ -205,9 +214,25 @@ export async function getUniversities(userId: string, query: { page?: number; li
   const limit = Math.min(50, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
 
-  const where: { country?: string; city?: string } = {};
+  const where: { country?: string; city?: string; facultyCodes?: unknown; _id?: unknown } = {};
   if (query.country) where.country = query.country;
   if (query.city && String(query.city).trim()) where.city = String(query.city).trim();
+
+  // Filter by student's preferred countries (where they want to study)
+  const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
+    ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
+    : [];
+  if (preferredCountries.length > 0) {
+    where.country = { $in: preferredCountries } as unknown as string;
+  }
+
+  // Filter by student's interested faculties vs university facultyCodes
+  const interestedFaculties = Array.isArray((profile as { interestedFaculties?: string[] }).interestedFaculties)
+    ? ((profile as { interestedFaculties?: string[] }).interestedFaculties ?? []).filter(Boolean)
+    : [];
+  if (interestedFaculties.length > 0) {
+    where.facultyCodes = { $in: interestedFaculties };
+  }
 
   const [list, total] = await Promise.all([
     UniversityProfile.find(where).skip(skip).limit(limit).sort({ universityName: 1 }).lean(),
