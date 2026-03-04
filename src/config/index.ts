@@ -28,6 +28,11 @@ export const config = {
     chatRateLimitPerMinute: parseInt(process.env.AI_CHAT_RATE_LIMIT_PER_MINUTE || '10', 10),
     chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
   },
+  deepseek: {
+    apiKey: process.env.DEEPSEEK_API_KEY || '',
+    model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+    chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
+  },
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY || '',

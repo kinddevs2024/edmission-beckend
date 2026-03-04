@@ -5,7 +5,7 @@ import app from './app';
 import { initSocket } from './socket';
 import { startRecommendationWorker } from './workers/recommendation.worker';
 import { logger } from './utils/logger';
-import * as ollama from './ai/ollama.client';
+import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
 
 const httpServer = http.createServer(app);
@@ -33,12 +33,17 @@ async function start() {
     // Не выходим: порт 4000 остаётся слушать, фронт получит ответ на /api/health. Регистрация и т.д. вернут 503, пока не поднимется MongoDB.
   }
 
-  ollama.healthCheck().then((ok) => {
-    if (ok) logger.info({ model: config.ollama.model }, 'Ollama reachable — AI chat ready');
-    else logger.warn({ baseUrl: config.ollama.baseUrl }, 'Ollama not reachable — start Ollama and pull the model (e.g. ollama pull deepseek-r1:8b); AI chat will return 503 until then');
-  }).catch(() => {
-    logger.warn({ baseUrl: config.ollama.baseUrl }, 'Ollama not reachable — AI chat will return 503 until Ollama is running');
-  });
+  if (aiProvider.useDeepSeek()) {
+    aiProvider.healthCheck().then((ok) => {
+      if (ok) logger.info({ model: aiProvider.getModelName() }, 'DeepSeek API — AI assistant ready');
+      else logger.warn('DeepSeek API key set but health check failed; AI chat may return 503');
+    }).catch(() => logger.warn('DeepSeek API health check failed'));
+  } else {
+    aiProvider.healthCheck().then((ok) => {
+      if (ok) logger.info({ model: aiProvider.getModelName() }, 'Ollama reachable — AI chat ready');
+      else logger.warn('Ollama not reachable — set DEEPSEEK_API_KEY or start Ollama; AI chat will return 503 until then');
+    }).catch(() => logger.warn('Ollama not reachable'));
+  }
 }
 
 start().catch((e) => {

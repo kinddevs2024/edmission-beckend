@@ -1,6 +1,6 @@
 import { buildContext } from '../ai/context.builder';
 import { getSystemPrompt } from '../ai/prompts';
-import * as ollama from '../ai/ollama.client';
+import * as aiProvider from '../ai/provider';
 import * as subscriptionService from './subscription.service';
 import { AIConversation } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
@@ -38,7 +38,7 @@ export async function chat(userId: string, role: Role, input: ChatInput): Promis
     userContent = `[The user selected this part of your previous answer and is asking about it]\n"${input.selectedText.trim()}"\n\nUser's question: ${userContent}`;
   }
 
-  const messages: ollama.ChatMessage[] = [
+  const messages: aiProvider.ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...history.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     { role: 'user', content: userContent },
@@ -46,7 +46,7 @@ export async function chat(userId: string, role: Role, input: ChatInput): Promis
 
   try {
     const model = await subscriptionService.getChatModel(userId, role);
-    const reply = await ollama.chat(messages, model);
+    const reply = await aiProvider.chat(messages, model);
 
     await AIConversation.findOneAndUpdate(
       { userId, role },

@@ -1,5 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
+import * as aiProvider from '../ai/provider';
 import * as aiService from '../services/ai.service';
+
+export async function status(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const ok = await aiProvider.healthCheck();
+    res.json({ ok, model: aiProvider.getModelName() });
+  } catch (e) {
+    next(e);
+  }
+}
 
 export async function chat(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
