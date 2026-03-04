@@ -4,6 +4,7 @@ import * as aiProvider from '../ai/provider';
 import * as subscriptionService from './subscription.service';
 import { AIConversation } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { logger } from '../utils/logger';
 import type { Role } from '../types/role';
 
 export interface ChatHistoryItem {
@@ -57,8 +58,15 @@ export async function chat(userId: string, role: Role, input: ChatInput): Promis
     return reply;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    logger.warn({ err: msg }, 'AI chat error');
     if (msg === 'AI_TIMEOUT') {
       throw new AppError(504, 'AI response timeout', ErrorCodes.AI_TIMEOUT);
+    }
+    if (msg.includes('insufficient_quota') || msg.includes('Insufficient quota')) {
+      throw new AppError(503, 'AI quota exceeded. Please check your API credits.', ErrorCodes.AI_UNAVAILABLE);
+    }
+    if (msg.includes('is not set') || msg.includes('invalid_api_key')) {
+      throw new AppError(503, 'AI API key is missing or invalid.', ErrorCodes.AI_UNAVAILABLE);
     }
     throw new AppError(503, 'AI service unavailable', ErrorCodes.AI_UNAVAILABLE);
   }
