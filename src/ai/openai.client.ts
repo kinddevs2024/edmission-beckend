@@ -43,7 +43,12 @@ export async function chat(messages: ChatMessage[], _model?: string): Promise<st
     if (!res.ok) {
       const text = await res.text()
       logger.warn({ status: res.status, body: text }, 'OpenAI API error')
-      throw new Error(`OpenAI API error: ${res.status}`)
+      let errMsg = `OpenAI API error: ${res.status}`
+      try {
+        const errJson = JSON.parse(text) as { error?: { message?: string } }
+        if (errJson.error?.message) errMsg = errJson.error.message
+      } catch (_) { /* ignore */ }
+      throw new Error(errMsg)
     }
 
     const data = (await res.json()) as {

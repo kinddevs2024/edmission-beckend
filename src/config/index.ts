@@ -1,6 +1,17 @@
+import path from 'path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+// Load .env from project root (works when PM2 runs node dist/index.js from any cwd)
+const roots = [
+  require.main?.filename ? path.join(path.dirname(require.main.filename), '..') : null,
+  path.join(__dirname, '..', '..'), // from dist/config -> project root
+  process.cwd(),
+].filter(Boolean) as string[];
+for (const root of roots) {
+  const envPath = path.join(root, '.env');
+  const result = dotenv.config({ path: envPath });
+  if (!result.error) break;
+}
 
 export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',

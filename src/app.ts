@@ -7,6 +7,7 @@ import { config } from './config';
 import { errorHandler } from './middlewares/errorHandler.middleware';
 import routes from './routes';
 import { swaggerSpec } from './swagger';
+import * as aiProvider from './ai/provider';
 
 const app = express();
 
@@ -19,7 +20,7 @@ app.use(express.json({
   },
 }));
 
-/** Единый обработчик health: JSON со статусом и IP */
+/** Единый обработчик health: JSON со статусом, IP и AI provider */
 function healthHandler(
   req: express.Request,
   res: express.Response
@@ -28,10 +29,13 @@ function healthHandler(
     (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
     req.socket?.remoteAddress ||
     '';
+  const aiProviderName = aiProvider.useOpenAI() ? 'openai' : aiProvider.useGemini() ? 'gemini' : aiProvider.useDeepSeek() ? 'deepseek' : 'ollama';
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     ip,
+    aiProvider: aiProviderName,
+    aiModel: aiProvider.getModelName(),
   });
 }
 

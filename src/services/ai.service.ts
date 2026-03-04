@@ -65,9 +65,15 @@ export async function chat(userId: string, role: Role, input: ChatInput): Promis
     if (msg.includes('insufficient_quota') || msg.includes('Insufficient quota')) {
       throw new AppError(503, 'AI quota exceeded. Please check your API credits.', ErrorCodes.AI_UNAVAILABLE);
     }
-    if (msg.includes('is not set') || msg.includes('invalid_api_key')) {
+    if (msg.includes('is not set') || msg.includes('invalid_api_key') || msg.includes('Invalid API key') || msg.includes('401')) {
       throw new AppError(503, 'AI API key is missing or invalid.', ErrorCodes.AI_UNAVAILABLE);
     }
-    throw new AppError(503, 'AI service unavailable', ErrorCodes.AI_UNAVAILABLE);
+    if (msg.includes('429') || msg.includes('rate_limit')) {
+      throw new AppError(503, 'AI rate limit exceeded. Try again later.', ErrorCodes.AI_UNAVAILABLE);
+    }
+    if (msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
+      throw new AppError(503, 'AI service unreachable. Check server network.', ErrorCodes.AI_UNAVAILABLE);
+    }
+    throw new AppError(503, `AI service unavailable: ${msg}`, ErrorCodes.AI_UNAVAILABLE);
   }
 }
