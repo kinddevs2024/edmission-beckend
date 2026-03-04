@@ -38,6 +38,11 @@ export const config = {
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
   },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || '',
+    model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    chatTimeoutMs: parseInt(process.env.AI_CHAT_TIMEOUT_MS || '60000', 10),
+  },
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY || '',

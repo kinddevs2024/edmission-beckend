@@ -35,6 +35,8 @@ async function start() {
 
   if (aiProvider.useOpenAI()) {
     logger.info({ model: aiProvider.getModelName() }, 'OpenAI (ChatGPT) — AI assistant ready');
+  } else if (aiProvider.useGemini()) {
+    logger.info({ model: aiProvider.getModelName() }, 'Gemini — AI assistant ready');
   } else if (aiProvider.useDeepSeek()) {
     aiProvider.healthCheck().then((ok) => {
       if (ok) logger.info({ model: aiProvider.getModelName() }, 'DeepSeek API — AI assistant ready');
