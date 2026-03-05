@@ -11,7 +11,9 @@ import * as aiProvider from './ai/provider';
 
 const app = express();
 
-app.use(helmet());
+// Disable default CSP that blocks eval(); some libs (e.g. Swagger UI, dev tools) use it.
+// To re-enable CSP, set contentSecurityPolicy with explicit directives instead of false.
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json({
