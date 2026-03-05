@@ -33,6 +33,7 @@ export const config = {
       'http://edmission.uz',
     ],
   },
+  enableSwagger: process.env.ENABLE_SWAGGER === 'true',
   ollama: {
     baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
     model: process.env.OLLAMA_MODEL || 'deepseek-r1:1.5b',
@@ -68,3 +69,14 @@ export const config = {
     enabled: process.env.EMAIL_ENABLED === 'true',
   },
 };
+
+if (config.nodeEnv === 'production') {
+  const insecureJwt =
+    !process.env.JWT_SECRET ||
+    !process.env.JWT_REFRESH_SECRET ||
+    process.env.JWT_SECRET === 'dev-secret' ||
+    process.env.JWT_REFRESH_SECRET === 'dev-refresh-secret';
+  if (insecureJwt) {
+    throw new Error('Insecure JWT configuration in production. Set strong JWT_SECRET and JWT_REFRESH_SECRET.');
+  }
+}

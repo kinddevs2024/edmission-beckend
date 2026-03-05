@@ -1,6 +1,14 @@
 import rateLimit from 'express-rate-limit';
 import { config } from '../config';
 
+export const globalApiRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: config.nodeEnv === 'production' ? 120 : 500,
+  message: { message: 'Too many requests', code: 'RATE_LIMIT_EXCEEDED' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,

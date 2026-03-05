@@ -19,11 +19,9 @@ router.use('/uploads', express.static(path.resolve(config.uploadDir)));
 
 /** Health check под /api/health — для проверки доступности API с фронта */
 router.get('/health', (_req: Request, res: Response) => {
-  const ip = (_req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || _req.socket?.remoteAddress || '';
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    ip,
   });
 });
 

@@ -7,15 +7,31 @@ import { config } from './config';
 import { errorHandler } from './middlewares/errorHandler.middleware';
 import routes from './routes';
 import { swaggerSpec } from './swagger';
-import * as aiProvider from './ai/provider';
+import { globalApiRateLimiter } from './middlewares/rateLimit.middleware';
 
 const app = express();
 
-// Disable default CSP that blocks eval(); some libs (e.g. Swagger UI, dev tools) use it.
-// To re-enable CSP, set contentSecurityPolicy with explicit directives instead of false.
-app.use(helmet({ contentSecurityPolicy: false }));
+app.disable('x-powered-by');
+app.use(helmet({
+  contentSecurityPolicy: config.enableSwagger
+    ? false
+    : {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: ["'self'", 'https:'],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(cookieParser());
+app.use('/api', globalApiRateLimiter);
 app.use(express.json({
   verify: (req: express.Request, _res, buf: Buffer) => {
     if (req.originalUrl === '/api/payment/webhook') (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
@@ -24,20 +40,13 @@ app.use(express.json({
 
 /** Единый обработчик health: JSON со статусом, IP и AI provider */
 function healthHandler(
-  req: express.Request,
+  _req: express.Request,
   res: express.Response
 ): void {
-  const ip =
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    '';
-  const aiProviderName = aiProvider.useOpenAI() ? 'openai' : aiProvider.useGemini() ? 'gemini' : aiProvider.useDeepSeek() ? 'deepseek' : 'ollama';
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    ip,
-    aiProvider: aiProviderName,
-    aiModel: aiProvider.getModelName(),
+    environment: config.nodeEnv,
   });
 }
 
@@ -52,7 +61,9 @@ app.get('/api', (_req, res) => {
   res.json({ ok: true, message: 'Edmission API', paths: ['/api/health', '/api/auth/register', '/api/auth/login', '/api/auth/me'] });
 });
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
+if (config.enableSwagger || config.nodeEnv !== 'production') {
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
+}
 
 app.use('/api', routes);
 
