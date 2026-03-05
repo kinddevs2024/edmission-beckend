@@ -83,6 +83,8 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   }
   if (data.bio !== undefined) update.bio = String(data.bio);
   if (data.avatarUrl !== undefined) update.avatarUrl = String(data.avatarUrl);
+  if (data.budgetAmount !== undefined) update.budgetAmount = data.budgetAmount != null && data.budgetAmount !== '' ? Number(data.budgetAmount) : null;
+  if (data.budgetCurrency !== undefined) update.budgetCurrency = data.budgetCurrency != null && String(data.budgetCurrency).trim() !== '' ? String(data.budgetCurrency).trim() : 'USD';
   if (data.educationStatus !== undefined) {
     const v = data.educationStatus as string;
     update.educationStatus = ['in_school', 'finished_school', 'in_university', 'finished_university'].includes(v) ? v : null;

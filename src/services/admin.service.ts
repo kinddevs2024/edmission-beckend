@@ -11,6 +11,14 @@ import {
   Interest,
   Chat,
   Message,
+  Notification,
+  RefreshToken,
+  AIConversation,
+  Ticket,
+  Recommendation,
+  Faculty,
+  Program,
+  StudentDocument,
 } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
@@ -228,8 +236,64 @@ export async function suspendUser(userId: string, suspend: boolean) {
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 
+/** Delete a user and all related data. Cannot delete default admin or other admins. */
+export async function deleteUser(userId: string) {
+  const user = await User.findById(userId);
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot delete default admin', ErrorCodes.FORBIDDEN);
+  if (user.role === 'admin') throw new AppError(403, 'Cannot delete admin users', ErrorCodes.FORBIDDEN);
+
+  const id = user._id;
+  const role = user.role as string;
+
+  await RefreshToken.deleteMany({ userId: id });
+  await Notification.deleteMany({ userId: id });
+  await ActivityLog.deleteMany({ userId: id });
+  await AIConversation.deleteMany({ userId: id });
+  await Ticket.deleteMany({ userId: id });
+  await Message.deleteMany({ senderId: id });
+  await Subscription.deleteMany({ userId: id });
+
+  if (role === 'student') {
+    const profile = await StudentProfile.findOne({ userId: id });
+    if (profile) {
+      const profileId = profile._id;
+      await Interest.deleteMany({ studentId: profileId });
+      await Offer.deleteMany({ studentId: profileId });
+      await Recommendation.deleteMany({ studentId: profileId });
+      await StudentDocument.deleteMany({ studentId: profileId });
+      const chatIds = (await Chat.find({ studentId: profileId }).select('_id').lean()).map((c) => c._id);
+      if (chatIds.length > 0) await Message.deleteMany({ chatId: { $in: chatIds } });
+      await Chat.deleteMany({ studentId: profileId });
+      await StudentProfile.deleteOne({ _id: profileId });
+    }
+  } else if (role === 'university') {
+    const profile = await UniversityProfile.findOne({ userId: id });
+    if (profile) {
+      const profileId = profile._id;
+      await Interest.deleteMany({ universityId: profileId });
+      await Offer.deleteMany({ universityId: profileId });
+      await Scholarship.deleteMany({ universityId: profileId });
+      await Faculty.deleteMany({ universityId: profileId });
+      await Program.deleteMany({ universityId: profileId });
+      await UniversityDocument.deleteMany({ universityId: profileId });
+      await Recommendation.deleteMany({ universityId: profileId });
+      const chatIds = (await Chat.find({ universityId: profileId }).select('_id').lean()).map((c) => c._id);
+      if (chatIds.length > 0) await Message.deleteMany({ chatId: { $in: chatIds } });
+      await Chat.deleteMany({ universityId: profileId });
+      await UniversityProfile.deleteOne({ _id: profileId });
+    }
+  }
+
+  await User.deleteOne({ _id: id });
+  return { deleted: true };
+}
+
 export async function getVerificationQueue() {
-  const list = await UniversityProfile.find({ verified: false })
+  const list = await UniversityProfile.find({
+    verified: false,
+    verificationRejectedAt: { $in: [null, undefined] },
+  })
     .populate('userId', 'email')
     .lean();
   const withDocs = await Promise.all(
@@ -250,7 +314,10 @@ export async function getVerificationQueue() {
 export async function verifyUniversity(universityId: string, approve: boolean) {
   const uni = await UniversityProfile.findById(universityId);
   if (!uni) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
-  const updated = await UniversityProfile.findByIdAndUpdate(universityId, { verified: approve }, { new: true }).lean();
+  const update = approve
+    ? { verified: true, verificationRejectedAt: null }
+    : { verified: false, verificationRejectedAt: new Date() };
+  const updated = await UniversityProfile.findByIdAndUpdate(universityId, update, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 

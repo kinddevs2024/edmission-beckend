@@ -13,6 +13,7 @@ router.get('/users', adminController.getUsers);
 router.post('/users', adminController.createUser);
 router.get('/users/:id', adminController.getUser);
 router.patch('/users/:id', adminController.updateUser);
+router.delete('/users/:id', adminController.deleteUser);
 router.post('/users/:id/reset-password', adminController.resetUserPassword);
 router.patch('/users/:id/suspend', adminController.suspendUser);
 router.get('/users/:id/student-profile', adminController.getStudentProfileByUser);

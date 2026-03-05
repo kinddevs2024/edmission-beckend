@@ -12,6 +12,8 @@ const universityProfileSchema = new mongoose.Schema(
     description: String,
     logoUrl: String,
     verified: { type: Boolean, default: false },
+    /** Set when admin explicitly rejects verification; such universities are excluded from the queue */
+    verificationRejectedAt: { type: Date },
     onboardingCompleted: { type: Boolean, default: false },
     needsRecalculation: { type: Boolean, default: true },
     /** Faculty codes offered by this university (from predefined catalog) */

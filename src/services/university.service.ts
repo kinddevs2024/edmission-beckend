@@ -140,6 +140,8 @@ export async function getStudents(
     languages?: string[];
     certType?: string;
     certMinScore?: string;
+    minBudget?: number;
+    maxBudget?: number;
   }
 ) {
   const profile = await UniversityProfile.findOne({ userId });
@@ -180,6 +182,16 @@ export async function getStudents(
   const languages = Array.isArray(query.languages) ? query.languages.filter(Boolean) : [];
   if (languages.length > 0) filter['languages.language'] = { $in: languages };
 
+  const minBudget = query.minBudget != null && Number.isFinite(Number(query.minBudget)) ? Number(query.minBudget) : undefined;
+  const maxBudget = query.maxBudget != null && Number.isFinite(Number(query.maxBudget)) ? Number(query.maxBudget) : undefined;
+  if (minBudget != null && maxBudget != null) {
+    filter.budgetAmount = { $gte: minBudget, $lte: maxBudget };
+  } else if (minBudget != null) {
+    filter.budgetAmount = { $gte: minBudget };
+  } else if (maxBudget != null) {
+    filter.budgetAmount = { $lte: maxBudget };
+  }
+
   let certStudentIds: unknown[] | undefined;
   if (query.certType?.trim()) {
     const certFilter: Record<string, unknown> = {
@@ -198,7 +210,7 @@ export async function getStudents(
 
   const [students, total, interestStudentIds] = await Promise.all([
     StudentProfile.find(filter)
-      .select('firstName lastName avatarUrl country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries')
+      .select('firstName lastName avatarUrl country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency')
       .sort({ gpa: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)

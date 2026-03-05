@@ -84,6 +84,9 @@ const studentProfileSchema = new mongoose.Schema(
     interestedFaculties: [String],
     /** Country codes where student wants to study (e.g. 'UZ', 'KZ') */
     preferredCountries: [String],
+    /** Student's budget for studies (amount per year or total, in budgetCurrency) */
+    budgetAmount: { type: Number },
+    budgetCurrency: { type: String, default: 'USD' },
   },
   { timestamps: true }
 );
@@ -98,5 +101,6 @@ studentProfileSchema.index({ interests: 1 });
 studentProfileSchema.index({ hobbies: 1 });
 studentProfileSchema.index({ interestedFaculties: 1 });
 studentProfileSchema.index({ preferredCountries: 1 });
+studentProfileSchema.index({ budgetAmount: 1 });
 
 export const StudentProfile = mongoose.model('StudentProfile', studentProfileSchema);

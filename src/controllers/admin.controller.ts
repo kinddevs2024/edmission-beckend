@@ -59,6 +59,15 @@ export async function updateUser(req: Request, res: Response, next: NextFunction
   }
 }
 
+export async function deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.deleteUser(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function resetUserPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = req.body as { password?: string };
@@ -198,7 +207,8 @@ export async function getVerificationQueue(req: Request, res: Response, next: Ne
 
 export async function verifyUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const approve = req.body.approve !== false;
+    const raw = req.body.approve;
+    const approve = raw === true || raw === 'true';
     const data = await adminService.verifyUniversity(req.params.id, approve);
     res.json(data);
   } catch (e) {
