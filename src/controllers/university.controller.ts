@@ -259,7 +259,7 @@ export async function getCatalog(req: Request, res: Response, next: NextFunction
 export async function createVerificationRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = req.body as { universityId?: string };
+    const body = req.body as { universityId?: string; universityCatalogId?: string };
     const universityId = body.universityId ?? body.universityCatalogId;
     if (!universityId) {
       res.status(400).json({ message: 'universityId required' });
