@@ -2,6 +2,8 @@ export { User } from './User';
 export { RefreshToken } from './RefreshToken';
 export { StudentProfile } from './StudentProfile';
 export { UniversityProfile } from './UniversityProfile';
+export { UniversityCatalog } from './UniversityCatalog';
+export { UniversityVerificationRequest } from './UniversityVerificationRequest';
 export { Program } from './Program';
 export { Faculty } from './Faculty';
 export { Scholarship } from './Scholarship';

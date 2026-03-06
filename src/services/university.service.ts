@@ -2,6 +2,8 @@ import {
   User,
   StudentProfile,
   UniversityProfile,
+  UniversityCatalog,
+  UniversityVerificationRequest,
   Program,
   Scholarship,
   Faculty,
@@ -505,4 +507,42 @@ export async function getRecommendations(userId: string) {
     .populate('studentId')
     .lean();
   return list.map((r) => ({ ...r, id: String((r as { _id: unknown })._id), student: (r as { studentId?: unknown }).studentId }));
+}
+
+/** List catalog universities for selection page (no auth to profile required). */
+export async function getCatalogUniversities(query?: { search?: string; country?: string }) {
+  const filter: Record<string, unknown> = {};
+  if (query?.country?.trim()) filter.country = query.country.trim();
+  if (query?.search?.trim()) {
+    filter.$or = [
+      { universityName: new RegExp(query.search.trim(), 'i') },
+      { city: new RegExp(query.search.trim(), 'i') },
+    ];
+  }
+  const list = await UniversityCatalog.find(filter).sort({ universityName: 1 }).lean();
+  return list.map((u) => ({
+    ...u,
+    id: String((u as { _id: unknown })._id),
+    name: (u as { universityName?: string }).universityName ?? '',
+  }));
+}
+
+/** Create verification request: user claims a catalog university. */
+export async function createVerificationRequest(userId: string, universityCatalogId: string) {
+  const catalog = await UniversityCatalog.findById(universityCatalogId);
+  if (!catalog) throw new AppError(404, 'University not found in catalog', ErrorCodes.NOT_FOUND);
+  const existing = await UniversityVerificationRequest.findOne({
+    userId,
+    universityCatalogId,
+    status: 'pending',
+  });
+  if (existing) throw new AppError(400, 'Request already sent for this university', ErrorCodes.CONFLICT);
+  const existingProfile = await UniversityProfile.findOne({ userId });
+  if (existingProfile) throw new AppError(400, 'University profile already exists', ErrorCodes.CONFLICT);
+  const req = await UniversityVerificationRequest.create({
+    universityCatalogId,
+    userId,
+    status: 'pending',
+  });
+  return { id: String((req as { _id: unknown })._id), status: 'pending' };
 }

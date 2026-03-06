@@ -22,6 +22,13 @@ router.get('/users/:id/university-profile', adminController.getUniversityProfile
 router.patch('/users/:id/university-profile', adminController.updateUniversityProfileByUser);
 router.get('/universities/verification', adminController.getVerificationQueue);
 router.post('/universities/:id/verify', adminController.verifyUniversity);
+router.get('/universities', adminController.getCatalogUniversities);
+router.post('/universities', adminController.createCatalogUniversity);
+router.get('/universities/:id', adminController.getCatalogUniversity);
+router.patch('/universities/:id', adminController.updateCatalogUniversity);
+router.get('/university-requests', adminController.getUniversityVerificationRequests);
+router.post('/university-requests/:id/approve', adminController.approveUniversityRequest);
+router.post('/university-requests/:id/reject', adminController.rejectUniversityRequest);
 router.get('/scholarships', adminController.getScholarships);
 router.get('/logs', adminController.getLogs);
 router.get('/health', adminController.getHealth);

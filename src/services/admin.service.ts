@@ -3,6 +3,8 @@ import {
   User,
   StudentProfile,
   UniversityProfile,
+  UniversityCatalog,
+  UniversityVerificationRequest,
   Offer,
   Scholarship,
   ActivityLog,
@@ -396,4 +398,216 @@ export async function getPendingDocuments() {
 
 export async function reviewDocument(docId: string, adminUserId: string, decision: 'approved' | 'rejected', rejectionReason?: string) {
   return studentDocumentService.reviewDocument(docId, adminUserId, decision, rejectionReason);
+}
+
+// ——— University catalog (for registration flow) ———
+
+export async function getCatalogUniversities(query: { page?: number; limit?: number; search?: string }) {
+  const page = Math.max(1, query.page ?? 1);
+  const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+  const skip = (page - 1) * limit;
+  const filter: Record<string, unknown> = {};
+  if (query.search?.trim()) {
+    filter.$or = [
+      { universityName: new RegExp(query.search.trim(), 'i') },
+      { city: new RegExp(query.search.trim(), 'i') },
+      { country: new RegExp(query.search.trim(), 'i') },
+    ];
+  }
+  const [list, total] = await Promise.all([
+    UniversityCatalog.find(filter).sort({ universityName: 1 }).skip(skip).limit(limit).lean(),
+    UniversityCatalog.countDocuments(filter),
+  ]);
+  return {
+    data: list.map((u) => ({ ...u, id: String((u as { _id: unknown })._id), name: (u as { universityName?: string }).universityName ?? '' })),
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  };
+}
+
+export async function createCatalogUniversity(body: Record<string, unknown>) {
+  const doc = await UniversityCatalog.create({
+    universityName: typeof body.universityName === 'string' ? body.universityName : '',
+    tagline: typeof body.tagline === 'string' ? body.tagline : undefined,
+    establishedYear: typeof body.establishedYear === 'number' ? body.establishedYear : undefined,
+    studentCount: typeof body.studentCount === 'number' ? body.studentCount : undefined,
+    country: typeof body.country === 'string' ? body.country : undefined,
+    city: typeof body.city === 'string' ? body.city : undefined,
+    description: typeof body.description === 'string' ? body.description : undefined,
+    logoUrl: typeof body.logoUrl === 'string' ? body.logoUrl : undefined,
+    facultyCodes: Array.isArray(body.facultyCodes) ? body.facultyCodes.map(String).filter(Boolean).slice(0, 50) : undefined,
+    targetStudentCountries: Array.isArray(body.targetStudentCountries) ? body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) : undefined,
+    programs: Array.isArray(body.programs) ? body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
+      name: p.name != null ? String(p.name) : '',
+      degreeLevel: p.degreeLevel != null ? String(p.degreeLevel) : '',
+      field: p.field != null ? String(p.field) : '',
+      durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
+      tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
+      language: p.language != null ? String(p.language) : undefined,
+      entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
+    })) : undefined,
+    scholarships: Array.isArray(body.scholarships) ? body.scholarships.slice(0, 30).map((s: Record<string, unknown>) => ({
+      name: s.name != null ? String(s.name) : '',
+      coveragePercent: s.coveragePercent != null ? Number(s.coveragePercent) : 0,
+      maxSlots: s.maxSlots != null ? Number(s.maxSlots) : 0,
+      deadline: s.deadline ? new Date(s.deadline as string) : undefined,
+      eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
+    })) : undefined,
+  });
+  return { ...doc.toObject(), id: String(doc._id) };
+}
+
+export async function getCatalogUniversityById(id: string) {
+  const doc = await UniversityCatalog.findById(id).lean();
+  if (!doc) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
+  return { ...doc, id: String((doc as { _id: unknown })._id), name: (doc as { universityName?: string }).universityName ?? '' };
+}
+
+export async function updateCatalogUniversity(id: string, body: Record<string, unknown>) {
+  const doc = await UniversityCatalog.findByIdAndUpdate(
+    id,
+    {
+      ...(typeof body.universityName === 'string' && { universityName: body.universityName }),
+      ...(typeof body.tagline === 'string' && { tagline: body.tagline }),
+      ...(typeof body.establishedYear === 'number' && { establishedYear: body.establishedYear }),
+      ...(typeof body.studentCount === 'number' && { studentCount: body.studentCount }),
+      ...(typeof body.country === 'string' && { country: body.country }),
+      ...(typeof body.city === 'string' && { city: body.city }),
+      ...(typeof body.description === 'string' && { description: body.description }),
+      ...(typeof body.logoUrl === 'string' && { logoUrl: body.logoUrl }),
+      ...(Array.isArray(body.facultyCodes) && { facultyCodes: body.facultyCodes.map(String).filter(Boolean).slice(0, 50) }),
+      ...(Array.isArray(body.targetStudentCountries) && { targetStudentCountries: body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) }),
+      ...(Array.isArray(body.programs) && {
+        programs: body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
+          name: p.name != null ? String(p.name) : '',
+          degreeLevel: p.degreeLevel != null ? String(p.degreeLevel) : '',
+          field: p.field != null ? String(p.field) : '',
+          durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
+          tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
+          language: p.language != null ? String(p.language) : undefined,
+          entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
+        })),
+      }),
+      ...(Array.isArray(body.scholarships) && {
+        scholarships: body.scholarships.slice(0, 30).map((s: Record<string, unknown>) => ({
+          name: s.name != null ? String(s.name) : '',
+          coveragePercent: s.coveragePercent != null ? Number(s.coveragePercent) : 0,
+          maxSlots: s.maxSlots != null ? Number(s.maxSlots) : 0,
+          deadline: s.deadline ? new Date(s.deadline as string) : undefined,
+          eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
+        })),
+      }),
+    },
+    { new: true }
+  ).lean();
+  if (!doc) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
+  return { ...doc, id: String((doc as { _id: unknown })._id) };
+}
+
+export async function getUniversityVerificationRequests(query: { status?: string }) {
+  const filter: Record<string, string> = {};
+  if (query.status === 'pending' || query.status === 'approved' || query.status === 'rejected') filter.status = query.status;
+  const list = await UniversityVerificationRequest.find(filter)
+    .populate('universityCatalogId', 'universityName country city')
+    .populate('userId', 'email')
+    .sort({ createdAt: -1 })
+    .lean();
+  return list.map((r: Record<string, unknown>) => {
+    const catalog = r.universityCatalogId as { universityName?: string; country?: string; city?: string } | undefined;
+    const user = r.userId as { email?: string } | undefined;
+    return {
+      ...r,
+      id: String(r._id),
+      university: catalog ? { name: catalog.universityName, country: catalog.country, city: catalog.city } : undefined,
+      userEmail: user?.email,
+    };
+  });
+}
+
+export async function approveUniversityRequest(requestId: string, adminUserId: string) {
+  const request = await UniversityVerificationRequest.findById(requestId).populate('universityCatalogId');
+  if (!request) throw new AppError(404, 'Request not found', ErrorCodes.NOT_FOUND);
+  if ((request as { status: string }).status !== 'pending') {
+    throw new AppError(400, 'Request already processed', ErrorCodes.CONFLICT);
+  }
+  const catalog = request.universityCatalogId as unknown as { _id: unknown; universityName: string; tagline?: string; establishedYear?: number; studentCount?: number; country?: string; city?: string; description?: string; logoUrl?: string; facultyCodes?: string[]; targetStudentCountries?: string[]; programs?: Array<Record<string, unknown>>; scholarships?: Array<Record<string, unknown>> };
+  if (!catalog) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
+  const userId = (request as { userId: unknown }).userId;
+
+  const profile = await UniversityProfile.create({
+    userId,
+    universityName: catalog.universityName ?? '',
+    tagline: catalog.tagline,
+    establishedYear: catalog.establishedYear,
+    studentCount: catalog.studentCount,
+    country: catalog.country,
+    city: catalog.city,
+    description: catalog.description,
+    logoUrl: catalog.logoUrl,
+    verified: true,
+    onboardingCompleted: false,
+    facultyCodes: catalog.facultyCodes ?? [],
+    targetStudentCountries: catalog.targetStudentCountries ?? [],
+  });
+
+  const programs = catalog.programs ?? [];
+  for (const p of programs) {
+    await Program.create({
+      universityId: profile._id,
+      name: p.name ?? '',
+      degreeLevel: p.degreeLevel ?? '',
+      field: p.field ?? '',
+      durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
+      tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
+      language: p.language != null ? String(p.language) : undefined,
+      entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
+    });
+  }
+
+  const scholarships = catalog.scholarships ?? [];
+  for (const s of scholarships) {
+    const maxSlots = s.maxSlots != null ? Number(s.maxSlots) : 1;
+    await Scholarship.create({
+      universityId: profile._id,
+      name: s.name ?? '',
+      coveragePercent: s.coveragePercent != null ? Number(s.coveragePercent) : 0,
+      maxSlots,
+      remainingSlots: maxSlots,
+      deadline: s.deadline ? new Date(s.deadline as string) : undefined,
+      eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
+    });
+  }
+
+  await UniversityVerificationRequest.findByIdAndUpdate(requestId, {
+    status: 'approved',
+    reviewedAt: new Date(),
+    reviewedBy: adminUserId,
+  });
+
+  const notificationService = await import('./notification.service');
+  await notificationService.createNotification(String(userId), {
+    type: 'university_approved',
+    title: 'University account approved',
+    body: `Your request for ${catalog.universityName} has been approved. You can now sign in and complete your profile.`,
+    referenceType: 'university',
+    referenceId: String(profile._id),
+  });
+
+  return { approved: true, profileId: String(profile._id) };
+}
+
+export async function rejectUniversityRequest(requestId: string, adminUserId: string) {
+  const request = await UniversityVerificationRequest.findById(requestId);
+  if (!request) throw new AppError(404, 'Request not found', ErrorCodes.NOT_FOUND);
+  if ((request as { status: string }).status !== 'pending') {
+    throw new AppError(400, 'Request already processed', ErrorCodes.CONFLICT);
+  }
+  await UniversityVerificationRequest.findByIdAndUpdate(requestId, {
+    status: 'rejected',
+    reviewedAt: new Date(),
+    reviewedBy: adminUserId,
+  });
+  return { rejected: true };
 }

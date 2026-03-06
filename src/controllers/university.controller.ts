@@ -242,3 +242,32 @@ export async function deleteFaculty(req: Request, res: Response, next: NextFunct
     next(e);
   }
 }
+
+export async function getCatalog(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { search, country } = req.query;
+    const data = await universityService.getCatalogUniversities({
+      search: typeof search === 'string' ? search : undefined,
+      country: typeof country === 'string' ? country : undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createVerificationRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const body = req.body as { universityId?: string };
+    const universityId = body.universityId ?? body.universityCatalogId;
+    if (!universityId) {
+      res.status(400).json({ message: 'universityId required' });
+      return;
+    }
+    const data = await universityService.createVerificationRequest(req.user.id, universityId);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}

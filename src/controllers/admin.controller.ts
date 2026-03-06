@@ -377,3 +377,76 @@ export async function reviewDocument(req: Request, res: Response, next: NextFunc
     next(e);
   }
 }
+
+// ——— University catalog & verification requests ———
+
+export async function getCatalogUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { page, limit, search } = req.query;
+    const data = await adminService.getCatalogUniversities({
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      search: search as string,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createCatalogUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.createCatalogUniversity(req.body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getCatalogUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.getCatalogUniversityById(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateCatalogUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.updateCatalogUniversity(req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getUniversityVerificationRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { status } = req.query;
+    const data = await adminService.getUniversityVerificationRequests({ status: status as string });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function approveUniversityRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await adminService.approveUniversityRequest(req.params.id, req.user.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function rejectUniversityRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await adminService.rejectUniversityRequest(req.params.id, req.user.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}

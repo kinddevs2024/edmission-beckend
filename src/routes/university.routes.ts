@@ -8,6 +8,9 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRole('university'));
 
+router.get('/catalog', universityController.getCatalog);
+router.post('/verification-request', universityController.createVerificationRequest);
+
 router.get('/profile', universityController.getProfile);
 router.put('/profile', universityController.updateProfile);
 router.get('/dashboard', universityController.getDashboard);
