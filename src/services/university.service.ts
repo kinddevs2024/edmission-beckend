@@ -142,6 +142,7 @@ export async function getStudents(
     certMinScore?: string;
     minBudget?: number;
     maxBudget?: number;
+    useProfileFilters?: boolean;
   }
 ) {
   const profile = await UniversityProfile.findOne({ userId });
@@ -150,26 +151,29 @@ export async function getStudents(
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
+  const useProfileFilters = query.useProfileFilters !== false;
 
   const filter: Record<string, unknown> = {};
 
   if (query.country?.trim()) filter.country = query.country.trim();
   if (query.city?.trim()) filter.city = new RegExp(query.city.trim(), 'i');
 
-  // Filter by university's targetStudentCountries if set
-  const targetCountries = Array.isArray((profile as { targetStudentCountries?: string[] }).targetStudentCountries)
-    ? ((profile as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
-    : [];
-  if (targetCountries.length > 0) {
-    filter.country = { $in: targetCountries };
-  }
+  if (useProfileFilters) {
+    // Filter by university's targetStudentCountries if set
+    const targetCountries = Array.isArray((profile as { targetStudentCountries?: string[] }).targetStudentCountries)
+      ? ((profile as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
+      : [];
+    if (targetCountries.length > 0) {
+      filter.country = { $in: targetCountries };
+    }
 
-  // Filter by faculties: student interestedFaculties intersect university facultyCodes
-  const facultyCodes = Array.isArray((profile as { facultyCodes?: string[] }).facultyCodes)
-    ? ((profile as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean)
-    : [];
-  if (facultyCodes.length > 0) {
-    filter.interestedFaculties = { $in: facultyCodes };
+    // Filter by faculties: student interestedFaculties intersect university facultyCodes
+    const facultyCodes = Array.isArray((profile as { facultyCodes?: string[] }).facultyCodes)
+      ? ((profile as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean)
+      : [];
+    if (facultyCodes.length > 0) {
+      filter.interestedFaculties = { $in: facultyCodes };
+    }
   }
 
   const skills = Array.isArray(query.skills) ? query.skills.filter(Boolean) : [];

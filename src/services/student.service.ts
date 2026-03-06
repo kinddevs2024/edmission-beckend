@@ -208,32 +208,38 @@ export async function getDashboard(userId: string) {
   };
 }
 
-export async function getUniversities(userId: string, query: { page?: number; limit?: number; country?: string; city?: string }) {
+export async function getUniversities(
+  userId: string,
+  query: { page?: number; limit?: number; country?: string; city?: string; useProfileFilters?: boolean }
+) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
 
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
+  const useProfileFilters = query.useProfileFilters !== false;
 
-  const where: { country?: string; city?: string; facultyCodes?: unknown; _id?: unknown } = {};
+  const where: { country?: string | { $in: string[] }; city?: string; facultyCodes?: unknown; _id?: unknown } = {};
   if (query.country) where.country = query.country;
   if (query.city && String(query.city).trim()) where.city = String(query.city).trim();
 
-  // Filter by student's preferred countries (where they want to study)
-  const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
-    ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
-    : [];
-  if (preferredCountries.length > 0) {
-    where.country = { $in: preferredCountries } as unknown as string;
-  }
+  if (useProfileFilters) {
+    // Filter by student's preferred countries (where they want to study)
+    const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
+      ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
+      : [];
+    if (preferredCountries.length > 0) {
+      where.country = { $in: preferredCountries };
+    }
 
-  // Filter by student's interested faculties vs university facultyCodes
-  const interestedFaculties = Array.isArray((profile as { interestedFaculties?: string[] }).interestedFaculties)
-    ? ((profile as { interestedFaculties?: string[] }).interestedFaculties ?? []).filter(Boolean)
-    : [];
-  if (interestedFaculties.length > 0) {
-    where.facultyCodes = { $in: interestedFaculties };
+    // Filter by student's interested faculties vs university facultyCodes
+    const interestedFaculties = Array.isArray((profile as { interestedFaculties?: string[] }).interestedFaculties)
+      ? ((profile as { interestedFaculties?: string[] }).interestedFaculties ?? []).filter(Boolean)
+      : [];
+    if (interestedFaculties.length > 0) {
+      where.facultyCodes = { $in: interestedFaculties };
+    }
   }
 
   const [list, total] = await Promise.all([

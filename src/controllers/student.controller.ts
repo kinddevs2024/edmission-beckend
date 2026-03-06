@@ -35,12 +35,14 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
 export async function getUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const { page, limit, country, city } = req.query;
+    const { page, limit, country, city, useProfileFilters } = req.query;
+    const useProfile = useProfileFilters === undefined || useProfileFilters === '1' || useProfileFilters === 'true';
     const data = await studentService.getUniversities(req.user.id, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       country: country as string,
       city: city as string,
+      useProfileFilters: useProfile,
     });
     res.json(data);
   } catch (e) {

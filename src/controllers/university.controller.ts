@@ -46,7 +46,8 @@ export async function getStudentProfile(req: Request, res: Response, next: NextF
 export async function getStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const { page, limit, skills, interests, hobbies, country, city, languages, certType, certMinScore, minBudget, maxBudget } = req.query;
+    const { page, limit, skills, interests, hobbies, country, city, languages, certType, certMinScore, minBudget, maxBudget, useProfileFilters } = req.query;
+    const useProfile = useProfileFilters === undefined || useProfileFilters === '1' || useProfileFilters === 'true';
     const toArray = (v: unknown): string[] =>
       v == null ? [] : typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : Array.isArray(v) ? v.map(String) : [];
     const data = await universityService.getStudents(req.user.id, {
@@ -62,6 +63,7 @@ export async function getStudents(req: Request, res: Response, next: NextFunctio
       certMinScore: typeof certMinScore === 'string' ? certMinScore : undefined,
       minBudget: minBudget != null ? Number(minBudget) : undefined,
       maxBudget: maxBudget != null ? Number(maxBudget) : undefined,
+      useProfileFilters: useProfile,
     });
     res.json(data);
   } catch (e) {
