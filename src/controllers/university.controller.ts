@@ -259,14 +259,22 @@ export async function getCatalog(req: Request, res: Response, next: NextFunction
 export async function createVerificationRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = req.body as { universityId?: string; universityCatalogId?: string };
+    const body = req.body as { universityId?: string; universityCatalogId?: string; universityName?: string; establishedYear?: number };
     const universityId = body.universityId ?? body.universityCatalogId;
-    if (!universityId) {
-      res.status(400).json({ message: 'universityId required' });
+    if (universityId) {
+      const data = await universityService.createVerificationRequest(req.user.id, universityId);
+      res.status(201).json(data);
       return;
     }
-    const data = await universityService.createVerificationRequest(req.user.id, universityId);
-    res.status(201).json(data);
+    if (body.universityName != null && String(body.universityName).trim() !== '') {
+      const data = await universityService.createVerificationRequest(req.user.id, {
+        universityName: String(body.universityName).trim(),
+        establishedYear: body.establishedYear != null ? Number(body.establishedYear) : undefined,
+      });
+      res.status(201).json(data);
+      return;
+    }
+    res.status(400).json({ message: 'universityId or universityName required' });
   } catch (e) {
     next(e);
   }

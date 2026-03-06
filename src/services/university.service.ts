@@ -51,6 +51,7 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     logoUrl?: string;
     onboardingCompleted?: boolean;
     facultyCodes?: string[];
+    facultyItems?: Record<string, string[]>;
     targetStudentCountries?: string[];
   };
   const { programs, ...rest } = raw;
@@ -68,6 +69,17 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   if (rest.facultyCodes !== undefined) {
     const arr = Array.isArray(rest.facultyCodes) ? rest.facultyCodes : [];
     update.facultyCodes = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 50);
+  }
+  if (rest.facultyItems !== undefined) {
+    const val = rest.facultyItems;
+    update.facultyItems =
+      val && typeof val === 'object' && !Array.isArray(val)
+        ? Object.fromEntries(
+            Object.entries(val)
+              .filter(([, arr]) => Array.isArray(arr))
+              .map(([k, arr]) => [k, (arr as string[]).map(String).filter(Boolean).slice(0, 200)])
+          )
+        : undefined;
   }
   if (rest.targetStudentCountries !== undefined) {
     const arr = Array.isArray(rest.targetStudentCountries) ? rest.targetStudentCountries : [];
@@ -527,10 +539,27 @@ export async function getCatalogUniversities(query?: { search?: string; country?
   }));
 }
 
-/** Create verification request: user claims a catalog university. */
-export async function createVerificationRequest(userId: string, universityCatalogId: string) {
-  const catalog = await UniversityCatalog.findById(universityCatalogId);
-  if (!catalog) throw new AppError(404, 'University not found in catalog', ErrorCodes.NOT_FOUND);
+/** Create verification request: user claims a catalog university. If customName/customYear provided, creates a new catalog entry first. */
+export async function createVerificationRequest(
+  userId: string,
+  universityCatalogIdOrCustom: string | { universityName: string; establishedYear?: number }
+) {
+  let universityCatalogId: unknown;
+  if (typeof universityCatalogIdOrCustom === 'string') {
+    const catalog = await UniversityCatalog.findById(universityCatalogIdOrCustom);
+    if (!catalog) throw new AppError(404, 'University not found in catalog', ErrorCodes.NOT_FOUND);
+    universityCatalogId = (catalog as { _id: unknown })._id;
+  } else {
+    const { universityName, establishedYear } = universityCatalogIdOrCustom;
+    const name = String(universityName ?? '').trim();
+    if (!name) throw new AppError(400, 'University name is required', ErrorCodes.VALIDATION);
+    const created = await UniversityCatalog.create({
+      universityName: name,
+      establishedYear: establishedYear != null ? Number(establishedYear) : undefined,
+    });
+    universityCatalogId = (created as { _id: unknown })._id;
+  }
+
   const existing = await UniversityVerificationRequest.findOne({
     userId,
     universityCatalogId,

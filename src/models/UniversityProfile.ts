@@ -18,6 +18,8 @@ const universityProfileSchema = new mongoose.Schema(
     needsRecalculation: { type: Boolean, default: true },
     /** Faculty codes offered by this university (from predefined catalog) */
     facultyCodes: [String],
+    /** Per-category included items: { [categoryId]: string[] }. If missing for a category, all items from catalog are implied. */
+    facultyItems: { type: mongoose.Schema.Types.Mixed, default: undefined },
     /** Country codes of students this university is targeting (e.g. 'UZ', 'KZ') */
     targetStudentCountries: [String],
   },
