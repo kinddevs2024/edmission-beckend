@@ -578,7 +578,7 @@ export async function createVerificationRequest(
   });
 
   const user = await User.findById(userId).select('email').lean();
-  const email = user ? (user as { email?: string }).email ?? '';
+  const email = (user as { email?: string } | null)?.email ?? '';
   const admins = await User.find({ role: 'admin' }).select('_id').lean();
   for (const admin of admins) {
     const adminId = String((admin as { _id: unknown })._id);
