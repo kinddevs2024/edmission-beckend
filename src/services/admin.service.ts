@@ -21,6 +21,7 @@ import {
   Faculty,
   Program,
   StudentDocument,
+  Investor,
 } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
@@ -438,6 +439,8 @@ export async function createCatalogUniversity(body: Record<string, unknown>) {
     description: typeof body.description === 'string' ? body.description : undefined,
     logoUrl: typeof body.logoUrl === 'string' ? body.logoUrl : undefined,
     facultyCodes: Array.isArray(body.facultyCodes) ? body.facultyCodes.map(String).filter(Boolean).slice(0, 50) : undefined,
+    facultyItems: typeof body.facultyItems === 'object' && body.facultyItems !== null && !Array.isArray(body.facultyItems)
+      ? (body.facultyItems as Record<string, string[]>) : undefined,
     targetStudentCountries: Array.isArray(body.targetStudentCountries) ? body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) : undefined,
     programs: Array.isArray(body.programs) ? body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
       name: p.name != null ? String(p.name) : '',
@@ -478,6 +481,11 @@ export async function updateCatalogUniversity(id: string, body: Record<string, u
       ...(typeof body.description === 'string' && { description: body.description }),
       ...(typeof body.logoUrl === 'string' && { logoUrl: body.logoUrl }),
       ...(Array.isArray(body.facultyCodes) && { facultyCodes: body.facultyCodes.map(String).filter(Boolean).slice(0, 50) }),
+      ...(body.facultyItems !== undefined && {
+        facultyItems: typeof body.facultyItems === 'object' && body.facultyItems !== null && !Array.isArray(body.facultyItems)
+          ? body.facultyItems as Record<string, string[]>
+          : undefined,
+      }),
       ...(Array.isArray(body.targetStudentCountries) && { targetStudentCountries: body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) }),
       ...(Array.isArray(body.programs) && {
         programs: body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
@@ -532,7 +540,7 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
   if ((request as { status: string }).status !== 'pending') {
     throw new AppError(400, 'Request already processed', ErrorCodes.CONFLICT);
   }
-  const catalog = request.universityCatalogId as unknown as { _id: unknown; universityName: string; tagline?: string; establishedYear?: number; studentCount?: number; country?: string; city?: string; description?: string; logoUrl?: string; facultyCodes?: string[]; targetStudentCountries?: string[]; programs?: Array<Record<string, unknown>>; scholarships?: Array<Record<string, unknown>> };
+  const catalog = request.universityCatalogId as unknown as { _id: unknown; universityName: string; tagline?: string; establishedYear?: number; studentCount?: number; country?: string; city?: string; description?: string; logoUrl?: string; facultyCodes?: string[]; facultyItems?: Record<string, string[]>; targetStudentCountries?: string[]; programs?: Array<Record<string, unknown>>; scholarships?: Array<Record<string, unknown>> };
   if (!catalog) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
   const userId = (request as { userId: unknown }).userId;
 
@@ -549,6 +557,7 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
     verified: true,
     onboardingCompleted: false,
     facultyCodes: catalog.facultyCodes ?? [],
+    facultyItems: catalog.facultyItems ?? undefined,
     targetStudentCountries: catalog.targetStudentCountries ?? [],
   });
 
@@ -610,4 +619,30 @@ export async function rejectUniversityRequest(requestId: string, adminUserId: st
     reviewedBy: adminUserId,
   });
   return { rejected: true };
+}
+
+// ——— Investors ———
+
+export async function getInvestors() {
+  const list = await Investor.find().sort({ order: 1, name: 1 }).lean();
+  return list.map((i) => ({ ...i, id: String((i as { _id: unknown })._id) }));
+}
+
+export async function createInvestor(body: { name: string; logoUrl?: string; websiteUrl?: string; description?: string; order?: number }) {
+  const name = String(body.name ?? '').trim();
+  if (!name) throw new AppError(400, 'Name is required', ErrorCodes.VALIDATION);
+  const doc = await Investor.create({
+    name,
+    logoUrl: body.logoUrl?.trim() || undefined,
+    websiteUrl: body.websiteUrl?.trim() || undefined,
+    description: body.description?.trim() || undefined,
+    order: body.order != null ? Number(body.order) : 0,
+  });
+  return { ...doc.toObject(), id: String(doc._id) };
+}
+
+export async function deleteInvestor(id: string) {
+  const doc = await Investor.findByIdAndDelete(id);
+  if (!doc) throw new AppError(404, 'Investor not found', ErrorCodes.NOT_FOUND);
+  return { deleted: true };
 }

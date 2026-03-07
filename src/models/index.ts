@@ -3,6 +3,7 @@ export { RefreshToken } from './RefreshToken';
 export { StudentProfile } from './StudentProfile';
 export { UniversityProfile } from './UniversityProfile';
 export { UniversityCatalog } from './UniversityCatalog';
+export { Investor } from './Investor';
 export { UniversityVerificationRequest } from './UniversityVerificationRequest';
 export { Program } from './Program';
 export { Faculty } from './Faculty';

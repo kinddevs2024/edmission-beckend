@@ -450,3 +450,39 @@ export async function rejectUniversityRequest(req: Request, res: Response, next:
     next(e);
   }
 }
+
+// ——— Investors ———
+
+export async function getInvestors(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.getInvestors();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createInvestor(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as { name?: string; logoUrl?: string; websiteUrl?: string; description?: string; order?: number };
+    const data = await adminService.createInvestor({
+      name: body.name ?? '',
+      logoUrl: body.logoUrl,
+      websiteUrl: body.websiteUrl,
+      description: body.description,
+      order: body.order,
+    });
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteInvestor(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.deleteInvestor(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}

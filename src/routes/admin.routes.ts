@@ -51,4 +51,8 @@ router.patch('/interests/:id/status', adminController.updateInterestStatus);
 router.get('/chats', adminController.getChats);
 router.get('/chats/:id/messages', adminController.getChatMessages);
 
+router.get('/investors', adminController.getInvestors);
+router.post('/investors', adminController.createInvestor);
+router.delete('/investors/:id', adminController.deleteInvestor);
+
 export default router;

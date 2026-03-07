@@ -12,6 +12,8 @@ const universityCatalogSchema = new mongoose.Schema(
     description: String,
     logoUrl: String,
     facultyCodes: [String],
+    /** Per-category included items: { [categoryId]: string[] }. If missing, all items from catalog are implied. */
+    facultyItems: { type: mongoose.Schema.Types.Mixed, default: undefined },
     targetStudentCountries: [String],
     /** Embedded programs to copy to UniversityProfile on approve */
     programs: [
