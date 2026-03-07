@@ -24,6 +24,7 @@ import {
   Investor,
 } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { safeRegExp } from '../utils/validators';
 import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
 import * as subscriptionService from './subscription.service';
 import * as ticketService from './ticket.service';
@@ -150,10 +151,18 @@ export async function getStudentProfileByUserId(userId: string) {
   return { ...profile, id: String((profile as { _id: unknown })._id) };
 }
 
+const STUDENT_PROFILE_WHITELIST = new Set([
+  'firstName', 'lastName', 'birthDate', 'country', 'city', 'gradeLevel', 'gpa', 'languageLevel', 'languages',
+  'bio', 'avatarUrl', 'budgetAmount', 'budgetCurrency', 'educationStatus', 'schoolCompleted', 'schoolName',
+  'graduationYear', 'gradingScheme', 'gradeScale', 'highestEducationLevel', 'targetDegreeLevel', 'schoolsAttended',
+  'skills', 'interests', 'hobbies', 'experiences', 'portfolioWorks', 'interestedFaculties', 'preferredCountries',
+]);
+
 export async function updateStudentProfileByUserId(userId: string, patch: Record<string, unknown>) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
-  const updated = await StudentProfile.findByIdAndUpdate(profile._id, patch, { new: true }).lean();
+  const filtered = Object.fromEntries(Object.entries(patch).filter(([k]) => STUDENT_PROFILE_WHITELIST.has(k)));
+  const updated = await StudentProfile.findByIdAndUpdate(profile._id, filtered, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 
@@ -163,10 +172,16 @@ export async function getUniversityProfileByUserId(userId: string) {
   return { ...profile, id: String((profile as { _id: unknown })._id) };
 }
 
+const UNIVERSITY_PROFILE_WHITELIST = new Set([
+  'universityName', 'tagline', 'establishedYear', 'studentCount', 'country', 'city', 'description', 'logoUrl',
+  'verified', 'onboardingCompleted', 'facultyCodes', 'facultyItems', 'targetStudentCountries',
+]);
+
 export async function updateUniversityProfileByUserId(userId: string, patch: Record<string, unknown>) {
   const profile = await UniversityProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
-  const updated = await UniversityProfile.findByIdAndUpdate(profile._id, patch, { new: true }).lean();
+  const filtered = Object.fromEntries(Object.entries(patch).filter(([k]) => UNIVERSITY_PROFILE_WHITELIST.has(k)));
+  const updated = await UniversityProfile.findByIdAndUpdate(profile._id, filtered, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 
@@ -409,10 +424,11 @@ export async function getCatalogUniversities(query: { page?: number; limit?: num
   const skip = (page - 1) * limit;
   const filter: Record<string, unknown> = {};
   if (query.search?.trim()) {
+    const re = safeRegExp(query.search.trim());
     filter.$or = [
-      { universityName: new RegExp(query.search.trim(), 'i') },
-      { city: new RegExp(query.search.trim(), 'i') },
-      { country: new RegExp(query.search.trim(), 'i') },
+      { universityName: re },
+      { city: re },
+      { country: re },
     ];
   }
   const [list, total] = await Promise.all([

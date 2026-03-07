@@ -2,6 +2,8 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, RefreshToken, StudentProfile, UniversityProfile } from '../models';
 import * as subscriptionService from './subscription.service';
+import * as emailService from './email.service';
+import { config } from '../config';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
@@ -260,11 +262,29 @@ export async function forgotPassword(email: string) {
   const user = await User.findOne({ email });
   if (!user) return { success: true };
 
+  if (!config.email.enabled && !config.email.sendgridApiKey) {
+    throw new AppError(
+      503,
+      'Password reset is temporarily unavailable. Please contact support.',
+      ErrorCodes.SERVICE_UNAVAILABLE
+    );
+  }
+
   const resetToken = uuidv4();
   await User.findByIdAndUpdate(user._id, {
     resetToken,
     resetTokenExpires: new Date(Date.now() + 60 * 60 * 1000),
   });
+
+  const sent = await emailService.sendResetPasswordEmail(user.email, resetToken);
+  if (!sent && config.email.enabled) {
+    throw new AppError(
+      503,
+      'Failed to send reset email. Please try again later.',
+      ErrorCodes.SERVICE_UNAVAILABLE
+    );
+  }
+
   return { success: true };
 }
 

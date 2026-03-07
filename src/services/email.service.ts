@@ -1,6 +1,8 @@
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+const getFrontendUrl = () => config.frontendUrl?.replace(/\/$/, '') || 'https://edmission.uz';
+
 export async function sendMail(to: string, subject: string, html: string): Promise<boolean> {
   if (!config.email.enabled) {
     logger.info({ to, subject }, 'Email disabled, would send');
@@ -42,6 +44,21 @@ export function applicationStatusChangedHtml(universityName: string, status: str
     <p>Log in to Edmission to view details.</p>
     <p>— Edmission Team</p>
   `;
+}
+
+export function resetPasswordHtml(resetLink: string): string {
+  return `
+    <p>You requested a password reset.</p>
+    <p><a href="${resetLink}">Reset your password</a></p>
+    <p>This link expires in 1 hour. If you didn't request this, ignore this email.</p>
+    <p>— Edmission Team</p>
+  `;
+}
+
+export async function sendResetPasswordEmail(to: string, resetToken: string): Promise<boolean> {
+  const baseUrl = getFrontendUrl();
+  const resetLink = `${baseUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+  return sendMail(to, 'Reset your password', resetPasswordHtml(resetLink));
 }
 
 export function trialReminderHtml(daysLeft: number, planName: string): string {

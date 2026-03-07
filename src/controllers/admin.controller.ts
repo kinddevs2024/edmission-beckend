@@ -227,12 +227,12 @@ export async function getScholarships(req: Request, res: Response, next: NextFun
 
 export async function getLogs(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit, userId, action } = req.query;
+    const { page, limit, userId, type } = req.query;
     const data = await adminService.getLogs({
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       userId: userId as string,
-      action: action as string,
+      action: type as string, // frontend sends "type", ActivityLog uses "action"
     });
     res.json(data);
   } catch (e) {

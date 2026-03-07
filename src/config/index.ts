@@ -24,6 +24,7 @@ export const config = {
     accessTtl: process.env.JWT_ACCESS_TTL || '15m',
     refreshTtl: process.env.JWT_REFRESH_TTL || '7d',
   },
+  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   cors: {
     origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) || [
       'http://localhost:5173',

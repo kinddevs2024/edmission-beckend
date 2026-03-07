@@ -1,9 +1,16 @@
 import { z } from 'zod';
 
+const passwordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .refine((p) => /[A-Z]/.test(p), 'Password must contain at least one uppercase letter')
+  .refine((p) => /[a-z]/.test(p), 'Password must contain at least one lowercase letter')
+  .refine((p) => /\d/.test(p), 'Password must contain at least one number');
+
 export const registerSchema = z.object({
   body: z.object({
     email: z.string().email(),
-    password: z.string().min(8, 'Password must be at least 8 characters'),
+    password: passwordSchema,
     role: z.enum(['student', 'university', 'admin']),
     name: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
   }),
@@ -31,7 +38,7 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
   body: z.object({
     token: z.string(),
-    newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+    newPassword: passwordSchema,
   }),
 });
 

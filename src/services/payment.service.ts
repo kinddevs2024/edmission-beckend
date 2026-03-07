@@ -3,6 +3,24 @@ import { Subscription, User } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { STUDENT_PLAN, UNIVERSITY_PLAN } from './subscription.service';
 
+/** Allowed URL origins for success/cancel redirects (prevent open redirect) */
+function isAllowedRedirectUrl(url: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    const allowed = [config.frontendUrl, ...config.cors.origin].map((o) => {
+      try {
+        return new URL(o).origin;
+      } catch {
+        return o;
+      }
+    });
+    return allowed.some((origin) => parsed.origin === origin);
+  } catch {
+    return false;
+  }
+}
+
 /** Create Stripe Checkout session for subscription upgrade. Returns URL or error if Stripe not configured. */
 export async function createCheckoutSession(
   userId: string,
@@ -12,6 +30,9 @@ export async function createCheckoutSession(
 ): Promise<{ url?: string; error?: string }> {
   if (!config.stripe.secretKey) {
     return { error: 'Payment is not configured. Please contact support to upgrade.' };
+  }
+  if (!isAllowedRedirectUrl(successUrl) || !isAllowedRedirectUrl(cancelUrl)) {
+    return { error: 'Invalid success or cancel URL' };
   }
 
   const user = await User.findById(userId).select('email').lean();

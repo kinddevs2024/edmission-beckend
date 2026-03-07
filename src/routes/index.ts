@@ -15,6 +15,7 @@ import paymentRoutes from './payment.routes';
 
 const router = Router();
 
+/** Static uploads - filenames are UUIDs (unguessable). TODO: add auth for sensitive files. */
 router.use('/uploads', express.static(path.resolve(config.uploadDir)));
 
 /** Health check под /api/health — для проверки доступности API с фронта */

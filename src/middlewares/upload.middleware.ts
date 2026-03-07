@@ -11,6 +11,9 @@ const ALLOWED_MIMES = [
   'image/gif',
   'image/webp',
   'application/pdf',
+  'audio/webm',
+  'audio/mp4',
+  'audio/mpeg',
 ] as const;
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
@@ -20,7 +23,7 @@ if (!fs.existsSync(dir)) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf']);
+const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.webm', '.mp4', '.m4a', '.mp3']);
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, dir),
@@ -41,7 +44,7 @@ export const uploadSingle = multer({
     if (mimeOk && extOk) {
       cb(null, true);
     } else {
-      cb(new AppError(400, 'Invalid file type. Allowed: images (JPEG, PNG, GIF, WebP) and PDF', ErrorCodes.VALIDATION));
+      cb(new AppError(400, 'Invalid file type. Allowed: images (JPEG, PNG, GIF, WebP), PDF, and audio (WebM, MP4, MP3)', ErrorCodes.VALIDATION));
     }
   },
 }).single('file');

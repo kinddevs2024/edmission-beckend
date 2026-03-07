@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { objectIdZod } from '../utils/validators';
 
 const experienceSchema = z.object({
   type: z.enum(['volunteer', 'internship', 'work']),
@@ -39,11 +40,18 @@ export const updateProfileSchema = z.object({
 });
 
 export const interestSchema = z.object({
-  params: z.object({ id: z.string().uuid() }),
+  params: z.object({ id: objectIdZod }),
 });
 
 export const offerActionSchema = z.object({
-  params: z.object({ id: z.string().uuid() }),
+  params: z.object({ id: objectIdZod }),
+});
+
+export const documentSchema = z.object({
+  body: z.object({
+    type: z.string().min(1),
+    fileUrl: z.string().url(),
+  }),
 });
 
 export const compareQuerySchema = z.object({

@@ -17,6 +17,7 @@ import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { safeRegExp } from '../utils/validators';
 
 export async function getProfile(userId: string) {
   const profile = await UniversityProfile.findOne({ userId }).lean();
@@ -170,7 +171,7 @@ export async function getStudents(
   const filter: Record<string, unknown> = {};
 
   if (query.country?.trim()) filter.country = query.country.trim();
-  if (query.city?.trim()) filter.city = new RegExp(query.city.trim(), 'i');
+  if (query.city?.trim()) filter.city = safeRegExp(query.city.trim());
 
   if (useProfileFilters) {
     // Filter by university's targetStudentCountries if set
@@ -526,9 +527,10 @@ export async function getCatalogUniversities(query?: { search?: string; country?
   const filter: Record<string, unknown> = {};
   if (query?.country?.trim()) filter.country = query.country.trim();
   if (query?.search?.trim()) {
+    const re = safeRegExp(query.search.trim());
     filter.$or = [
-      { universityName: new RegExp(query.search.trim(), 'i') },
-      { city: new RegExp(query.search.trim(), 'i') },
+      { universityName: re },
+      { city: re },
     ];
   }
   const list = await UniversityCatalog.find(filter).sort({ universityName: 1 }).lean();
@@ -577,15 +579,17 @@ export async function createVerificationRequest(
     status: 'pending',
   });
 
-  const user = await User.findById(userId).select('email').lean();
+  const user = await User.findById(userId).select('email name').lean();
   const email = (user as { email?: string } | null)?.email ?? '';
+  const applicantName = (user as { name?: string } | null)?.name?.trim();
+  const applicantLabel = applicantName || email;
   const admins = await User.find({ role: 'admin' }).select('_id').lean();
   for (const admin of admins) {
     const adminId = String((admin as { _id: unknown })._id);
     await notificationService.createNotification(adminId, {
       type: 'university_verification_request',
       title: 'University verification request',
-      body: `${email} requested verification for "${universityName}". Review in Admin → University requests.`,
+      body: `New university "${applicantLabel}" has submitted an application for "${universityName}". Review in Admin → University requests.`,
       referenceType: 'university_verification_request',
       referenceId: String((req as { _id: unknown })._id),
       metadata: { email, universityName, requestId: String((req as { _id: unknown })._id) },
