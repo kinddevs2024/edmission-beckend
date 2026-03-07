@@ -545,19 +545,22 @@ export async function createVerificationRequest(
   universityCatalogIdOrCustom: string | { universityName: string; establishedYear?: number }
 ) {
   let universityCatalogId: unknown;
+  let universityName = '';
   if (typeof universityCatalogIdOrCustom === 'string') {
     const catalog = await UniversityCatalog.findById(universityCatalogIdOrCustom);
     if (!catalog) throw new AppError(404, 'University not found in catalog', ErrorCodes.NOT_FOUND);
     universityCatalogId = (catalog as { _id: unknown })._id;
+    universityName = (catalog as { universityName?: string }).universityName ?? '';
   } else {
-    const { universityName, establishedYear } = universityCatalogIdOrCustom;
-    const name = String(universityName ?? '').trim();
-    if (!name) throw new AppError(400, 'University name is required', ErrorCodes.VALIDATION);
+    const { universityName: name, establishedYear } = universityCatalogIdOrCustom;
+    const n = String(name ?? '').trim();
+    if (!n) throw new AppError(400, 'University name is required', ErrorCodes.VALIDATION);
     const created = await UniversityCatalog.create({
-      universityName: name,
+      universityName: n,
       establishedYear: establishedYear != null ? Number(establishedYear) : undefined,
     });
     universityCatalogId = (created as { _id: unknown })._id;
+    universityName = n;
   }
 
   const existing = await UniversityVerificationRequest.findOne({
@@ -573,5 +576,21 @@ export async function createVerificationRequest(
     userId,
     status: 'pending',
   });
+
+  const user = await User.findById(userId).select('email').lean();
+  const email = user ? (user as { email?: string }).email ?? '';
+  const admins = await User.find({ role: 'admin' }).select('_id').lean();
+  for (const admin of admins) {
+    const adminId = String((admin as { _id: unknown })._id);
+    await notificationService.createNotification(adminId, {
+      type: 'university_verification_request',
+      title: 'University verification request',
+      body: `${email} requested verification for "${universityName}". Review in Admin → University requests.`,
+      referenceType: 'university_verification_request',
+      referenceId: String((req as { _id: unknown })._id),
+      metadata: { email, universityName, requestId: String((req as { _id: unknown })._id) },
+    });
+  }
+
   return { id: String((req as { _id: unknown })._id), status: 'pending' };
 }

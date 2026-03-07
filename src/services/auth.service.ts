@@ -2,7 +2,6 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { User, RefreshToken, StudentProfile, UniversityProfile } from '../models';
 import * as subscriptionService from './subscription.service';
-import * as notificationService from './notification.service';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
@@ -61,21 +60,8 @@ export async function register(data: RegisterBody) {
 
   if (data.role === 'student') {
     await StudentProfile.create({ userId: user._id });
-  } else if (data.role === 'university') {
-    await UniversityProfile.create({ userId: user._id, universityName: 'New University', verified: false });
-    const admins = await User.find({ role: 'admin' }).select('_id').lean();
-    for (const admin of admins) {
-      const adminId = String((admin as { _id: unknown })._id);
-      await notificationService.createNotification(adminId, {
-        type: 'university_verification_request',
-        title: 'New university registration',
-        body: `${data.email} registered as a university. Please review and verify in Admin → Verification.`,
-        referenceType: 'university',
-        referenceId: String(user._id),
-        metadata: { email: data.email, universityName: 'New University' },
-      });
-    }
   }
+  // University: profile is created only when admin approves verification request (Admin → University requests)
   await subscriptionService.createForNewUser(String(user._id), data.role);
 
   const accessToken = signAccessToken({
