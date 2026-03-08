@@ -372,6 +372,14 @@ export async function getInterestLimit(userId: string) {
   return subscriptionService.canSendApplication(userId);
 }
 
+/** Lightweight: returns only university IDs the student has shown interest in. */
+export async function getInterestedUniversityIds(userId: string): Promise<string[]> {
+  const profile = await StudentProfile.findOne({ userId }).select('_id').lean();
+  if (!profile) return [];
+  const list = await Interest.find({ studentId: profile._id }).select('universityId').lean();
+  return list.map((i: { universityId?: unknown }) => String(i.universityId)).filter(Boolean);
+}
+
 export async function getApplications(userId: string) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);

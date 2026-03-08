@@ -80,6 +80,16 @@ export async function getInterestLimit(req: Request, res: Response, next: NextFu
   }
 }
 
+export async function getInterestedUniversityIds(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const ids = await studentService.getInterestedUniversityIds(req.user.id);
+    res.json({ ids });
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getApplications(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();

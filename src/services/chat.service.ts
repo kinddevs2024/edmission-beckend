@@ -2,6 +2,27 @@ import { User, StudentProfile, UniversityProfile, Chat, Message } from '../model
 import * as notificationService from './notification.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 
+/** Fetch last message per chat in one query to avoid N+1. */
+async function getLastMessagesByChatIds(chatIds: unknown[]): Promise<Map<string, unknown[]>> {
+  if (chatIds.length === 0) return new Map();
+  const pipeline = [
+    { $match: { chatId: { $in: chatIds } } },
+    { $sort: { createdAt: -1 as 1 | -1 } },
+    { $group: { _id: '$chatId', doc: { $first: '$$ROOT' } } },
+    { $lookup: { from: 'users', localField: 'doc.senderId', foreignField: '_id', as: 'sender', pipeline: [{ $project: { id: '$_id', email: 1 } }] } },
+    { $project: { chatId: '$_id', doc: 1, sender: { $arrayElemAt: ['$sender', 0] } } },
+  ];
+  const rows = await Message.aggregate(pipeline);
+  const map = new Map<string, unknown[]>();
+  for (const r of rows) {
+    const doc = r.doc as Record<string, unknown>;
+    const sender = r.sender;
+    const msg = { ...doc, senderId: sender ?? doc.senderId };
+    map.set(String(r.chatId), [msg]);
+  }
+  return map;
+}
+
 export async function getChats(userId: string) {
   const user = await User.findById(userId).lean();
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
@@ -14,18 +35,20 @@ export async function getChats(userId: string) {
     chats = await Chat.find({ studentId: (studentProfile as { _id: unknown })._id })
       .populate('universityId', 'universityName logoUrl')
       .lean();
-    for (const c of chats as { _id: unknown; universityId?: { universityName: string; logoUrl?: string }; lastMessage?: unknown }[]) {
-      const lastMsg = await Message.findOne({ chatId: c._id }).sort({ createdAt: -1 }).limit(1).populate('senderId', 'id email').lean();
-      (c as { lastMessage?: unknown }).lastMessage = lastMsg ? [lastMsg] : [];
+    const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
+    const lastByChat = await getLastMessagesByChatIds(chatIds);
+    for (const c of chats as { _id: unknown; universityId?: unknown; lastMessage?: unknown }[]) {
+      (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
       (c as { university?: unknown }).university = (c as { universityId?: unknown }).universityId;
     }
   } else if (universityProfile) {
     chats = await Chat.find({ universityId: (universityProfile as { _id: unknown })._id })
       .populate('studentId', 'firstName lastName avatarUrl')
       .lean();
-    for (const c of chats as { _id: unknown }[]) {
-      const lastMsg = await Message.findOne({ chatId: c._id }).sort({ createdAt: -1 }).limit(1).populate('senderId', 'id email').lean();
-      (c as { lastMessage?: unknown }).lastMessage = lastMsg ? [lastMsg] : [];
+    const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
+    const lastByChat = await getLastMessagesByChatIds(chatIds);
+    for (const c of chats as { _id: unknown; studentId?: unknown; lastMessage?: unknown }[]) {
+      (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
       (c as { student?: unknown }).student = (c as { studentId?: unknown }).studentId;
     }
   } else {

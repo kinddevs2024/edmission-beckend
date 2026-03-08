@@ -314,19 +314,24 @@ export async function getVerificationQueue() {
   })
     .populate('userId', 'email')
     .lean();
-  const withDocs = await Promise.all(
-    list.map(async (u: Record<string, unknown>) => {
-      const documents = await UniversityDocument.find({ universityId: u._id }).lean();
-      const userId = u.userId as { email?: string } | undefined;
-      return {
-        ...u,
-        id: String(u._id),
-        user: userId && typeof userId === 'object' && 'email' in userId ? { email: String(userId.email) } : undefined,
-        documents: documents.map((d: Record<string, unknown>) => ({ ...d, id: String(d._id) })),
-      };
-    })
-  );
-  return withDocs;
+  const ids = list.map((u: Record<string, unknown>) => u._id);
+  const allDocs = await UniversityDocument.find({ universityId: { $in: ids } }).lean();
+  const docsByUni = new Map<string, Record<string, unknown>[]>();
+  for (const d of allDocs as { universityId?: unknown; _id?: unknown }[]) {
+    const key = String(d.universityId);
+    if (!docsByUni.has(key)) docsByUni.set(key, []);
+    docsByUni.get(key)!.push({ ...d, id: String(d._id) });
+  }
+  return list.map((u: Record<string, unknown>) => {
+    const userId = u.userId as { email?: string } | undefined;
+    const documents = docsByUni.get(String(u._id)) ?? [];
+    return {
+      ...u,
+      id: String(u._id),
+      user: userId && typeof userId === 'object' && 'email' in userId ? { email: String(userId.email) } : undefined,
+      documents,
+    };
+  });
 }
 
 export async function verifyUniversity(universityId: string, approve: boolean) {

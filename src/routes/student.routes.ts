@@ -18,6 +18,7 @@ router.get('/universities', studentController.getUniversities);
 router.get('/universities/:id', validateObjectId('id'), studentController.getUniversityById);
 router.post('/universities/:id/interest', validateObjectId('id'), studentController.addInterest);
 router.get('/interests/limit', studentController.getInterestLimit);
+router.get('/interests/university-ids', studentController.getInterestedUniversityIds);
 router.get('/applications', studentController.getApplications);
 router.get('/offers', studentController.getOffers);
 router.post('/offers/:id/accept', validateObjectId('id'), studentController.acceptOffer);
