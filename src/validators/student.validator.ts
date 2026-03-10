@@ -17,25 +17,56 @@ const portfolioWorkSchema = z.object({
   linkUrl: z.string().optional(),
 });
 
+const languageLevelSchema = z.object({
+  language: z.string(),
+  level: z.string(),
+});
+
+const schoolAttendedSchema = z.object({
+  country: z.string().optional(),
+  institutionName: z.string().optional(),
+  institutionType: z.enum(['school', 'university']).optional(),
+  educationLevel: z.string().optional(),
+  gradingScheme: z.string().optional(),
+  gradeScale: z.number().optional(),
+  gradeAverage: z.number().optional(),
+  primaryLanguage: z.string().optional(),
+  attendedFrom: z.string().optional(),
+  attendedTo: z.string().optional(),
+  degreeName: z.string().optional(),
+});
+
 export const updateProfileSchema = z.object({
   body: z.object({
     firstName: z.string().optional(),
     lastName: z.string().optional(),
     birthDate: z.string().optional(),
     country: z.string().optional(),
+    city: z.string().optional(),
     gradeLevel: z.string().optional(),
-    gpa: z.number().min(0).max(5).optional(),
+    gpa: z.union([z.number().min(0).max(5), z.string()]).optional(),
     languageLevel: z.string().optional(),
+    languages: z.array(languageLevelSchema).optional(),
     bio: z.string().optional(),
     avatarUrl: z.string().optional(),
+    budgetAmount: z.union([z.number(), z.string()]).optional(),
+    budgetCurrency: z.string().optional(),
+    educationStatus: z.enum(['in_school', 'finished_school', 'in_university', 'finished_university']).optional(),
     schoolCompleted: z.boolean().optional(),
     schoolName: z.string().optional(),
     graduationYear: z.number().optional(),
+    gradingScheme: z.string().optional(),
+    gradeScale: z.number().optional(),
+    highestEducationLevel: z.string().optional(),
+    targetDegreeLevel: z.enum(['bachelor', 'master', 'phd']).optional(),
+    schoolsAttended: z.array(schoolAttendedSchema).optional(),
     skills: z.array(z.string()).optional(),
     interests: z.array(z.string()).optional(),
     hobbies: z.array(z.string()).optional(),
     experiences: z.array(experienceSchema).optional(),
     portfolioWorks: z.array(portfolioWorkSchema).optional(),
+    interestedFaculties: z.array(z.string()).optional(),
+    preferredCountries: z.array(z.string()).optional(),
   }).strict(),
 });
 
