@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const ROLES = ['student', 'university', 'admin'] as const;
+const ROLES = ['student', 'university', 'admin', 'school_counsellor'] as const;
 
 const userSchema = new mongoose.Schema(
   {
@@ -16,6 +16,8 @@ const userSchema = new mongoose.Schema(
     resetTokenExpires: Date,
     totpSecret: { type: String },
     totpEnabled: { type: Boolean, default: false },
+    /** When true, user must change password on next login (e.g. temp password from school counsellor). */
+    mustChangePassword: { type: Boolean, default: false },
     notificationPreferences: {
       emailApplicationUpdates: { type: Boolean, default: true },
       emailTrialReminder: { type: Boolean, default: true },

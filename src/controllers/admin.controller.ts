@@ -51,7 +51,7 @@ export async function getUser(req: Request, res: Response, next: NextFunction): 
 
 export async function updateUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const body = req.body as { name?: string; emailVerified?: boolean; suspended?: boolean };
+    const body = req.body as { name?: string; role?: 'student' | 'university' | 'admin' | 'school_counsellor'; emailVerified?: boolean; suspended?: boolean };
     const data = await adminService.updateUser(req.params.id, body);
     res.json(data);
   } catch (e) {

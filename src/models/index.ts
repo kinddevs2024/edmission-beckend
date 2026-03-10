@@ -1,6 +1,8 @@
 export { User } from './User';
 export { RefreshToken } from './RefreshToken';
 export { StudentProfile } from './StudentProfile';
+export { CounsellorProfile } from './CounsellorProfile';
+export { SchoolJoinRequest } from './SchoolJoinRequest';
 export { UniversityProfile } from './UniversityProfile';
 export { UniversityCatalog } from './UniversityCatalog';
 export { Investor } from './Investor';

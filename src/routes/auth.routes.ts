@@ -9,6 +9,7 @@ import {
   loginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  setPasswordSchema,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -43,6 +44,12 @@ router.post(
   '/reset-password',
   validate(resetPasswordSchema.shape.body, 'body'),
   authController.resetPassword
+);
+router.post(
+  '/set-password',
+  authMiddleware,
+  validate(setPasswordSchema.shape.body, 'body'),
+  authController.setPassword
 );
 router.post('/2fa/setup', authMiddleware, authController.setup2FA);
 router.post('/2fa/verify', authMiddleware, authController.verify2FA);

@@ -51,6 +51,8 @@ const schoolAttendedSchema = new mongoose.Schema(
 const studentProfileSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+    /** School counsellor (User) who manages this student. Set when counsellor creates student or accepts join request. */
+    counsellorUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     firstName: String,
     lastName: String,
     birthDate: Date,
@@ -92,6 +94,7 @@ const studentProfileSchema = new mongoose.Schema(
 );
 
 studentProfileSchema.index({ userId: 1 });
+studentProfileSchema.index({ counsellorUserId: 1 });
 studentProfileSchema.index({ gpa: 1 });
 studentProfileSchema.index({ gradeLevel: 1 });
 studentProfileSchema.index({ country: 1 });

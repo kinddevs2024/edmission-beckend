@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const passwordSchema = z
+export const passwordSchema = z
   .string()
   .min(8, 'Password must be at least 8 characters')
   .refine((p) => /[A-Z]/.test(p), 'Password must contain at least one uppercase letter')
@@ -11,7 +11,7 @@ export const registerSchema = z.object({
   body: z.object({
     email: z.string().email(),
     password: passwordSchema,
-    role: z.enum(['student', 'university', 'admin']),
+    role: z.enum(['student', 'university']),
     name: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
     avatarUrl: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   }),
@@ -39,6 +39,12 @@ export const forgotPasswordSchema = z.object({
 export const resetPasswordSchema = z.object({
   body: z.object({
     token: z.string(),
+    newPassword: passwordSchema,
+  }),
+});
+
+export const setPasswordSchema = z.object({
+  body: z.object({
     newPassword: passwordSchema,
   }),
 });

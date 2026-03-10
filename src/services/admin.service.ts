@@ -131,16 +131,17 @@ export async function getUserById(userId: string) {
   return { ...u, id: String((u as { _id: unknown })._id) };
 }
 
-export async function updateUser(userId: string, patch: { name?: string; emailVerified?: boolean; suspended?: boolean }) {
+export async function updateUser(userId: string, patch: { name?: string; role?: 'student' | 'university' | 'admin' | 'school_counsellor'; emailVerified?: boolean; suspended?: boolean }) {
   const user = await User.findById(userId);
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
   if (user.email === DEFAULT_ADMIN_EMAIL) {
-    // Не даём менять критичные поля дефолтного админа через админку.
     if (patch.suspended !== undefined) throw new AppError(403, 'Cannot modify default admin', ErrorCodes.FORBIDDEN);
+    if (patch.role !== undefined) throw new AppError(403, 'Cannot change default admin role', ErrorCodes.FORBIDDEN);
   }
 
   const update: Record<string, unknown> = {};
   if (patch.name !== undefined) update.name = String(patch.name);
+  if (patch.role !== undefined) update.role = patch.role;
   if (patch.emailVerified !== undefined) update.emailVerified = Boolean(patch.emailVerified);
   if (patch.suspended !== undefined) {
     if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot suspend default admin', ErrorCodes.FORBIDDEN);

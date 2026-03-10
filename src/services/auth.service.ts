@@ -32,12 +32,13 @@ export async function ensureDefaultAdmin(): Promise<void> {
   });
 }
 
-function toPlainUser(doc: { _id: unknown; email: string; role: string; name?: string }) {
+function toPlainUser(doc: { _id: unknown; email: string; role: string; name?: string; mustChangePassword?: boolean }) {
   return {
     id: String(doc._id),
     email: doc.email,
     role: doc.role as Role,
     name: doc.name ?? '',
+    mustChangePassword: Boolean(doc.mustChangePassword),
   };
 }
 
@@ -120,6 +121,7 @@ export async function login(data: LoginBody) {
   });
 
   const plainUser = toPlainUser(user) as ReturnType<typeof toPlainUser> & { universityProfile?: { id: string; verified: boolean; universityName?: string } };
+  (plainUser as { mustChangePassword?: boolean }).mustChangePassword = Boolean((user as { mustChangePassword?: boolean }).mustChangePassword);
   if (user.role === 'university') {
     const up = await UniversityProfile.findOne({ userId: user._id }).lean();
     if (up) {
@@ -194,7 +196,7 @@ export async function logout(userId: string, refreshToken?: string) {
 
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
-    .select('email name role emailVerified suspended createdAt notificationPreferences totpEnabled')
+    .select('email name role emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword')
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
@@ -204,7 +206,7 @@ export async function getMe(userId: string) {
     UniversityProfile.findOne({ userId }).lean(),
     subscriptionService.getSubscriptionSummary(userId),
   ]);
-  const u = user as { _id: unknown; email: string; name?: string; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean };
+  const u = user as { _id: unknown; email: string; name?: string; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean; mustChangePassword?: boolean };
   return {
     id: String(u._id),
     email: u.email,
@@ -214,6 +216,7 @@ export async function getMe(userId: string) {
     suspended: u.suspended,
     createdAt: u.createdAt,
     totpEnabled: !!u.totpEnabled,
+    mustChangePassword: Boolean(u.mustChangePassword),
     notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
     universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id), verified: (universityProfile as { verified?: boolean }).verified } : null,
@@ -302,6 +305,20 @@ export async function resetPassword(token: string, newPassword: string) {
     passwordHash,
     resetToken: null,
     resetTokenExpires: null,
+  });
+  return { success: true };
+}
+
+/** Set new password for logged-in user (e.g. after temp password from school counsellor). Clears mustChangePassword. */
+export async function setPassword(userId: string, newPassword: string) {
+  const user = await User.findById(userId);
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  const { passwordSchema } = await import('../validators/auth.validator');
+  passwordSchema.parse(newPassword);
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  await User.findByIdAndUpdate(userId, {
+    passwordHash,
+    mustChangePassword: false,
   });
   return { success: true };
 }

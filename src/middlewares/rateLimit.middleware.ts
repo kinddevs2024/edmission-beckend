@@ -11,7 +11,7 @@ export const globalApiRateLimiter = rateLimit({
 
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: config.nodeEnv === 'production' ? 80 : 200,
   message: { message: 'Too many attempts', code: 'RATE_LIMIT_EXCEEDED' },
   standardHeaders: true,
   legacyHeaders: false,

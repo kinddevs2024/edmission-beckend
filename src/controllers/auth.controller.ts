@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service';
 import * as twoFactorService from '../services/twoFactor.service';
-import { loginSchema, registerSchema, refreshSchema, forgotPasswordSchema, resetPasswordSchema } from '../validators/auth.validator';
+import { loginSchema, registerSchema, forgotPasswordSchema, resetPasswordSchema, setPasswordSchema } from '../validators/auth.validator';
 
 export async function register(
   req: Request,
@@ -149,6 +149,24 @@ export async function resetPassword(
   try {
     const { token, newPassword } = resetPasswordSchema.shape.body.parse(req.body);
     await authService.resetPassword(token, newPassword);
+    res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function setPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const { newPassword } = setPasswordSchema.shape.body.parse(req.body);
+    await authService.setPassword(req.user.id, newPassword);
     res.json({ success: true });
   } catch (e) {
     next(e);

@@ -10,7 +10,7 @@ const passwordSchema = z
 
 export const createUserSchema = z.object({
   body: z.object({
-    role: z.enum(['student', 'university', 'admin']),
+    role: z.enum(['student', 'university', 'admin', 'school_counsellor']),
     email: z.string().email(),
     password: passwordSchema.optional(),
     name: z.string().max(200).optional(),
@@ -20,6 +20,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   body: z.object({
     name: z.string().max(200).optional(),
+    role: z.enum(['student', 'university', 'admin', 'school_counsellor']).optional(),
     emailVerified: z.boolean().optional(),
     suspended: z.boolean().optional(),
   }).strict(),
