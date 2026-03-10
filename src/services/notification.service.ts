@@ -90,6 +90,8 @@ function buildNotificationLink(
       return '/student/applications';
     case 'university_verification_request':
       return '/admin/university-requests';
+    case 'school_join_request':
+      return '/school/join-requests';
     default:
       return null;
   }

@@ -9,6 +9,7 @@ export const NOTIFICATION_TYPES = [
   'status_update',
   'new_university',
   'university_verification_request',
+  'school_join_request',
   'recommendation',
   'deadline_reminder',
   'profile_reminder',
