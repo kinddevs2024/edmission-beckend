@@ -91,7 +91,7 @@ export async function updateCounsellorProfile(
 }
 
 /** List schools (counsellors with public profile) for students to choose and send join request. */
-export async function listSchools(params?: { search?: string; page?: number; limit?: number }) {
+export async function listSchools(params?: { search?: string; page?: number; limit?: number; studentUserId?: string }) {
   const page = Math.max(1, params?.page ?? 1);
   const limit = Math.min(50, Math.max(1, params?.limit ?? 20));
   const skip = (page - 1) * limit;
@@ -109,13 +109,30 @@ export async function listSchools(params?: { search?: string; page?: number; lim
     CounsellorProfile.find(where).sort({ schoolName: 1 }).skip(skip).limit(limit).lean(),
     CounsellorProfile.countDocuments(where),
   ]);
-  const users = await User.find({ _id: { $in: list.map((c: { userId?: unknown }) => c.userId) } })
+  const counsellorIds = list.map((c: { userId?: unknown }) => c.userId);
+  const users = await User.find({ _id: { $in: counsellorIds } })
     .select('name email')
     .lean();
   const userMap = new Map(users.map((u: { _id: unknown; name?: string; email?: string }) => [String(u._id), u]));
+
+  let requestStatusMap: Map<string, string> = new Map();
+  if (params?.studentUserId) {
+    const requests = await SchoolJoinRequest.find({
+      studentId: params.studentUserId,
+      counsellorUserId: { $in: counsellorIds },
+      status: { $in: ['pending', 'accepted'] },
+    })
+      .select('counsellorUserId status')
+      .lean();
+    requests.forEach((r: { counsellorUserId?: unknown; status?: string }) => {
+      requestStatusMap.set(String(r.counsellorUserId), r.status ?? 'pending');
+    });
+  }
+
   return {
     data: list.map((c: Record<string, unknown>) => {
       const u = userMap.get(String(c.userId));
+      const requestStatus = requestStatusMap.get(String(c.userId));
       return {
         id: String(c._id),
         counsellorUserId: String(c.userId),
@@ -124,6 +141,7 @@ export async function listSchools(params?: { search?: string; page?: number; lim
         country: c.country ?? '',
         city: c.city ?? '',
         counsellorName: (u as { name?: string })?.name ?? '',
+        requestStatus: requestStatus || null,
       };
     }),
     total,

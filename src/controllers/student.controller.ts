@@ -185,6 +185,7 @@ export async function listSchools(req: Request, res: Response, next: NextFunctio
       search: typeof query.search === 'string' ? query.search : undefined,
       page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
       limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      studentUserId: req.user?.id,
     });
     res.json(data);
   } catch (e) {
