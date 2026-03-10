@@ -47,10 +47,16 @@ export const offerActionSchema = z.object({
   params: z.object({ id: objectIdZod }),
 });
 
+/** Accepts full URLs (http/https) or absolute paths (/api/uploads/...). */
+const fileUrlSchema = z.string().min(1).refine(
+  (val) => /^https?:\/\//.test(val) || (val.startsWith('/') && val.length > 1),
+  { message: 'Invalid url' }
+);
+
 export const documentSchema = z.object({
   body: z.object({
     type: z.string().min(1),
-    fileUrl: z.string().url(),
+    fileUrl: fileUrlSchema,
   }),
 });
 
