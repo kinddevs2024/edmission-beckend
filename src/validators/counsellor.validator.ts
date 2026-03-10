@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { updateProfileSchema } from './student.validator';
 
 export const counsellorProfileSchema = z.object({
   body: z.object({
@@ -19,21 +20,8 @@ export const createStudentByCounsellorSchema = z.object({
   }),
 });
 
-export const updateMyStudentSchema = z.object({
-  body: z.object({
-    firstName: z.string().max(100).optional(),
-    lastName: z.string().max(100).optional(),
-    birthDate: z.string().optional(),
-    country: z.string().max(100).optional(),
-    city: z.string().max(100).optional(),
-    gradeLevel: z.string().max(50).optional(),
-    gpa: z.number().min(0).max(10).optional(),
-    bio: z.string().max(5000).optional(),
-    schoolName: z.string().max(200).optional(),
-    graduationYear: z.number().int().min(1900).max(2100).optional(),
-    avatarUrl: z.string().max(500).optional(),
-  }),
-});
+/** Counsellor can update all student profile fields (same as student). */
+export const updateMyStudentSchema = z.object({ body: updateProfileSchema.shape.body });
 
 export const listSchoolsQuerySchema = z.object({
   search: z.string().optional(),

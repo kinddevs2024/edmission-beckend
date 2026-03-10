@@ -206,19 +206,20 @@ export async function listMyStudents(counsellorUserId: string, params?: { page?:
     StudentProfile.countDocuments(where),
   ]);
   const userIds = profiles.map((p: { userId?: unknown }) => p.userId).filter(Boolean);
-  const users = await User.find({ _id: { $in: userIds } }).select('email name').lean();
+  const users = await User.find({ _id: { $in: userIds } }).select('email name mustChangePassword').lean();
   const userMap = new Map(users.map((u: { _id: unknown; email?: string; name?: string }) => [String(u._id), u]));
   const data = profiles.map((p: Record<string, unknown>) => {
-    const u = userMap.get(String(p.userId));
+    const u = userMap.get(String(p.userId)) as { email?: string; name?: string; mustChangePassword?: boolean } | undefined;
     return {
       id: String(p._id),
       userId: String(p.userId),
-      email: (u as { email?: string })?.email ?? '',
-      name: (u as { name?: string })?.name ?? '',
+      email: u?.email ?? '',
+      name: u?.name ?? '',
       firstName: p.firstName ?? '',
       lastName: p.lastName ?? '',
       country: p.country ?? '',
       city: p.city ?? '',
+      mustChangePassword: Boolean(u?.mustChangePassword),
     };
   });
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -234,26 +235,36 @@ async function assertStudentBelongsToCounsellor(studentUserId: string, counsello
   return profile;
 }
 
-/** Update student profile (counsellor can edit their students). */
+/** Update student profile (counsellor can edit all student data). */
 export async function updateMyStudent(
   counsellorUserId: string,
   studentUserId: string,
   patch: Record<string, unknown>
 ) {
   await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
-  const profile = await StudentProfile.findOne({ userId: studentUserId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const { updateProfile } = await import('./student.service');
+  return updateProfile(studentUserId, patch);
+}
 
-  const allowed = ['firstName', 'lastName', 'birthDate', 'country', 'city', 'gradeLevel', 'gpa', 'bio', 'schoolName', 'graduationYear', 'avatarUrl'];
-  const update: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (patch[key] !== undefined) {
-      if (key === 'birthDate') update[key] = patch[key] ? new Date(patch[key] as string) : null;
-      else update[key] = patch[key];
-    }
+/** Get full student profile (for counsellor to view/edit). */
+export async function getStudentProfile(counsellorUserId: string, studentUserId: string) {
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const { getProfile } = await import('./student.service');
+  return getProfile(studentUserId);
+}
+
+/** Generate a new temporary password for a student who hasn't changed it yet. Returns the new password. */
+export async function generateTempPasswordForStudent(counsellorUserId: string, studentUserId: string): Promise<{ temporaryPassword: string }> {
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const user = await User.findById(studentUserId);
+  if (!user) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+  if (!user.mustChangePassword) {
+    throw new AppError(400, 'Student has already set their password. Use reset password if needed.', ErrorCodes.VALIDATION);
   }
-  const updated = await StudentProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
-  return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+  const tempPassword = generateTempPassword();
+  const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_ROUNDS);
+  await User.findByIdAndUpdate(studentUserId, { passwordHash });
+  return { temporaryPassword: tempPassword };
 }
 
 /** Delete student (counsellor can delete only their linked students). */

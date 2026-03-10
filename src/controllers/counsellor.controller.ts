@@ -62,6 +62,19 @@ export async function createStudent(req: Request, res: Response, next: NextFunct
   }
 }
 
+export async function getStudentProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.getStudentProfile(req.user.id, req.params.studentUserId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function listMyStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
@@ -89,6 +102,19 @@ export async function updateMyStudent(req: Request, res: Response, next: NextFun
     const studentUserId = req.params.studentUserId;
     const body = (req.body && typeof req.body === 'object') ? req.body : {};
     const data = await counsellorService.updateMyStudent(req.user.id, studentUserId, body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function generateTempPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.generateTempPasswordForStudent(req.user.id, req.params.studentUserId);
     res.json(data);
   } catch (e) {
     next(e);

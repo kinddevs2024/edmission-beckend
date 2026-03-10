@@ -16,7 +16,9 @@ router.patch('/profile', validate(counsellorValidator.counsellorProfileSchema.sh
 
 router.post('/students', validate(counsellorValidator.createStudentByCounsellorSchema.shape.body, 'body'), counsellorController.createStudent);
 router.get('/students', validate(counsellorValidator.listMyStudentsQuerySchema, 'query'), counsellorController.listMyStudents);
+router.get('/students/:studentUserId', validateObjectId('studentUserId'), counsellorController.getStudentProfile);
 router.patch('/students/:studentUserId', validateObjectId('studentUserId'), validate(counsellorValidator.updateMyStudentSchema.shape.body, 'body'), counsellorController.updateMyStudent);
+router.post('/students/:studentUserId/generate-temp-password', validateObjectId('studentUserId'), counsellorController.generateTempPassword);
 router.delete('/students/:studentUserId', validateObjectId('studentUserId'), counsellorController.deleteMyStudent);
 
 router.get('/join-requests', validate(counsellorValidator.listJoinRequestsQuerySchema, 'query'), counsellorController.listJoinRequests);
