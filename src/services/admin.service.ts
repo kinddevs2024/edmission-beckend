@@ -29,8 +29,12 @@ import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
 import * as subscriptionService from './subscription.service';
 import * as ticketService from './ticket.service';
 import * as studentDocumentService from './studentDocument.service';
+import * as emailService from './email.service';
+import { config } from '../config';
+import { v4 as uuidv4 } from 'uuid';
 
 const BCRYPT_ROUNDS = 12;
+const INVITE_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function getDashboard() {
   const [users, universities, offers, pendingVerification, subStats] = await Promise.all([
@@ -69,20 +73,26 @@ export async function getUsers(query: { page?: number; limit?: number; role?: st
   };
 }
 
-export async function createUser(payload: { role: 'student' | 'university' | 'admin'; email: string; password: string; name?: string }) {
+export async function createUser(payload: { role: 'student' | 'university' | 'admin'; email: string; password?: string; name?: string }) {
   const email = String(payload.email || '').trim().toLowerCase();
-  const password = String(payload.password || '');
+  const password = payload.password != null ? String(payload.password) : undefined;
   const role = payload.role;
   const name = payload.name != null ? String(payload.name) : '';
 
   if (!email) throw new AppError(400, 'Email is required', ErrorCodes.VALIDATION);
-  if (!password) throw new AppError(400, 'Password is required', ErrorCodes.VALIDATION);
   if (!['student', 'university', 'admin'].includes(role)) throw new AppError(400, 'Invalid role', ErrorCodes.VALIDATION);
 
   const existing = await User.findOne({ email });
   if (existing) throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
 
-  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  const isInvite = !password || password.trim() === '';
+  const passwordHash = isInvite
+    ? await bcrypt.hash(uuidv4() + Date.now(), BCRYPT_ROUNDS)
+    : await bcrypt.hash(password!, BCRYPT_ROUNDS);
+
+  const inviteToken = isInvite ? uuidv4() : undefined;
+  const inviteTokenExpires = isInvite ? new Date(Date.now() + INVITE_TOKEN_EXPIRES_MS) : undefined;
+
   const user = await User.create({
     email,
     name,
@@ -90,12 +100,13 @@ export async function createUser(payload: { role: 'student' | 'university' | 'ad
     role,
     emailVerified: true,
     suspended: false,
+    resetToken: inviteToken,
+    resetTokenExpires: inviteTokenExpires,
   });
 
   if (role === 'student') {
     await StudentProfile.create({ userId: user._id });
   } else if (role === 'university') {
-    // Университет, созданный админом, сразу верифицирован (без pending).
     await UniversityProfile.create({
       userId: user._id,
       universityName: name?.trim() ? name.trim() : 'New University',
@@ -105,6 +116,11 @@ export async function createUser(payload: { role: 'student' | 'university' | 'ad
   }
 
   await subscriptionService.createForNewUser(String(user._id), role);
+
+  if (isInvite && inviteToken && (config.email?.enabled || config.email?.sendgridApiKey)) {
+    await emailService.sendInviteSetPasswordEmail(user.email, inviteToken);
+  }
+
   const plain = user.toObject();
   return { ...plain, id: String(user._id) };
 }

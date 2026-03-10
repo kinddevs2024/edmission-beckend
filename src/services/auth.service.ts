@@ -61,7 +61,8 @@ export async function register(data: RegisterBody) {
   });
 
   if (data.role === 'student') {
-    await StudentProfile.create({ userId: user._id });
+    const avatarUrl = (data as { avatarUrl?: string }).avatarUrl?.trim()
+    await StudentProfile.create({ userId: user._id, avatarUrl: avatarUrl || undefined });
   }
   // University: profile is created only when admin approves verification request (Admin → University requests)
   await subscriptionService.createForNewUser(String(user._id), data.role);

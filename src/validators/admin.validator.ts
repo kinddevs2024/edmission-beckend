@@ -12,7 +12,7 @@ export const createUserSchema = z.object({
   body: z.object({
     role: z.enum(['student', 'university', 'admin']),
     email: z.string().email(),
-    password: passwordSchema,
+    password: passwordSchema.optional(),
     name: z.string().max(200).optional(),
   }),
 });

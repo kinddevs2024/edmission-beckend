@@ -17,6 +17,15 @@ export const authRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+/** Public avatar upload (registration) - strict limit per IP */
+export const uploadAvatarRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { message: 'Too many uploads', code: 'RATE_LIMIT_EXCEEDED' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 export const aiChatRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: config.ollama.chatRateLimitPerMinute,

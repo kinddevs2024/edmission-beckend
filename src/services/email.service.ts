@@ -61,6 +61,21 @@ export async function sendResetPasswordEmail(to: string, resetToken: string): Pr
   return sendMail(to, 'Reset your password', resetPasswordHtml(resetLink));
 }
 
+export function inviteSetPasswordHtml(setPasswordLink: string): string {
+  return `
+    <p>You have been invited to Edmission.</p>
+    <p><a href="${setPasswordLink}">Set your password</a> to sign in.</p>
+    <p>This link expires in 7 days. If you didn't expect this invitation, you can ignore this email.</p>
+    <p>— Edmission Team</p>
+  `;
+}
+
+export async function sendInviteSetPasswordEmail(to: string, resetToken: string): Promise<boolean> {
+  const baseUrl = getFrontendUrl();
+  const setPasswordLink = `${baseUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+  return sendMail(to, 'Set your Edmission password', inviteSetPasswordHtml(setPasswordLink));
+}
+
 export function trialReminderHtml(daysLeft: number, planName: string): string {
   return `
     <p>Your trial ends in ${daysLeft} day(s).</p>

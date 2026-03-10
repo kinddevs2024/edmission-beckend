@@ -13,6 +13,7 @@ export const registerSchema = z.object({
     password: passwordSchema,
     role: z.enum(['student', 'university', 'admin']),
     name: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
+    avatarUrl: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   }),
 });
 
