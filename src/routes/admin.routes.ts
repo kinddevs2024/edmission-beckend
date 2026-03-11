@@ -58,4 +58,7 @@ router.get('/investors', adminController.getInvestors);
 router.post('/investors', requireAdminOnly, validate(adminValidator.createInvestorSchema.shape.body, 'body'), adminController.createInvestor);
 router.delete('/investors/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteInvestor);
 
+router.get('/settings', requireAdminOnly, adminController.getSettings);
+router.patch('/settings', requireAdminOnly, validate(adminValidator.updateSettingsSchema.shape.body, 'body'), adminController.updateSettings);
+
 export default router;

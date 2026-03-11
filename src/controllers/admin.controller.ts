@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { Request, Response, NextFunction } from 'express';
 import * as adminService from '../services/admin.service';
+import * as settingsService from '../services/settings.service';
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -481,6 +482,27 @@ export async function createInvestor(req: Request, res: Response, next: NextFunc
 export async function deleteInvestor(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = await adminService.deleteInvestor(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ——— System settings (admin only) ———
+
+export async function getSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await settingsService.getSettings();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as { requireAccountConfirmation?: boolean; requireEmailVerification?: boolean; maintenanceMode?: boolean };
+    const data = await settingsService.updateSettings(body);
     res.json(data);
   } catch (e) {
     next(e);

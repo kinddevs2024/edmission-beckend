@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { User, RefreshToken, StudentProfile, UniversityProfile } from '../models';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
+import * as settingsService from './settings.service';
 import { config } from '../config';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
@@ -94,13 +95,27 @@ export async function register(data: RegisterBody) {
 
 export async function login(data: LoginBody) {
   const user = await User.findOne({ email: data.email });
-  if (!user || user.suspended) {
+  if (!user) {
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+  if (user.suspended) {
+    throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
   }
 
   const valid = await bcrypt.compare(data.password, user.passwordHash);
   if (!valid) {
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+
+  const settings = await settingsService.getSettings();
+  if (settings.requireEmailVerification && !user.emailVerified) {
+    throw new AppError(403, 'Please verify your email before signing in.', ErrorCodes.FORBIDDEN);
+  }
+  if (settings.requireAccountConfirmation && user.role === 'university') {
+    const profile = await UniversityProfile.findOne({ userId: user._id }).lean();
+    if (!profile || !(profile as { verified?: boolean }).verified) {
+      throw new AppError(403, 'Your account is pending approval by an administrator.', ErrorCodes.FORBIDDEN);
+    }
   }
 
   const accessToken = signAccessToken({

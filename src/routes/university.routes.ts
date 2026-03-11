@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as universityController from '../controllers/university.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { requireRole } from '../middlewares/rbac.middleware';
+import { requireVerifiedUniversity } from '../middlewares/requireVerifiedUniversity.middleware';
 import { validate } from '../middlewares/validate.middleware';
 import { validateObjectId } from '../middlewares/validateObjectId.middleware';
 import * as universityValidator from '../validators/university.validator';
@@ -11,10 +12,14 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRole('university'));
 
+/** Unverified university: only catalog, verification-request, and read profile */
 router.get('/catalog', universityController.getCatalog);
 router.post('/verification-request', universityController.createVerificationRequest);
-
 router.get('/profile', universityController.getProfile);
+
+router.use(requireVerifiedUniversity);
+
+/** Verified university only from here */
 router.put('/profile', validate(universityValidator.updateProfileSchema.shape.body, 'body'), universityController.updateProfile);
 router.get('/dashboard', universityController.getDashboard);
 router.get('/analytics/funnel', universityController.getFunnelAnalytics);

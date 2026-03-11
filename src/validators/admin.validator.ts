@@ -205,3 +205,11 @@ export const subscriptionsQuerySchema = z.object({
   plan: z.string().max(50).optional(),
   status: z.string().max(50).optional(),
 });
+
+export const updateSettingsSchema = z.object({
+  body: z.object({
+    requireAccountConfirmation: z.boolean().optional(),
+    requireEmailVerification: z.boolean().optional(),
+    maintenanceMode: z.boolean().optional(),
+  }).strict(),
+});

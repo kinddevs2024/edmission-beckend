@@ -23,3 +23,4 @@ export { Ticket } from './Ticket';
 export { StudentDocument } from './StudentDocument';
 export { AIConversation } from './AIConversation';
 export { StudentProfileView } from './StudentProfileView';
+export { SystemSettings } from './SystemSettings';

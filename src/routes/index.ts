@@ -1,6 +1,7 @@
 import path from 'path';
 import express, { Router, type Request, type Response } from 'express';
 import { config } from '../config';
+import { maintenanceMiddleware } from '../middlewares/maintenance.middleware';
 import authRoutes from './auth.routes';
 import studentRoutes from './student.routes';
 import universityRoutes from './university.routes';
@@ -15,6 +16,8 @@ import optionsRoutes from './options.routes';
 import paymentRoutes from './payment.routes';
 
 const router = Router();
+
+router.use(maintenanceMiddleware);
 
 /** Static uploads - filenames are UUIDs (unguessable). TODO: add auth for sensitive files. */
 router.use('/uploads', express.static(path.resolve(config.uploadDir)));
