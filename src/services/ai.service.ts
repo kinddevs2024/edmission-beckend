@@ -21,8 +21,8 @@ export interface ChatInput {
 const MAX_HISTORY_MESSAGES = 20;
 
 export async function chat(userId: string, role: Role, input: ChatInput): Promise<string> {
-  if (role !== 'student' && role !== 'university') {
-    throw new AppError(403, 'AI chat is available for students and universities only', ErrorCodes.FORBIDDEN);
+  if (role !== 'student' && role !== 'university' && role !== 'admin') {
+    throw new AppError(403, 'AI chat is available for students, universities and admins only', ErrorCodes.FORBIDDEN);
   }
 
   const context = await buildContext(userId, role);
