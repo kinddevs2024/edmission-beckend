@@ -7,6 +7,7 @@ import * as settingsService from './settings.service';
 import { config } from '../config';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { logger } from '../utils/logger';
 import type { Role } from '../types/role';
 import type { RegisterBody, LoginBody } from '../validators/auth.validator';
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
@@ -43,6 +44,10 @@ function toPlainUser(doc: { _id: unknown; email: string; role: string; name?: st
   };
 }
 
+function generateVerificationCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
 export async function register(data: RegisterBody) {
   const existing = await User.findOne({ email: data.email });
   if (existing) {
@@ -50,47 +55,38 @@ export async function register(data: RegisterBody) {
   }
 
   const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS);
-  const verifyToken = uuidv4();
-  const verifyTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const verifyCode = generateVerificationCode();
+  const verifyTokenExpires = new Date(Date.now() + 15 * 60 * 1000);
 
   const user = await User.create({
     email: data.email,
     name: data.name ?? '',
     passwordHash,
     role: data.role,
-    verifyToken,
+    verifyToken: verifyCode,
     verifyTokenExpires,
   });
 
   if (data.role === 'student') {
-    const avatarUrl = (data as { avatarUrl?: string }).avatarUrl?.trim()
+    const avatarUrl = (data as { avatarUrl?: string }).avatarUrl?.trim();
     await StudentProfile.create({ userId: user._id, avatarUrl: avatarUrl || undefined });
   }
-  // University: profile is created only when admin approves verification request (Admin → University requests)
   await subscriptionService.createForNewUser(String(user._id), data.role);
 
-  const accessToken = signAccessToken({
-    sub: String(user._id),
-    email: user.email,
-    role: user.role as Role,
-  });
-  const refreshToken = signRefreshToken({
-    sub: String(user._id),
-    email: user.email,
-    role: user.role as Role,
-  });
+  const sent = await emailService.sendVerificationCodeEmail(user.email, verifyCode);
+  if (!sent && config.email.enabled) {
+    await User.findByIdAndDelete(user._id);
+    throw new AppError(
+      503,
+      'Failed to send verification email. Please try again later.',
+      ErrorCodes.SERVICE_UNAVAILABLE
+    );
+  }
+  if (!sent) {
+    logger.info({ email: user.email, code: verifyCode }, 'Email disabled: verification code (use in dev)');
+  }
 
-  await RefreshToken.create({
-    userId: user._id,
-    token: await bcrypt.hash(refreshToken, 10),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  });
-
-  return {
-    user: toPlainUser(user),
-    accessToken,
-    refreshToken,
-  };
+  return { email: user.email, needsVerification: true };
 }
 
 export async function login(data: LoginBody) {
@@ -261,6 +257,7 @@ export async function updateMe(userId: string, data: { name?: string; notificati
   };
 }
 
+/** Verify by link token (legacy / link in email). */
 export async function verifyEmail(token: string) {
   const user = await User.findOne({
     verifyToken: token,
@@ -275,6 +272,45 @@ export async function verifyEmail(token: string) {
     verifyTokenExpires: null,
   });
   return { success: true };
+}
+
+/** Verify by 6-digit code (sent after register). Returns user + tokens to log in. */
+export async function verifyEmailByCode(email: string, code: string) {
+  const user = await User.findOne({
+    email: email.toLowerCase().trim(),
+    verifyToken: code.trim(),
+    verifyTokenExpires: { $gt: new Date() },
+  });
+  if (!user) {
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+  await User.findByIdAndUpdate(user._id, {
+    emailVerified: true,
+    verifyToken: null,
+    verifyTokenExpires: null,
+  });
+
+  const accessToken = signAccessToken({
+    sub: String(user._id),
+    email: user.email,
+    role: user.role as Role,
+  });
+  const refreshToken = signRefreshToken({
+    sub: String(user._id),
+    email: user.email,
+    role: user.role as Role,
+  });
+  await RefreshToken.create({
+    userId: user._id,
+    token: await bcrypt.hash(refreshToken, 10),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+
+  return {
+    user: toPlainUser(user),
+    accessToken,
+    refreshToken,
+  };
 }
 
 export async function forgotPassword(email: string) {

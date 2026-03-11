@@ -76,6 +76,20 @@ export async function sendInviteSetPasswordEmail(to: string, resetToken: string)
   return sendMail(to, 'Set your Edmission password', inviteSetPasswordHtml(setPasswordLink));
 }
 
+export function verificationCodeHtml(code: string): string {
+  return `
+    <p>Your Edmission verification code is:</p>
+    <p style="font-size:24px;font-weight:bold;letter-spacing:4px;">${code}</p>
+    <p>Enter this code on the registration page to verify your email. The code expires in 15 minutes.</p>
+    <p>If you didn't create an account, you can ignore this email.</p>
+    <p>— Edmission Team</p>
+  `;
+}
+
+export async function sendVerificationCodeEmail(to: string, code: string): Promise<boolean> {
+  return sendMail(to, 'Verify your email – Edmission', verificationCodeHtml(code));
+}
+
 export function trialReminderHtml(daysLeft: number, planName: string): string {
   return `
     <p>Your trial ends in ${daysLeft} day(s).</p>

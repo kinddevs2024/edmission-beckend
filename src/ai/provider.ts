@@ -10,6 +10,8 @@ import * as ollama from './ollama.client';
 
 export type ChatMessage = openai.ChatMessage;
 
+export type StreamChunk = { type: 'content' | 'thinking'; text: string };
+
 export function useOpenAI(): boolean {
   return Boolean(config.openai.apiKey?.trim());
 }
@@ -27,6 +29,23 @@ export async function chat(messages: ChatMessage[], model?: string): Promise<str
   if (useGemini()) return gemini.chat(messages, model);
   if (useDeepSeek()) return deepseek.chat(messages, model);
   return ollama.chat(messages, model);
+}
+
+/** Stream chat. Falls back to non-stream for OpenAI/Gemini (yields one content chunk at end). */
+export async function* chatStream(
+  messages: ChatMessage[],
+  model?: string
+): AsyncGenerator<StreamChunk, void, unknown> {
+  if (useDeepSeek()) {
+    yield* deepseek.chatStream(messages, model);
+    return;
+  }
+  if (useOpenAI() || useGemini()) {
+    const full = await chat(messages, model);
+    if (full) yield { type: 'content', text: full };
+    return;
+  }
+  yield* ollama.chatStream(messages, model);
 }
 
 export async function healthCheck(): Promise<boolean> {

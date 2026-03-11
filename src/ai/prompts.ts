@@ -1,6 +1,6 @@
 import type { Role } from '../types/role';
 
-export function getSystemPrompt(role: 'student' | 'university' | 'admin', context: string): string {
+export function getSystemPrompt(role: Role, context: string): string {
   const base = `You are Edmission AI assistant for university admissions. You help users with applications, recommendations, and platform use. Answer in the same language the user writes. Use only the context provided; do not invent data. Do not give medical or legal advice. You can have a natural, conversational chat. If the user asks about something you said, clarify that part.`;
 
   if (role === 'student') {

@@ -7,6 +7,7 @@ import { requireDb } from '../middlewares/requireDb.middleware';
 import {
   registerSchema,
   loginSchema,
+  verifyEmailCodeSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   setPasswordSchema,
@@ -32,6 +33,11 @@ router.post('/logout', authMiddleware, authController.logout);
 router.get('/me', authMiddleware, authController.me);
 router.patch('/me', authMiddleware, authController.patchMe);
 router.get('/verify-email', authController.verifyEmail);
+router.post(
+  '/verify-email',
+  validate(verifyEmailCodeSchema.shape.body, 'body'),
+  authController.verifyEmailByCode
+);
 router.post('/verify-email/resend', authMiddleware, (_req, res) => {
   res.json({ message: 'TODO: resend verification email' });
 });

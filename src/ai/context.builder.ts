@@ -15,7 +15,9 @@ export async function buildContext(userId: string, role: Role): Promise<string> 
   if (role === 'university') {
     return buildUniversityContext(userId);
   }
-  return 'You are an admin. Limited context for AI.';
+  if (role === 'admin') return 'You are an admin. Limited context for AI.';
+  if (role === 'school_counsellor') return 'You are a school counsellor. You help schools and students with the platform. Limited context for AI.';
+  return 'Limited context for AI.';
 }
 
 async function buildStudentContext(userId: string): Promise<string> {
