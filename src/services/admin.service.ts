@@ -575,8 +575,11 @@ export async function getUniversityVerificationRequests(query: { status?: string
 export async function approveUniversityRequest(requestId: string, adminUserId: string) {
   const request = await UniversityVerificationRequest.findById(requestId).populate('universityCatalogId');
   if (!request) throw new AppError(404, 'Request not found', ErrorCodes.NOT_FOUND);
-  if ((request as { status: string }).status !== 'pending') {
-    throw new AppError(400, 'Request already processed', ErrorCodes.CONFLICT);
+  if ((request as { status: string }).status === 'approved') {
+    return { approved: true, profileId: '', alreadyProcessed: true };
+  }
+  if ((request as { status: string }).status === 'rejected') {
+    return { approved: false, alreadyProcessed: true };
   }
   const catalog = request.universityCatalogId as unknown as { _id: unknown; universityName: string; tagline?: string; establishedYear?: number; studentCount?: number; country?: string; city?: string; description?: string; logoUrl?: string; facultyCodes?: string[]; facultyItems?: Record<string, string[]>; targetStudentCountries?: string[]; programs?: Array<Record<string, unknown>>; scholarships?: Array<Record<string, unknown>> };
   if (!catalog) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
@@ -649,7 +652,7 @@ export async function rejectUniversityRequest(requestId: string, adminUserId: st
   const request = await UniversityVerificationRequest.findById(requestId);
   if (!request) throw new AppError(404, 'Request not found', ErrorCodes.NOT_FOUND);
   if ((request as { status: string }).status !== 'pending') {
-    throw new AppError(400, 'Request already processed', ErrorCodes.CONFLICT);
+    return { rejected: true, alreadyProcessed: true };
   }
   await UniversityVerificationRequest.findByIdAndUpdate(requestId, {
     status: 'rejected',

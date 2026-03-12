@@ -34,7 +34,8 @@ export async function chat(userId: string, role: Role, input: ChatInput): Promis
 
   let userContent = input.message.trim();
   if (input.selectedText?.trim()) {
-    userContent = `[The user selected this part of your previous answer and is asking about it]\n"${input.selectedText.trim()}"\n\nUser's question: ${userContent}`;
+    const q = userContent || 'Please explain or elaborate on the selected part.';
+    userContent = `[The user selected this part of your previous answer and is asking about it]\n"${input.selectedText.trim()}"\n\nUser's question: ${q}`;
   }
 
   const messages: aiProvider.ChatMessage[] = [
@@ -93,7 +94,8 @@ export async function* chatStream(
 
   let userContent = input.message.trim();
   if (input.selectedText?.trim()) {
-    userContent = `[The user selected this part of your previous answer and is asking about it]\n"${input.selectedText.trim()}"\n\nUser's question: ${userContent}`;
+    const q = userContent || 'Please explain or elaborate on the selected part.';
+    userContent = `[The user selected this part of your previous answer and is asking about it]\n"${input.selectedText.trim()}"\n\nUser's question: ${q}`;
   }
 
   const messages: aiProvider.ChatMessage[] = [

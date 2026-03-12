@@ -31,18 +31,21 @@ export async function chat(messages: ChatMessage[], model?: string): Promise<str
   return ollama.chat(messages, model);
 }
 
-/** Stream chat. Falls back to non-stream for OpenAI/Gemini (yields one content chunk at end). */
+/** Stream chat: yields content (and optionally thinking) chunks for all providers. */
 export async function* chatStream(
   messages: ChatMessage[],
   model?: string
 ): AsyncGenerator<StreamChunk, void, unknown> {
-  if (useDeepSeek()) {
-    yield* deepseek.chatStream(messages, model);
+  if (useOpenAI()) {
+    yield* openai.chatStream(messages, model);
     return;
   }
-  if (useOpenAI() || useGemini()) {
-    const full = await chat(messages, model);
-    if (full) yield { type: 'content', text: full };
+  if (useGemini()) {
+    yield* gemini.chatStream(messages, model);
+    return;
+  }
+  if (useDeepSeek()) {
+    yield* deepseek.chatStream(messages, model);
     return;
   }
   yield* ollama.chatStream(messages, model);

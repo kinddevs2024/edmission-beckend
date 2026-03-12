@@ -1,6 +1,6 @@
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
-import { User, RefreshToken, StudentProfile, UniversityProfile } from '../models';
+import { User, RefreshToken, StudentProfile, UniversityProfile, PendingRegistration } from '../models';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import * as settingsService from './settings.service';
@@ -49,33 +49,34 @@ function generateVerificationCode(): string {
 }
 
 export async function register(data: RegisterBody) {
-  const existing = await User.findOne({ email: data.email });
-  if (existing) {
+  const normalizedEmail = data.email.toLowerCase().trim();
+  const existingUser = await User.findOne({ email: normalizedEmail });
+  if (existingUser) {
     throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
   }
 
   const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS);
   const verifyCode = generateVerificationCode();
-  const verifyTokenExpires = new Date(Date.now() + 15 * 60 * 1000);
+  const verifyTokenExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 min
+  const avatarUrl = (data as { avatarUrl?: string }).avatarUrl?.trim();
 
-  const user = await User.create({
-    email: data.email,
-    name: data.name ?? '',
-    passwordHash,
-    role: data.role,
-    verifyToken: verifyCode,
-    verifyTokenExpires,
-  });
+  await PendingRegistration.findOneAndUpdate(
+    { email: normalizedEmail },
+    {
+      email: normalizedEmail,
+      passwordHash,
+      role: data.role,
+      avatarUrl: avatarUrl || undefined,
+      verifyToken: verifyCode,
+      verifyTokenExpires,
+      verifyTokenSentAt: new Date(),
+    },
+    { upsert: true, new: true }
+  );
 
-  if (data.role === 'student') {
-    const avatarUrl = (data as { avatarUrl?: string }).avatarUrl?.trim();
-    await StudentProfile.create({ userId: user._id, avatarUrl: avatarUrl || undefined });
-  }
-  await subscriptionService.createForNewUser(String(user._id), data.role);
-
-  const sent = await emailService.sendVerificationCodeEmail(user.email, verifyCode);
+  const sent = await emailService.sendVerificationCodeEmail(normalizedEmail, verifyCode);
   if (!sent && config.email.enabled) {
-    await User.findByIdAndDelete(user._id);
+    await PendingRegistration.deleteOne({ email: normalizedEmail });
     throw new AppError(
       503,
       'Failed to send verification email. Please try again later.',
@@ -83,10 +84,45 @@ export async function register(data: RegisterBody) {
     );
   }
   if (!sent) {
-    logger.info({ email: user.email, code: verifyCode }, 'Email disabled: verification code (use in dev)');
+    logger.info({ email: normalizedEmail, code: verifyCode }, 'Email disabled: verification code (use in dev)');
   }
 
-  return { email: user.email, needsVerification: true };
+  return { email: normalizedEmail, needsVerification: true };
+}
+
+const RESEND_COOLDOWN_MS = 60 * 1000; // 1 min
+const CODE_VALIDITY_MS = 5 * 60 * 1000; // 5 min
+
+/** Resend 6-digit verification code. Cooldown: 60s. Code validity: 5 min. */
+export async function resendVerificationCode(email: string) {
+  const normalized = email.toLowerCase().trim();
+  const pending = await PendingRegistration.findOne({ email: normalized });
+  if (!pending) {
+    return { success: true }; // Don't leak whether pending exists
+  }
+
+  const sentAt = new Date(pending.verifyTokenSentAt).getTime();
+  if (Date.now() - sentAt < RESEND_COOLDOWN_MS) {
+    const waitSec = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - sentAt)) / 1000);
+    throw new AppError(429, `Please wait ${waitSec} seconds before resending`, ErrorCodes.RATE_LIMIT);
+  }
+
+  const newCode = generateVerificationCode();
+  const verifyTokenExpires = new Date(Date.now() + CODE_VALIDITY_MS);
+  await PendingRegistration.updateOne(
+    { email: normalized },
+    { verifyToken: newCode, verifyTokenExpires, verifyTokenSentAt: new Date() }
+  );
+
+  const sent = await emailService.sendVerificationCodeEmail(normalized, newCode);
+  if (!sent && config.email.enabled) {
+    throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+  if (!sent) {
+    logger.info({ email: normalized, code: newCode }, 'Email disabled: resend verification code (use in dev)');
+  }
+
+  return { success: true };
 }
 
 export async function login(data: LoginBody) {
@@ -274,21 +310,35 @@ export async function verifyEmail(token: string) {
   return { success: true };
 }
 
-/** Verify by 6-digit code (sent after register). Returns user + tokens to log in. */
+/** Verify by 6-digit code (sent after register). Creates User and returns tokens. */
 export async function verifyEmailByCode(email: string, code: string) {
-  const user = await User.findOne({
-    email: email.toLowerCase().trim(),
+  const normalized = email.toLowerCase().trim();
+  const pending = await PendingRegistration.findOne({
+    email: normalized,
     verifyToken: code.trim(),
     verifyTokenExpires: { $gt: new Date() },
   });
-  if (!user) {
+  if (!pending) {
     throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
   }
-  await User.findByIdAndUpdate(user._id, {
+
+  const user = await User.create({
+    email: pending.email,
+    name: '',
+    passwordHash: pending.passwordHash,
+    role: pending.role as Role,
     emailVerified: true,
-    verifyToken: null,
-    verifyTokenExpires: null,
   });
+
+  if (pending.role === 'student') {
+    await StudentProfile.create({
+      userId: user._id,
+      avatarUrl: pending.avatarUrl || undefined,
+    });
+  }
+  await subscriptionService.createForNewUser(String(user._id), pending.role);
+
+  await PendingRegistration.deleteOne({ email: normalized });
 
   const accessToken = signAccessToken({
     sub: String(user._id),

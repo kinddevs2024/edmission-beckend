@@ -38,6 +38,12 @@ export const refreshSchema = z.object({
   }),
 });
 
+export const resendVerificationSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
 export const forgotPasswordSchema = z.object({
   body: z.object({
     email: z.string().email(),

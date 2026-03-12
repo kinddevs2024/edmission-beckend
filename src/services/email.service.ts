@@ -1,11 +1,30 @@
+import nodemailer from 'nodemailer';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
 const getFrontendUrl = () => config.frontendUrl?.replace(/\/$/, '') || 'https://edmission.uz';
 
+function createSmtpTransporter() {
+  const { host, port, user, pass } = config.email.smtp;
+  if (!host || !user || !pass) return null;
+  const passClean = String(pass).replace(/\s/g, ''); // Gmail app password often has spaces
+  if (host === 'smtp.gmail.com') {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user, pass: passClean },
+    });
+  }
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass: passClean },
+  });
+}
+
 export async function sendMail(to: string, subject: string, html: string): Promise<boolean> {
   if (!config.email.enabled) {
-    logger.info({ to, subject }, 'Email disabled, would send');
+    logger.info({ to, subject }, 'Email disabled (EMAIL_ENABLED!=true), would send');
     return true;
   }
   if (config.email.sendgridApiKey) {
@@ -24,7 +43,8 @@ export async function sendMail(to: string, subject: string, html: string): Promi
         }),
       });
       if (!res.ok) {
-        logger.warn({ status: res.status }, 'SendGrid error');
+        const text = await res.text();
+        logger.warn({ status: res.status, body: text }, 'SendGrid error');
         return false;
       }
       return true;
@@ -33,7 +53,32 @@ export async function sendMail(to: string, subject: string, html: string): Promi
       return false;
     }
   }
-  logger.info({ to, subject }, 'No SendGrid key, email not sent');
+  const transporter = createSmtpTransporter();
+  if (transporter) {
+    try {
+      await transporter.sendMail({
+        from: `Edmission <${config.email.from}>`,
+        to,
+        subject,
+        html,
+      });
+      return true;
+    } catch (e: unknown) {
+      const err = e as { code?: string; response?: string; responseCode?: number; command?: string; message?: string };
+      logger.error(
+        {
+          code: err.code,
+          responseCode: err.responseCode,
+          response: typeof err.response === 'string' ? err.response.slice(0, 200) : err.response,
+          command: err.command,
+          message: err.message,
+        },
+        'SMTP send failed'
+      );
+      return false;
+    }
+  }
+  logger.info({ to, subject }, 'No SendGrid or SMTP configured, email not sent');
   return false;
 }
 

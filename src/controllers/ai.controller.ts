@@ -36,6 +36,7 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
         (res as { flushHeaders: () => void }).flushHeaders();
       }
 
+      const flush = typeof (res as { flush?: () => void }).flush === 'function' ? (res as { flush: () => void }).flush : null;
       try {
         for await (const chunk of aiService.chatStream(req.user.id, req.user.role, {
           message: message.trim(),
@@ -44,8 +45,10 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
         })) {
           const payload = JSON.stringify({ t: chunk.type, d: chunk.text });
           res.write(`data: ${payload}\n\n`);
+          if (flush) flush();
         }
         res.write('data: {"t":"done"}\n\n');
+        if (flush) flush();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         res.write(`data: ${JSON.stringify({ t: 'error', d: msg })}\n\n`);

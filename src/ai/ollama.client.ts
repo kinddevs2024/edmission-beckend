@@ -102,11 +102,12 @@ export async function* chatStream(
         if (!trimmed) continue;
         try {
           const data = JSON.parse(trimmed) as {
-            message?: { content?: string };
+            message?: { role?: string; content?: string };
             done?: boolean;
           };
-          if (data.message?.content) {
-            yield { type: 'content', text: data.message.content };
+          const content = data.message?.content;
+          if (content != null && typeof content === 'string' && content.length > 0) {
+            yield { type: 'content', text: content };
           }
         } catch (_) {
           /* skip */

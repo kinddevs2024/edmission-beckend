@@ -68,6 +68,12 @@ export const config = {
     from: process.env.EMAIL_FROM || 'noreply@edmission.com',
     sendgridApiKey: process.env.SENDGRID_API_KEY || '',
     enabled: process.env.EMAIL_ENABLED === 'true',
+    smtp: {
+      host: process.env.SMTP_HOST || '',
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
+    },
   },
 };
 

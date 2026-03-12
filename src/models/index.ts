@@ -1,4 +1,5 @@
 export { User } from './User';
+export { PendingRegistration } from './PendingRegistration';
 export { RefreshToken } from './RefreshToken';
 export { StudentProfile } from './StudentProfile';
 export { CounsellorProfile } from './CounsellorProfile';

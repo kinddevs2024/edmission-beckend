@@ -8,6 +8,7 @@ import {
   registerSchema,
   loginSchema,
   verifyEmailCodeSchema,
+  resendVerificationSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   setPasswordSchema,
@@ -38,9 +39,11 @@ router.post(
   validate(verifyEmailCodeSchema.shape.body, 'body'),
   authController.verifyEmailByCode
 );
-router.post('/verify-email/resend', authMiddleware, (_req, res) => {
-  res.json({ message: 'TODO: resend verification email' });
-});
+router.post(
+  '/verify-email/resend',
+  validate(resendVerificationSchema.shape.body, 'body'),
+  authController.resendVerificationCode
+);
 router.post(
   '/forgot-password',
   validate(forgotPasswordSchema.shape.body, 'body'),

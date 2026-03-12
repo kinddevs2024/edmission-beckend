@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service';
 import * as twoFactorService from '../services/twoFactor.service';
-import { loginSchema, registerSchema, verifyEmailCodeSchema, forgotPasswordSchema, resetPasswordSchema, setPasswordSchema } from '../validators/auth.validator';
+import { loginSchema, registerSchema, verifyEmailCodeSchema, resendVerificationSchema, forgotPasswordSchema, resetPasswordSchema, setPasswordSchema } from '../validators/auth.validator';
 
 export async function register(
   req: Request,
@@ -136,6 +136,20 @@ export async function verifyEmailByCode(
     const { email, code } = verifyEmailCodeSchema.shape.body.parse(req.body);
     const result = await authService.verifyEmailByCode(email, code);
     res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function resendVerificationCode(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { email } = resendVerificationSchema.shape.body.parse(req.body);
+    await authService.resendVerificationCode(email);
+    res.json({ success: true });
   } catch (e) {
     next(e);
   }
