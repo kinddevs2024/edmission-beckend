@@ -36,7 +36,8 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
         (res as { flushHeaders: () => void }).flushHeaders();
       }
 
-      const flush = typeof (res as { flush?: () => void }).flush === 'function' ? (res as { flush: () => void }).flush : null;
+      const resWithFlush = res as unknown as { flush?: () => void };
+      const flush = typeof resWithFlush.flush === 'function' ? resWithFlush.flush : null;
       try {
         for await (const chunk of aiService.chatStream(req.user.id, req.user.role, {
           message: message.trim(),
