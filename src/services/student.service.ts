@@ -528,8 +528,6 @@ export async function getCompare(userId: string, ids: unknown[]) {
   }
 
   const universities = await UniversityProfile.find({ _id: { $in: normalizedIds } })
-    .populate('programs')
-    .populate('scholarships')
     .lean();
   const recs = await Recommendation.find({
     studentId: profile._id,

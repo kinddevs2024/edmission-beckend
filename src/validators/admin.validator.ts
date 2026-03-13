@@ -214,11 +214,24 @@ export const updateSettingsSchema = z.object({
   }).strict(),
 });
 
+/** Accepts full URLs (http/https) or relative paths (/api/uploads/...) from file uploads */
+const imageUrlSchema = z.string().min(1).refine(
+  (v) => {
+    const s = v.trim()
+    if (!s) return false
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      try { new URL(s); return true } catch { return false }
+    }
+    return s.startsWith('/')
+  },
+  { message: 'Invalid url' }
+);
+
 export const createLandingCertificateSchema = z.object({
   body: z.object({
     type: z.enum(['university', 'student']),
     title: z.string().min(1).max(200),
-    imageUrl: z.string().url(),
+    imageUrl: imageUrlSchema,
     order: z.number().optional(),
   }).strict(),
 });
@@ -227,7 +240,7 @@ export const updateLandingCertificateSchema = z.object({
   body: z.object({
     type: z.enum(['university', 'student']).optional(),
     title: z.string().min(1).max(200).optional(),
-    imageUrl: z.string().url().optional(),
+    imageUrl: imageUrlSchema.optional(),
     order: z.number().optional(),
   }).strict(),
 });
