@@ -53,6 +53,7 @@ router.get('/interests', validate(adminValidator.interestsQuerySchema, 'query'),
 router.patch('/interests/:id/status', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateInterestStatusSchema.shape.body, 'body'), adminController.updateInterestStatus);
 router.get('/chats', validate(adminValidator.chatsQuerySchema, 'query'), adminController.getChats);
 router.get('/chats/:id/messages', validateObjectId('id'), validate(adminValidator.chatMessagesQuerySchema, 'query'), adminController.getChatMessages);
+router.post('/chats/:id/messages', requireAdminOnly, validateObjectId('id'), validate(adminValidator.sendChatMessageSchema.shape.body, 'body'), adminController.sendChatMessage);
 
 router.get('/investors', adminController.getInvestors);
 router.post('/investors', requireAdminOnly, validate(adminValidator.createInvestorSchema.shape.body, 'body'), adminController.createInvestor);

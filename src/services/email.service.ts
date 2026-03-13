@@ -135,6 +135,23 @@ export async function sendVerificationCodeEmail(to: string, code: string): Promi
   return sendMail(to, 'Verify your email – Edmission', verificationCodeHtml(code));
 }
 
+export function newMessageHtml(messagePreview: string, chatLink: string): string {
+  const preview = messagePreview ? messagePreview.slice(0, 200) : 'New message';
+  return `
+    <p>You have received a new message on Edmission.</p>
+    <p style="margin:16px 0;padding:12px;background:#f1f5f9;border-radius:8px;font-style:italic;">${preview.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
+    <p><a href="${chatLink}" style="display:inline-block;padding:10px 20px;background:#84cc16;color:#0f172a;text-decoration:none;border-radius:8px;font-weight:600;">Open chat</a></p>
+    <p>— Edmission Team</p>
+  `;
+}
+
+export async function sendNewMessageEmail(to: string, messagePreview: string, recipientRole?: string): Promise<boolean> {
+  const baseUrl = getFrontendUrl();
+  const path = recipientRole === 'university' ? '/university/chat' : recipientRole === 'admin' ? '/admin/chats' : '/student/chat';
+  const chatLink = `${baseUrl}${path}`;
+  return sendMail(to, 'New message – Edmission', newMessageHtml(messagePreview, chatLink));
+}
+
 export function trialReminderHtml(daysLeft: number, planName: string): string {
   return `
     <p>Your trial ends in ${daysLeft} day(s).</p>

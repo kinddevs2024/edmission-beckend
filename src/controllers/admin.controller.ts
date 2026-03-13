@@ -187,6 +187,31 @@ export async function getChatMessages(req: Request, res: Response, next: NextFun
   }
 }
 
+export async function sendChatMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const body = (req.body || {}) as { text?: string };
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text) {
+      res.status(400).json({ error: 'Text is required' });
+      return;
+    }
+    const result = await adminService.sendChatMessageAsUniversity(req.params.id, req.user.id, text);
+    const msg = result.message as Record<string, unknown>;
+    const payload = {
+      ...msg,
+      id: msg.id ?? msg._id,
+      text: msg.message ?? msg.text ?? '',
+    };
+    const { getIO } = await import('../socket');
+    const io = getIO();
+    if (io) io.to(`chat:${req.params.id}`).emit('new_message', { chatId: req.params.id, message: payload });
+    res.status(201).json(payload);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function suspendUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const suspend = req.body.suspend !== false;

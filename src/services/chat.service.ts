@@ -1,5 +1,6 @@
 import { User, StudentProfile, UniversityProfile, Chat, Message } from '../models';
 import * as notificationService from './notification.service';
+import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
 
@@ -274,6 +275,22 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
     referenceId: String(chatId),
     metadata: { chatId: String(chatId) },
   });
+
+  // Send same message to recipient email (fire-and-forget)
+  User.findById(recipientId)
+    .select('email role notificationPreferences')
+    .lean()
+    .then((rec) => {
+      if (!rec || !(rec as { email?: string }).email) return;
+      const prefs = (rec as { notificationPreferences?: { emailApplicationUpdates?: boolean } }).notificationPreferences;
+      if (prefs?.emailApplicationUpdates === false) return;
+      return emailService.sendNewMessageEmail(
+        (rec as { email: string }).email,
+        notifBody,
+        (rec as { role?: string }).role,
+      );
+    })
+    .catch(() => {});
 
   const sender = msgPop ? (msgPop as { senderId?: { _id?: unknown; id?: unknown } }).senderId : null;
   const senderIdStr = sender != null ? String((sender as { _id?: unknown })._id ?? (sender as { id?: unknown }).id ?? '') : undefined;

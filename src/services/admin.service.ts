@@ -11,6 +11,7 @@ import {
   UniversityDocument,
   Subscription,
   Interest,
+  CatalogInterest,
   Chat,
   Message,
   Notification,
@@ -234,30 +235,65 @@ export async function listInterests(query: { page?: number; limit?: number; stat
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
-  const where: Record<string, unknown> = {};
-  if (query.status) where.status = query.status;
-  const [list, total] = await Promise.all([
-    Interest.find(where).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-    Interest.countDocuments(where),
+  const whereProfile: Record<string, unknown> = {};
+  const whereCatalog: Record<string, unknown> = {};
+  if (query.status) {
+    whereProfile.status = query.status;
+    whereCatalog.status = query.status;
+  }
+  const fetchLimit = skip + limit;
+  const [profileList, profileTotal, catalogList, catalogTotal] = await Promise.all([
+    Interest.find(whereProfile).sort({ createdAt: -1 }).limit(fetchLimit).lean(),
+    Interest.countDocuments(whereProfile),
+    CatalogInterest.find(whereCatalog).sort({ createdAt: -1 }).limit(fetchLimit).lean(),
+    CatalogInterest.countDocuments(whereCatalog),
   ]);
-  return { data: list.map((i) => ({ ...i, id: String((i as { _id: unknown })._id) })), total, page, limit, totalPages: Math.ceil(total / limit) };
+  const profileItems = profileList.map((i) => {
+    const x = i as Record<string, unknown>;
+    return { ...x, id: String(x._id), source: 'profile' as const, universityId: x.universityId };
+  });
+  const catalogItems = catalogList.map((i) => {
+    const x = i as Record<string, unknown>;
+    return { ...x, id: `catalog-${x._id}`, source: 'catalog' as const, universityId: x.catalogUniversityId };
+  });
+  const merged = [...profileItems, ...catalogItems].sort(
+    (a, b) => new Date((b as { createdAt?: Date }).createdAt ?? 0).getTime() - new Date((a as { createdAt?: Date }).createdAt ?? 0).getTime()
+  );
+  const total = profileTotal + catalogTotal;
+  const data = merged.slice(skip, skip + limit);
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 }
 
 export async function updateInterestStatus(interestId: string, status: string) {
+  if (interestId.startsWith('catalog-')) {
+    const catalogId = interestId.replace(/^catalog-/, '');
+    const updated = await CatalogInterest.findByIdAndUpdate(catalogId, { status }, { new: true }).lean();
+    if (!updated) throw new AppError(404, 'Interest not found', ErrorCodes.NOT_FOUND);
+    const x = updated as Record<string, unknown>;
+    return { ...x, id: `catalog-${x._id}`, source: 'catalog' as const };
+  }
   const updated = await Interest.findByIdAndUpdate(interestId, { status }, { new: true }).lean();
   if (!updated) throw new AppError(404, 'Interest not found', ErrorCodes.NOT_FOUND);
-  return { ...updated, id: String((updated as { _id: unknown })._id) };
+  const x = updated as Record<string, unknown>;
+  return { ...x, id: String(x._id), source: 'profile' as const };
 }
 
-export async function listChats(query: { page?: number; limit?: number }) {
+export async function listChats(query: { page?: number; limit?: number; universityId?: string }) {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
-  const [list, total] = await Promise.all([
-    Chat.find({}).sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
-    Chat.countDocuments({}),
+  const filter: Record<string, unknown> = {};
+  if (query.universityId) filter.universityId = toObjectIdString(query.universityId);
+  const [list, total, universities] = await Promise.all([
+    Chat.find(filter).populate('universityId', 'universityName').populate('studentId', 'firstName lastName').sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
+    Chat.countDocuments(filter),
+    UniversityProfile.find({}).select('_id universityName').sort({ universityName: 1 }).lean(),
   ]);
-  return { data: list.map((c) => ({ ...c, id: String((c as { _id: unknown })._id) })), total, page, limit, totalPages: Math.ceil(total / limit) };
+  const data = list.map((c) => {
+    const x = c as Record<string, unknown>;
+    return { ...x, id: String(x._id), universityName: (x.universityId as { universityName?: string })?.universityName, studentName: x.studentId ? `${(x.studentId as { firstName?: string }).firstName ?? ''} ${(x.studentId as { lastName?: string }).lastName ?? ''}`.trim() : '—' };
+  });
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit), universities: universities.map((u) => ({ id: String((u as { _id: unknown })._id), name: (u as { universityName?: string }).universityName ?? '' })) };
 }
 
 export async function getChatMessages(chatId: string, query?: { limit?: number }) {
@@ -269,6 +305,21 @@ export async function getChatMessages(chatId: string, query?: { limit?: number }
     chat: { ...chat, id: String((chat as { _id: unknown })._id) },
     messages: messages.map((m) => ({ ...m, id: String((m as { _id: unknown })._id) })),
   };
+}
+
+export async function sendChatMessageAsUniversity(chatId: string, adminUserId: string, text: string) {
+  const chat = await Chat.findById(chatId)
+    .populate('universityId', 'userId')
+    .lean();
+  if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  const university = (chat as { universityId?: { userId?: unknown } }).universityId;
+  if (!university || typeof university !== 'object' || !(university as { userId?: unknown }).userId) {
+    throw new AppError(400, 'Chat has no university', ErrorCodes.VALIDATION);
+  }
+  const universityUserId = String((university as { userId: unknown }).userId);
+  const chatService = await import('./chat.service');
+  const result = await chatService.saveMessage(chatId, universityUserId, { text: text.trim(), type: 'text' });
+  return result;
 }
 
 export async function suspendUser(userId: string, suspend: boolean) {

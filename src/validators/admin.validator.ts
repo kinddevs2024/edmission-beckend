@@ -178,10 +178,17 @@ export const interestsQuerySchema = z.object({
 export const chatsQuerySchema = z.object({
   page: z.coerce.number().min(1).max(500).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
+  universityId: z.string().max(50).optional(),
 });
 
 export const chatMessagesQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(200).optional(),
+});
+
+export const sendChatMessageSchema = z.object({
+  body: z.object({
+    text: z.string().min(1, 'Text is required'),
+  }),
 });
 
 export const ticketsQuerySchema = z.object({
