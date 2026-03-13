@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema(
       emailApplicationUpdates: { type: Boolean, default: true },
       emailTrialReminder: { type: Boolean, default: true },
     },
+    onboardingTutorialSeen: {
+      student: { type: Boolean, default: false },
+      university: { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );

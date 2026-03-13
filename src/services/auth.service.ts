@@ -245,7 +245,7 @@ export async function logout(userId: string, refreshToken?: string) {
 
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
-    .select('email name role emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword')
+    .select('email name role emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword onboardingTutorialSeen')
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
@@ -255,44 +255,44 @@ export async function getMe(userId: string) {
     UniversityProfile.findOne({ userId }).lean(),
     subscriptionService.getSubscriptionSummary(userId),
   ]);
-  const u = user as { _id: unknown; email: string; name?: string; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean; mustChangePassword?: boolean };
+  const u = user as { _id: unknown; email: string; name?: string; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean; mustChangePassword?: boolean; onboardingTutorialSeen?: { student?: boolean; university?: boolean } };
+  const avatar = studentProfile && (studentProfile as { avatarUrl?: string }).avatarUrl
+    ? String((studentProfile as { avatarUrl: string }).avatarUrl).trim() || undefined
+    : undefined;
   return {
     id: String(u._id),
     email: u.email,
     name: u.name ?? '',
     role: u.role,
+    avatar: avatar ?? undefined,
     emailVerified: u.emailVerified,
     suspended: u.suspended,
     createdAt: u.createdAt,
     totpEnabled: !!u.totpEnabled,
     mustChangePassword: Boolean(u.mustChangePassword),
     notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
+    onboardingTutorialSeen: u.onboardingTutorialSeen ?? { student: false, university: false },
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
     universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id), verified: (universityProfile as { verified?: boolean }).verified } : null,
     subscription,
   };
 }
 
-export async function updateMe(userId: string, data: { name?: string; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean } }) {
+export async function updateMe(userId: string, data: { name?: string; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } }) {
   const update: Record<string, unknown> = {};
   if (data.name !== undefined) update.name = String(data.name);
   if (data.notificationPreferences !== undefined) update.notificationPreferences = data.notificationPreferences;
-  if (Object.keys(update).length === 0) return getMe(userId);
-  const user = await User.findByIdAndUpdate(userId, update, { new: true })
-    .select('email name role emailVerified suspended createdAt notificationPreferences')
-    .lean();
-  if (!user) {
-    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (data.onboardingTutorialSeen !== undefined) {
+    const prev = await User.findById(userId).select('onboardingTutorialSeen').lean();
+    const prevObj = (prev as { onboardingTutorialSeen?: { student?: boolean; university?: boolean } })?.onboardingTutorialSeen ?? {};
+    update.onboardingTutorialSeen = {
+      student: data.onboardingTutorialSeen.student ?? prevObj.student ?? false,
+      university: data.onboardingTutorialSeen.university ?? prevObj.university ?? false,
+    };
   }
-  return {
-    id: String(user._id),
-    email: user.email,
-    name: (user as { name?: string }).name ?? '',
-    role: user.role,
-    emailVerified: user.emailVerified,
-    suspended: user.suspended,
-    createdAt: user.createdAt,
-  };
+  if (Object.keys(update).length === 0) return getMe(userId);
+  await User.findByIdAndUpdate(userId, update);
+  return getMe(userId);
 }
 
 /** Verify by link token (legacy / link in email). */

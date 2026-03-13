@@ -611,19 +611,53 @@ export async function declineOffer(userId: string, offerId: string) {
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 
+const RECOMMENDATIONS_LIMIT = 5;
+
 export async function getRecommendations(userId: string) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
 
-  const list = await Recommendation.find({ studentId: profile._id })
-    .sort({ matchScore: -1 })
-    .populate('universityId')
-    .lean();
-  return list.map((r) => ({
+  const [recDocs, catalogDocs] = await Promise.all([
+    Recommendation.find({ studentId: profile._id })
+      .sort({ matchScore: -1 })
+      .limit(RECOMMENDATIONS_LIMIT)
+      .populate('universityId')
+      .lean(),
+    UniversityCatalog.find({ linkedUniversityProfileId: { $exists: false } })
+      .limit(RECOMMENDATIONS_LIMIT)
+      .sort({ universityName: 1 })
+      .lean(),
+  ]);
+
+  const recList = recDocs.map((r) => ({
     ...r,
     id: String((r as { _id: unknown })._id),
     university: (r as { universityId?: unknown }).universityId,
   }));
+
+  const usedIds = new Set(
+    recList
+      .map((r) => (r as { university?: { _id?: unknown } }).university?._id)
+      .filter(Boolean)
+      .map((id) => String(id))
+  );
+  const catalogList = catalogDocs
+    .filter((c) => {
+      const cid = String((c as { _id: unknown })._id);
+      return !usedIds.has(cid);
+    })
+    .slice(0, Math.max(0, RECOMMENDATIONS_LIMIT - recList.length))
+    .map((c) => {
+      const id = `catalog-${String((c as { _id: unknown })._id)}`;
+      return {
+        ...c,
+        id,
+        universityId: id,
+        university: c,
+      };
+    });
+
+  return [...recList, ...catalogList];
 }
 
 export async function getCompare(userId: string, ids: unknown[]) {

@@ -102,7 +102,17 @@ export async function patchMe(
           emailTrialReminder: body.notificationPreferences.emailTrialReminder,
         }
       : undefined;
-    const user = await authService.updateMe(req.user.id, { name, notificationPreferences });
+    const onboardingTutorialSeen = body.onboardingTutorialSeen && typeof body.onboardingTutorialSeen === 'object'
+      ? {
+          ...(body.onboardingTutorialSeen.student === true && { student: true }),
+          ...(body.onboardingTutorialSeen.university === true && { university: true }),
+        }
+      : undefined;
+    const patch: { name?: string; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } } = { name, notificationPreferences };
+    if (onboardingTutorialSeen !== undefined && Object.keys(onboardingTutorialSeen).length > 0) {
+      patch.onboardingTutorialSeen = onboardingTutorialSeen;
+    }
+    const user = await authService.updateMe(req.user.id, patch);
     res.json(user);
   } catch (e) {
     next(e);
