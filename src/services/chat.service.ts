@@ -1,6 +1,7 @@
 import { User, StudentProfile, UniversityProfile, Chat, Message } from '../models';
 import * as notificationService from './notification.service';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { toObjectIdString } from '../utils/objectId';
 
 /** Fetch last message per chat in one query to avoid N+1. */
 async function getLastMessagesByChatIds(chatIds: unknown[]): Promise<Map<string, unknown[]>> {
@@ -71,8 +72,10 @@ export async function getMessages(chatId: string, userId: string, query: { page?
   const chatObj = chat as Record<string, unknown>;
   const studentIdRef = chatObj.studentId;
   const universityIdRef = chatObj.universityId;
-  const student = await StudentProfile.findById(typeof studentIdRef === 'object' && studentIdRef && '_id' in studentIdRef ? (studentIdRef as { _id: unknown })._id : studentIdRef).lean();
-  const university = await UniversityProfile.findById(typeof universityIdRef === 'object' && universityIdRef && '_id' in universityIdRef ? (universityIdRef as { _id: unknown })._id : universityIdRef).lean();
+  const studentIdStr = toObjectIdString(studentIdRef);
+  const universityIdStr = toObjectIdString(universityIdRef);
+  const student = studentIdStr ? await StudentProfile.findById(studentIdStr).lean() : null;
+  const university = universityIdStr ? await UniversityProfile.findById(universityIdStr).lean() : null;
   const studentUserId = student ? String((student as Record<string, unknown>).userId) : null;
   const universityUserId = university ? String((university as Record<string, unknown>).userId) : null;
   const participantIds = [studentUserId, universityUserId].filter(Boolean);
@@ -119,8 +122,10 @@ export async function markRead(chatId: string, userId: string) {
   const chatObj = chat as Record<string, unknown>;
   const studentIdRef = chatObj.studentId;
   const universityIdRef = chatObj.universityId;
-  const student = await StudentProfile.findById(typeof studentIdRef === 'object' && studentIdRef && '_id' in studentIdRef ? (studentIdRef as { _id: unknown })._id : studentIdRef).lean();
-  const university = await UniversityProfile.findById(typeof universityIdRef === 'object' && universityIdRef && '_id' in universityIdRef ? (universityIdRef as { _id: unknown })._id : universityIdRef).lean();
+  const studentIdStr = toObjectIdString(studentIdRef);
+  const universityIdStr = toObjectIdString(universityIdRef);
+  const student = studentIdStr ? await StudentProfile.findById(studentIdStr).lean() : null;
+  const university = universityIdStr ? await UniversityProfile.findById(universityIdStr).lean() : null;
   const participantIds = [
     student ? String((student as Record<string, unknown>).userId) : null,
     university ? String((university as Record<string, unknown>).userId) : null,
@@ -133,14 +138,16 @@ export async function markRead(chatId: string, userId: string) {
   return { success: true };
 }
 
-export async function getOrCreateChat(studentId: string, universityId: string) {
+export async function getOrCreateChat(studentId: string, universityId: unknown) {
+  const uid = toObjectIdString(universityId);
+  if (!uid) throw new AppError(404, 'Chat party not found', ErrorCodes.NOT_FOUND);
   const student = await StudentProfile.findById(studentId).lean();
-  const university = await UniversityProfile.findById(universityId).lean();
+  const university = await UniversityProfile.findById(uid).lean();
   if (!student || !university) throw new AppError(404, 'Chat party not found', ErrorCodes.NOT_FOUND);
 
-  let chat = await Chat.findOne({ studentId, universityId });
+  let chat = await Chat.findOne({ studentId, universityId: uid });
   if (!chat) {
-    chat = await Chat.create({ studentId, universityId });
+    chat = await Chat.create({ studentId, universityId: uid });
   }
 
   return {
@@ -234,8 +241,10 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
   const chatObj = chat as Record<string, unknown>;
   const studentIdRef = chatObj.studentId;
   const universityIdRef = chatObj.universityId;
-  const student = await StudentProfile.findById(typeof studentIdRef === 'object' && studentIdRef && '_id' in studentIdRef ? (studentIdRef as { _id: unknown })._id : studentIdRef).lean();
-  const university = await UniversityProfile.findById(typeof universityIdRef === 'object' && universityIdRef && '_id' in universityIdRef ? (universityIdRef as { _id: unknown })._id : universityIdRef).lean();
+  const studentIdStr = toObjectIdString(studentIdRef);
+  const universityIdStr = toObjectIdString(universityIdRef);
+  const student = studentIdStr ? await StudentProfile.findById(studentIdStr).lean() : null;
+  const university = universityIdStr ? await UniversityProfile.findById(universityIdStr).lean() : null;
   const studentU = student ? String((student as Record<string, unknown>).userId) : null;
   const universityU = university ? String((university as Record<string, unknown>).userId) : null;
   const participantIds = [studentU, universityU].filter(Boolean);

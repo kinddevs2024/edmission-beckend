@@ -213,3 +213,21 @@ export const updateSettingsSchema = z.object({
     maintenanceMode: z.boolean().optional(),
   }).strict(),
 });
+
+export const createLandingCertificateSchema = z.object({
+  body: z.object({
+    type: z.enum(['university', 'student']),
+    title: z.string().min(1).max(200),
+    imageUrl: z.string().url(),
+    order: z.number().optional(),
+  }).strict(),
+});
+
+export const updateLandingCertificateSchema = z.object({
+  body: z.object({
+    type: z.enum(['university', 'student']).optional(),
+    title: z.string().min(1).max(200).optional(),
+    imageUrl: z.string().url().optional(),
+    order: z.number().optional(),
+  }).strict(),
+});

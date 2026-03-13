@@ -14,6 +14,7 @@ import uploadRoutes from './upload.routes';
 import ticketRoutes from './ticket.routes';
 import optionsRoutes from './options.routes';
 import paymentRoutes from './payment.routes';
+import publicRoutes from './public.routes';
 
 const router = Router();
 
@@ -42,5 +43,6 @@ router.use('/upload', uploadRoutes);
 router.use('/tickets', ticketRoutes);
 router.use('/options', optionsRoutes);
 router.use('/payment', paymentRoutes);
+router.use('/public', publicRoutes);
 
 export default router;

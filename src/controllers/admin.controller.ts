@@ -508,3 +508,43 @@ export async function updateSettings(req: Request, res: Response, next: NextFunc
     next(e);
   }
 }
+
+// ——— Landing Certificates ———
+
+export async function listLandingCertificates(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.listLandingCertificates();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createLandingCertificate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as { type: 'university' | 'student'; title: string; imageUrl: string; order?: number };
+    const data = await adminService.createLandingCertificate(body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateLandingCertificate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as { type?: 'university' | 'student'; title?: string; imageUrl?: string; order?: number };
+    const data = await adminService.updateLandingCertificate(req.params.id, body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteLandingCertificate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.deleteLandingCertificate(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}

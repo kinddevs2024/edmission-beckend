@@ -22,6 +22,10 @@ const universityProfileSchema = new mongoose.Schema(
     facultyItems: { type: mongoose.Schema.Types.Mixed, default: undefined },
     /** Country codes of students this university is targeting (e.g. 'UZ', 'KZ') */
     targetStudentCountries: [String],
+    /** Minimum language level required (e.g. IELTS 6.5, TOEFL 90, C1) */
+    minLanguageLevel: String,
+    /** Tuition price in primary currency */
+    tuitionPrice: Number,
   },
   { timestamps: true }
 );

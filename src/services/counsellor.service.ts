@@ -302,8 +302,11 @@ export async function requestToJoinSchool(studentUserId: string, counsellorUserI
   const user = await User.findById(studentUserId);
   if (!user || user.role !== 'student') throw new AppError(403, 'Only students can request to join a school', ErrorCodes.FORBIDDEN);
   const counsellor = await User.findById(counsellorUserId);
-  if (!counsellor || counsellor.role !== 'school_counsellor') {
+  if (!counsellor) {
     throw new AppError(404, 'School not found', ErrorCodes.NOT_FOUND);
+  }
+  if (counsellor.role !== 'school_counsellor') {
+    throw new AppError(400, 'This account is not a school counsellor', ErrorCodes.VALIDATION);
   }
   const existing = await SchoolJoinRequest.findOne({ studentId: studentUserId, counsellorUserId });
   if (existing) {

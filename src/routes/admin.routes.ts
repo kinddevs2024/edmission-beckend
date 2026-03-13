@@ -58,6 +58,11 @@ router.get('/investors', adminController.getInvestors);
 router.post('/investors', requireAdminOnly, validate(adminValidator.createInvestorSchema.shape.body, 'body'), adminController.createInvestor);
 router.delete('/investors/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteInvestor);
 
+router.get('/landing-certificates', adminController.listLandingCertificates);
+router.post('/landing-certificates', requireAdminOnly, validate(adminValidator.createLandingCertificateSchema.shape.body, 'body'), adminController.createLandingCertificate);
+router.patch('/landing-certificates/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateLandingCertificateSchema.shape.body, 'body'), adminController.updateLandingCertificate);
+router.delete('/landing-certificates/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteLandingCertificate);
+
 router.get('/settings', requireAdminOnly, adminController.getSettings);
 router.patch('/settings', requireAdminOnly, validate(adminValidator.updateSettingsSchema.shape.body, 'body'), adminController.updateSettings);
 

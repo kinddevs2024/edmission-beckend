@@ -59,6 +59,8 @@ export const updateProfileSchema = z.object({
     facultyCodes: z.array(z.string()).max(50).optional(),
     facultyItems: z.record(z.array(z.string())).optional(),
     targetStudentCountries: z.array(z.string()).max(50).optional(),
+    minLanguageLevel: z.string().max(50).optional(),
+    tuitionPrice: z.number().min(0).optional(),
     programs: z.array(programItemSchema).max(50).optional(),
   }).strict(),
 });

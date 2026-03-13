@@ -22,8 +22,10 @@ import {
   Program,
   StudentDocument,
   Investor,
+  LandingCertificate,
 } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { toObjectIdString } from '../utils/objectId';
 import { safeRegExp } from '../utils/validators';
 import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
 import * as subscriptionService from './subscription.service';
@@ -192,12 +194,19 @@ export async function getUniversityProfileByUserId(userId: string) {
 const UNIVERSITY_PROFILE_WHITELIST = new Set([
   'universityName', 'tagline', 'establishedYear', 'studentCount', 'country', 'city', 'description', 'logoUrl',
   'verified', 'onboardingCompleted', 'facultyCodes', 'facultyItems', 'targetStudentCountries',
+  'minLanguageLevel', 'tuitionPrice',
 ]);
 
 export async function updateUniversityProfileByUserId(userId: string, patch: Record<string, unknown>) {
   const profile = await UniversityProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
   const filtered = Object.fromEntries(Object.entries(patch).filter(([k]) => UNIVERSITY_PROFILE_WHITELIST.has(k)));
+  if (filtered.minLanguageLevel !== undefined) {
+    (filtered as Record<string, unknown>).minLanguageLevel = filtered.minLanguageLevel != null ? String(filtered.minLanguageLevel).trim() || null : null;
+  }
+  if (filtered.tuitionPrice !== undefined) {
+    (filtered as Record<string, unknown>).tuitionPrice = filtered.tuitionPrice != null ? Number(filtered.tuitionPrice) : null;
+  }
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, filtered, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
@@ -351,13 +360,15 @@ export async function getVerificationQueue() {
   });
 }
 
-export async function verifyUniversity(universityId: string, approve: boolean) {
-  const uni = await UniversityProfile.findById(universityId);
+export async function verifyUniversity(universityId: unknown, approve: boolean) {
+  const uid = toObjectIdString(universityId);
+  if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+  const uni = await UniversityProfile.findById(uid);
   if (!uni) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
   const update = approve
     ? { verified: true, verificationRejectedAt: null }
     : { verified: false, verificationRejectedAt: new Date() };
-  const updated = await UniversityProfile.findByIdAndUpdate(universityId, update, { new: true }).lean();
+  const updated = await UniversityProfile.findByIdAndUpdate(uid, update, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 
@@ -685,5 +696,39 @@ export async function createInvestor(body: { name: string; logoUrl?: string; web
 export async function deleteInvestor(id: string) {
   const doc = await Investor.findByIdAndDelete(id);
   if (!doc) throw new AppError(404, 'Investor not found', ErrorCodes.NOT_FOUND);
+  return { deleted: true };
+}
+
+// ——— Landing Certificates ———
+
+export async function listLandingCertificates() {
+  const list = await LandingCertificate.find().sort({ order: 1, createdAt: 1 }).lean();
+  return list.map((c) => ({ ...c, id: String((c as { _id: unknown })._id) }));
+}
+
+export async function createLandingCertificate(body: { type: 'university' | 'student'; title: string; imageUrl: string; order?: number }) {
+  const doc = await LandingCertificate.create({
+    type: body.type,
+    title: String(body.title ?? '').trim(),
+    imageUrl: String(body.imageUrl ?? '').trim(),
+    order: body.order != null ? Number(body.order) : 0,
+  });
+  return { ...doc.toObject(), id: String(doc._id) };
+}
+
+export async function updateLandingCertificate(id: string, body: { type?: 'university' | 'student'; title?: string; imageUrl?: string; order?: number }) {
+  const update: Record<string, unknown> = {};
+  if (body.type !== undefined) update.type = body.type;
+  if (body.title !== undefined) update.title = String(body.title).trim();
+  if (body.imageUrl !== undefined) update.imageUrl = String(body.imageUrl).trim();
+  if (body.order !== undefined) update.order = Number(body.order);
+  const doc = await LandingCertificate.findByIdAndUpdate(id, update, { new: true }).lean();
+  if (!doc) throw new AppError(404, 'Landing certificate not found', ErrorCodes.NOT_FOUND);
+  return { ...doc, id: String((doc as { _id: unknown })._id) };
+}
+
+export async function deleteLandingCertificate(id: string) {
+  const doc = await LandingCertificate.findByIdAndDelete(id);
+  if (!doc) throw new AppError(404, 'Landing certificate not found', ErrorCodes.NOT_FOUND);
   return { deleted: true };
 }

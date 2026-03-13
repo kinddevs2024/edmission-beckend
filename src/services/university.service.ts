@@ -17,6 +17,7 @@ import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
+import { toObjectIdString } from '../utils/objectId';
 import { safeRegExp } from '../utils/validators';
 
 export async function getProfile(userId: string) {
@@ -54,6 +55,8 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     facultyCodes?: string[];
     facultyItems?: Record<string, string[]>;
     targetStudentCountries?: string[];
+    minLanguageLevel?: string;
+    tuitionPrice?: number;
   };
   const { programs, ...rest } = raw;
 
@@ -86,6 +89,8 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     const arr = Array.isArray(rest.targetStudentCountries) ? rest.targetStudentCountries : [];
     update.targetStudentCountries = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 50);
   }
+  if (rest.minLanguageLevel !== undefined) update.minLanguageLevel = rest.minLanguageLevel != null ? String(rest.minLanguageLevel).trim() || null : null;
+  if (rest.tuitionPrice !== undefined) update.tuitionPrice = rest.tuitionPrice != null ? Number(rest.tuitionPrice) : null;
 
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
 
@@ -262,7 +267,13 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   const profile = await UniversityProfile.findOne({ userId: _userId });
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
 
-  const student = await StudentProfile.findById(studentId).lean();
+  const sid = toObjectIdString(studentId);
+  if (!sid) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+
+  let student = await StudentProfile.findById(sid).lean();
+  if (!student) {
+    student = await StudentProfile.findOne({ userId: sid }).lean();
+  }
   if (!student) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
 
   // Enforce profile view limits based on university subscription.
@@ -289,7 +300,8 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     }
   }
 
-  const documents = await StudentDocument.find({ studentId, status: 'approved' })
+  const studentProfileId = (student as { _id: unknown })._id;
+  const documents = await StudentDocument.find({ studentId: studentProfileId, status: 'approved' })
     .select('type name certificateType score fileUrl')
     .lean();
 
