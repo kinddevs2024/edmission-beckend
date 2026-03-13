@@ -23,6 +23,7 @@ export async function ensureDefaultAdmin(): Promise<void> {
     existing.passwordHash = passwordHash;
     existing.name = DEFAULT_ADMIN_NAME;
     existing.suspended = false;
+    existing.emailVerified = true; // default admin never needs email verification
     await existing.save();
     return;
   }
@@ -31,6 +32,7 @@ export async function ensureDefaultAdmin(): Promise<void> {
     name: DEFAULT_ADMIN_NAME,
     passwordHash,
     role: 'admin',
+    emailVerified: true, // default admin never needs email verification
   });
 }
 
@@ -140,7 +142,7 @@ export async function login(data: LoginBody) {
   }
 
   const settings = await settingsService.getSettings();
-  if (settings.requireEmailVerification && !user.emailVerified) {
+  if (settings.requireEmailVerification && !user.emailVerified && user.email !== DEFAULT_ADMIN_EMAIL) {
     throw new AppError(403, 'Please verify your email before signing in.', ErrorCodes.FORBIDDEN);
   }
   if (settings.requireAccountConfirmation && user.role === 'university') {
