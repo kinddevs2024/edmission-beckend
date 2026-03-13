@@ -12,6 +12,7 @@ export { Program } from './Program';
 export { Faculty } from './Faculty';
 export { Scholarship } from './Scholarship';
 export { Interest } from './Interest';
+export { CatalogInterest } from './CatalogInterest';
 export { Offer } from './Offer';
 export { Chat } from './Chat';
 export { Message } from './Message';

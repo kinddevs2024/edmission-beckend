@@ -647,6 +647,10 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
     reviewedBy: adminUserId,
   });
 
+  await UniversityCatalog.findByIdAndUpdate(catalog._id, {
+    linkedUniversityProfileId: profile._id,
+  });
+
   const notificationService = await import('./notification.service');
   await notificationService.createNotification(String(userId), {
     type: 'university_approved',

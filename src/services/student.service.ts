@@ -2,10 +2,12 @@ import mongoose from 'mongoose';
 import {
   StudentProfile,
   UniversityProfile,
+  UniversityCatalog,
   Program,
   Scholarship,
   Faculty,
   Interest,
+  CatalogInterest,
   Offer,
   Recommendation,
   Chat,
@@ -221,38 +223,51 @@ export async function getUniversities(
   const skip = (page - 1) * limit;
   const useProfileFilters = query.useProfileFilters !== false;
 
-  const where: { country?: string | { $in: string[] }; city?: string; facultyCodes?: unknown; _id?: unknown } = {};
-  if (query.country) where.country = query.country;
-  if (query.city && String(query.city).trim()) where.city = String(query.city).trim();
-
+  const baseWhere: { country?: string | { $in: string[] }; city?: string; facultyCodes?: unknown } = {};
+  if (query.country) baseWhere.country = query.country;
+  if (query.city && String(query.city).trim()) baseWhere.city = String(query.city).trim();
   if (useProfileFilters) {
-    // Filter by student's preferred countries (where they want to study)
     const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
       ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
       : [];
-    if (preferredCountries.length > 0) {
-      where.country = { $in: preferredCountries };
-    }
-
-    // Filter by student's interested faculties vs university facultyCodes
+    if (preferredCountries.length > 0) baseWhere.country = { $in: preferredCountries };
     const interestedFaculties = Array.isArray((profile as { interestedFaculties?: string[] }).interestedFaculties)
       ? ((profile as { interestedFaculties?: string[] }).interestedFaculties ?? []).filter(Boolean)
       : [];
-    if (interestedFaculties.length > 0) {
-      where.facultyCodes = { $in: interestedFaculties };
-    }
+    if (interestedFaculties.length > 0) baseWhere.facultyCodes = { $in: interestedFaculties };
   }
 
-  const [list, total] = await Promise.all([
-    UniversityProfile.find(where).skip(skip).limit(limit).sort({ universityName: 1 }).lean(),
-    UniversityProfile.countDocuments(where),
+  const [catalogs, profiles] = await Promise.all([
+    UniversityCatalog.find({ ...baseWhere, linkedUniversityProfileId: { $exists: false } }).sort({ universityName: 1 }).lean(),
+    UniversityProfile.find({ ...baseWhere, verified: true }).sort({ universityName: 1 }).lean(),
   ]);
 
-  const listIds = list.map((u) => (u as { _id: unknown })._id);
-  const recs = await Recommendation.find({
-    studentId: profile._id,
-    universityId: { $in: listIds },
-  }).lean();
+  const catalogItems = catalogs.map((c) => {
+    const id = `catalog-${String((c as { _id: unknown })._id)}`;
+    const raw = c as unknown as Record<string, unknown>;
+    const progs = Array.isArray(raw.programs) ? raw.programs : [];
+    const schs = Array.isArray(raw.scholarships) ? raw.scholarships : [];
+    const logoUrl = (c as { logoUrl?: string }).logoUrl;
+    return {
+      _id: (c as { _id: unknown })._id,
+      id,
+      _source: 'catalog' as const,
+      name: (c as { universityName?: string }).universityName ?? '',
+      universityName: (c as { universityName?: string }).universityName ?? '',
+      country: (c as { country?: string }).country,
+      city: (c as { city?: string }).city,
+      description: (c as { description?: string }).description,
+      logo: logoUrl,
+      logoUrl,
+      hasScholarship: schs.length > 0,
+      programs: progs.slice(0, 3).map((p, i) => ({ ...p, id: `p-${i}` })),
+      matchScore: null,
+      breakdown: null,
+    };
+  });
+
+  const profileIds = profiles.map((u) => (u as { _id: unknown })._id);
+  const recs = await Recommendation.find({ studentId: profile._id, universityId: { $in: profileIds } }).lean();
   const recMap: Record<string, { matchScore: number; breakdown?: unknown }> = {};
   for (const r of recs) {
     const uid = String((r as { universityId: unknown }).universityId);
@@ -260,38 +275,42 @@ export async function getUniversities(
   }
 
   const scholarshipCounts = await Scholarship.aggregate([
-    { $match: { universityId: { $in: listIds } } },
+    { $match: { universityId: { $in: profileIds } } },
     { $group: { _id: '$universityId', count: { $sum: 1 } } },
   ]);
   const schCountMap: Record<string, number> = {};
-  for (const s of scholarshipCounts) {
-    schCountMap[String(s._id)] = s.count;
-  }
+  for (const s of scholarshipCounts) schCountMap[String(s._id)] = s.count;
 
   const programsByUni = await Program.aggregate([
-    { $match: { universityId: { $in: listIds } } },
+    { $match: { universityId: { $in: profileIds } } },
     { $sort: { createdAt: 1 } },
     { $group: { _id: '$universityId', programs: { $push: '$$ROOT' } } },
   ]);
   const programsMap: Record<string, unknown[]> = {};
-  for (const p of programsByUni) {
-    programsMap[String(p._id)] = (p.programs as unknown[]).slice(0, 3);
-  }
+  for (const p of programsByUni) programsMap[String(p._id)] = (p.programs as unknown[]).slice(0, 3);
 
-  const dataWithCount = list.map((u) => {
+  const profileItems = profiles.map((u) => {
     const id = String((u as { _id: unknown })._id);
-    const schCount = schCountMap[id] ?? 0;
+    const logoUrl = (u as { logoUrl?: string }).logoUrl;
     return {
       ...u,
       id,
+      _source: 'profile' as const,
       name: (u as { universityName?: string }).universityName ?? '',
-      hasScholarship: schCount > 0,
+      universityName: (u as { universityName?: string }).universityName ?? '',
+      logo: logoUrl,
+      hasScholarship: (schCountMap[id] ?? 0) > 0,
       programs: programsMap[id] ?? [],
-      _count: { scholarships: schCount },
       matchScore: recMap[id]?.matchScore ?? null,
       breakdown: recMap[id]?.breakdown ?? null,
     };
   });
+
+  const merged = [...catalogItems, ...profileItems].sort((a, b) =>
+    (a.name ?? '').localeCompare(b.name ?? '')
+  );
+  const total = merged.length;
+  const dataWithCount = merged.slice(skip, skip + limit);
 
   return {
     data: dataWithCount,
@@ -305,21 +324,50 @@ export async function getUniversities(
 export async function getUniversityById(userId: string, universityId: unknown) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+
+  const idStr = String(universityId ?? '').trim();
+  if (idStr.startsWith('catalog-')) {
+    const catalogId = toObjectIdString(idStr.replace(/^catalog-/, ''));
+    if (!catalogId) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+    const catalog = await UniversityCatalog.findById(catalogId).lean();
+    if (!catalog) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+    if ((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId) {
+      throw new AppError(404, 'University no longer available', ErrorCodes.NOT_FOUND);
+    }
+    const catalogInterest = await CatalogInterest.findOne({
+      studentId: profile._id,
+      catalogUniversityId: catalogId,
+    }).lean();
+    const raw = catalog as unknown as Record<string, unknown>;
+    const progs = Array.isArray(raw.programs) ? raw.programs : [];
+    const schs = Array.isArray(raw.scholarships) ? raw.scholarships : [];
+    const establishedYear = (catalog as { establishedYear?: number }).establishedYear;
+    const tagline = (catalog as { tagline?: string }).tagline;
+    const catalogLogoUrl = (catalog as { logoUrl?: string }).logoUrl;
+    return {
+      ...catalog,
+      id: `catalog-${String((catalog as { _id: unknown })._id)}`,
+      name: (catalog as { universityName?: string }).universityName ?? '',
+      foundedYear: establishedYear,
+      slogan: tagline,
+      logo: catalogLogoUrl,
+      logoUrl: catalogLogoUrl,
+      programs: progs.map((p, i) => ({ ...p, id: String(i) })),
+      scholarships: schs.map((s, i) => ({ ...s, id: String(i) })),
+      faculties: [],
+      matchScore: null,
+      breakdown: null,
+      interest: catalogInterest ? { ...catalogInterest, id: String((catalogInterest as { _id: unknown })._id) } : null,
+    };
+  }
+
   const uid = toObjectIdString(universityId);
   if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
-
   const university = await UniversityProfile.findById(uid).lean();
   if (!university) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
 
-  const rec = await Recommendation.findOne({
-    studentId: profile._id,
-    universityId: uid,
-  }).lean();
-  const interest = await Interest.findOne({
-    studentId: profile._id,
-    universityId: uid,
-  }).lean();
-
+  const rec = await Recommendation.findOne({ studentId: profile._id, universityId: uid }).lean();
+  const interest = await Interest.findOne({ studentId: profile._id, universityId: uid }).lean();
   const programs = await Program.find({ universityId: uid }).lean();
   const scholarships = await Scholarship.find({ universityId: uid }).lean();
   const faculties = await Faculty.find({ universityId: uid }).sort({ order: 1, name: 1 }).lean();
@@ -327,6 +375,7 @@ export async function getUniversityById(userId: string, universityId: unknown) {
   return {
     ...university,
     id: String((university as { _id: unknown })._id),
+    name: (university as { universityName?: string }).universityName ?? '',
     programs,
     scholarships,
     faculties: faculties.map((f) => ({ ...f, id: String((f as { _id: unknown })._id) })),
@@ -339,8 +388,6 @@ export async function getUniversityById(userId: string, universityId: unknown) {
 export async function addInterest(userId: string, universityId: unknown) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
-  const uid = toObjectIdString(universityId);
-  if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
 
   const subscription = await subscriptionService.canSendApplication(userId);
   if (!subscription.allowed) {
@@ -350,6 +397,39 @@ export async function addInterest(userId: string, universityId: unknown) {
     throw new AppError(402, `Application limit reached (${subscription.current}/${subscription.limit ?? '?'}). Upgrade your plan to send more.`, ErrorCodes.PAYMENT_REQUIRED);
   }
 
+  const idStr = String(universityId ?? '').trim();
+  if (idStr.startsWith('catalog-')) {
+    const catalogId = toObjectIdString(idStr.replace(/^catalog-/, ''));
+    if (!catalogId) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+    const catalog = await UniversityCatalog.findById(catalogId);
+    if (!catalog) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+    if ((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId) {
+      throw new AppError(404, 'University no longer available', ErrorCodes.NOT_FOUND);
+    }
+    const interest = await CatalogInterest.findOneAndUpdate(
+      { studentId: profile._id, catalogUniversityId: catalogId },
+      { status: 'interested' },
+      { upsert: true, new: true }
+    ).lean();
+    const adminUsers = await mongoose.model('User').find({ role: 'admin' }).select('_id').lean();
+    const studentName = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || 'Student';
+    const catalogName = (catalog as { universityName?: string }).universityName ?? 'Catalog university';
+    for (const admin of adminUsers as { _id: unknown }[]) {
+      const adminId = String(admin._id);
+      await notificationService.createNotification(adminId, {
+        type: 'interest',
+        title: 'New interest (catalog)',
+        body: `${studentName} is interested in ${catalogName} (template)`,
+        referenceType: 'catalog_interest',
+        referenceId: String((interest as { _id: unknown })._id),
+        metadata: { studentId: String(profile._id), studentName, catalogUniversityId: catalogId, catalogName },
+      });
+    }
+    return { ...interest, id: String((interest as { _id: unknown })._id) };
+  }
+
+  const uid = toObjectIdString(universityId);
+  if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
   const uni = await UniversityProfile.findById(uid);
   if (!uni) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
 
@@ -358,7 +438,7 @@ export async function addInterest(userId: string, universityId: unknown) {
     { status: 'interested' },
     { upsert: true, new: true }
   ).lean();
-  const universityUserId = uni.userId ? String(uni.userId) : null;
+  const universityUserId = (uni as { userId?: unknown }).userId ? String((uni as { userId: unknown }).userId) : null;
   const studentName = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || 'Student';
   if (universityUserId) {
     await notificationService.createNotification(universityUserId, {
@@ -377,22 +457,32 @@ export async function getInterestLimit(userId: string) {
   return subscriptionService.canSendApplication(userId);
 }
 
-/** Lightweight: returns only university IDs the student has shown interest in. */
+/** Lightweight: returns only university IDs the student has shown interest in (profile ids + catalog-xxx). */
 export async function getInterestedUniversityIds(userId: string): Promise<string[]> {
   const profile = await StudentProfile.findOne({ userId }).select('_id').lean();
   if (!profile) return [];
-  const list = await Interest.find({ studentId: profile._id }).select('universityId').lean();
-  return list.map((i: { universityId?: unknown }) => String(i.universityId)).filter(Boolean);
+  const [interests, catalogInterests] = await Promise.all([
+    Interest.find({ studentId: profile._id }).select('universityId').lean(),
+    CatalogInterest.find({ studentId: profile._id }).populate('catalogUniversityId', '_id').lean(),
+  ]);
+  const profileIds = interests.map((i: { universityId?: unknown }) => String(i.universityId)).filter(Boolean);
+  const catalogIds = catalogInterests
+    .map((i: { catalogUniversityId?: { _id?: unknown } }) => (i.catalogUniversityId as { _id?: unknown })?._id)
+    .filter(Boolean)
+    .map((id: unknown) => `catalog-${id}`);
+  return [...profileIds, ...catalogIds];
 }
 
 export async function getApplications(userId: string) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
 
-  const list = await Interest.find({ studentId: profile._id })
-    .populate('universityId', 'universityName country city')
-    .lean();
-  return list.map((i: Record<string, unknown>) => {
+  const [interests, catalogInterests] = await Promise.all([
+    Interest.find({ studentId: profile._id }).populate('universityId', 'universityName country city').lean(),
+    CatalogInterest.find({ studentId: profile._id }).populate('catalogUniversityId', 'universityName country city').lean(),
+  ]);
+
+  const profileApps = interests.map((i: Record<string, unknown>) => {
     const uni = i.universityId as { _id?: unknown; universityName?: string; country?: string; city?: string } | undefined;
     const universityIdStr = uni?._id != null ? String(uni._id) : i.universityId != null ? String(i.universityId) : '';
     return {
@@ -400,8 +490,25 @@ export async function getApplications(userId: string) {
       id: String(i._id),
       universityId: universityIdStr,
       university: uni ? { universityName: uni.universityName, country: uni.country, city: uni.city } : undefined,
+      _source: 'profile' as const,
     };
   });
+
+  const catalogApps = catalogInterests.map((i: Record<string, unknown>) => {
+    const cat = i.catalogUniversityId as { _id?: unknown; universityName?: string; country?: string; city?: string } | undefined;
+    const universityIdStr = cat?._id != null ? `catalog-${String(cat._id)}` : '';
+    return {
+      ...i,
+      id: String(i._id),
+      universityId: universityIdStr,
+      university: cat ? { universityName: cat.universityName, country: cat.country, city: cat.city } : undefined,
+      _source: 'catalog' as const,
+    };
+  });
+
+  return [...profileApps, ...catalogApps].sort(
+    (a, b) => new Date((b as { createdAt?: Date }).createdAt ?? 0).getTime() - new Date((a as { createdAt?: Date }).createdAt ?? 0).getTime()
+  );
 }
 
 export async function getOffers(userId: string) {
@@ -522,16 +629,27 @@ export async function getRecommendations(userId: string) {
 export async function getCompare(userId: string, ids: unknown[]) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
-  const normalizedIds = toObjectIdStrings(ids);
-  if (!normalizedIds.length || normalizedIds.length > 5) {
+  const rawIds = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
+  if (!rawIds.length || rawIds.length > 5) {
     throw new AppError(400, 'Provide 1-5 university ids', ErrorCodes.VALIDATION);
   }
 
-  const universities = await UniversityProfile.find({ _id: { $in: normalizedIds } })
-    .lean();
+  const catalogIds = rawIds.filter((id) => id.startsWith('catalog-')).map((id) => toObjectIdString(id.replace(/^catalog-/, ''))).filter(Boolean);
+  const profileIds = rawIds.filter((id) => !id.startsWith('catalog-'));
+  const normalizedProfileIds = toObjectIdStrings(profileIds);
+
+  const [catalogs, universities] = await Promise.all([
+    catalogIds.length > 0
+      ? UniversityCatalog.find({ _id: { $in: catalogIds }, linkedUniversityProfileId: { $exists: false } }).lean()
+      : [],
+    normalizedProfileIds.length > 0
+      ? UniversityProfile.find({ _id: { $in: normalizedProfileIds } }).lean()
+      : [],
+  ]);
+
   const recs = await Recommendation.find({
     studentId: profile._id,
-    universityId: { $in: normalizedIds },
+    universityId: { $in: normalizedProfileIds },
   }).lean();
   const recMap: Record<string, { matchScore: number; breakdown?: unknown }> = {};
   for (const r of recs) {
@@ -539,13 +657,43 @@ export async function getCompare(userId: string, ids: unknown[]) {
     recMap[uid] = { matchScore: (r as { matchScore: number }).matchScore, breakdown: (r as { breakdown?: unknown }).breakdown };
   }
 
-  return universities.map((u) => {
+  const catalogItems = catalogs.map((c) => {
+    const id = `catalog-${String((c as { _id: unknown })._id)}`;
+    const schs = (c as { scholarships?: unknown[] }).scholarships ?? [];
+    return {
+      ...c,
+      id,
+      name: (c as { universityName?: string }).universityName ?? '',
+      hasScholarship: schs.length > 0,
+      matchScore: null,
+      breakdown: null,
+    };
+  });
+
+  const schCounts = normalizedProfileIds.length > 0
+    ? await Scholarship.aggregate([
+        { $match: { universityId: { $in: normalizedProfileIds } } },
+        { $group: { _id: '$universityId', count: { $sum: 1 } } },
+      ])
+    : [];
+  const schCountMap: Record<string, number> = {};
+  for (const s of schCounts) schCountMap[String(s._id)] = s.count;
+
+  const profileItems = universities.map((u) => {
     const id = String((u as { _id: unknown })._id);
     return {
       ...u,
       id,
+      name: (u as { universityName?: string }).universityName ?? '',
+      hasScholarship: (schCountMap[id] ?? 0) > 0,
       matchScore: recMap[id]?.matchScore ?? null,
       breakdown: recMap[id]?.breakdown ?? null,
     };
   });
+
+  const idToItem = new Map<string, Record<string, unknown>>();
+  for (const item of catalogItems) idToItem.set((item as { id: string }).id, item);
+  for (const item of profileItems) idToItem.set((item as { id: string }).id, item);
+
+  return rawIds.map((id) => idToItem.get(id)).filter(Boolean);
 }
