@@ -5,6 +5,16 @@ export function isValidObjectId(id: string): boolean {
   return typeof id === 'string' && id.length === 24 && mongoose.Types.ObjectId.isValid(id);
 }
 
+/** Accepts ObjectId or catalog-{ObjectId} for student university routes */
+export function isValidUniversityId(id: string): boolean {
+  if (typeof id !== 'string' || !id) return false;
+  if (id.startsWith('catalog-')) {
+    const suffix = id.slice(8);
+    return suffix.length === 24 && mongoose.Types.ObjectId.isValid(suffix);
+  }
+  return isValidObjectId(id);
+}
+
 /** Zod schema for MongoDB ObjectId */
 export const objectIdZod = z.string().refine(isValidObjectId, { message: 'Invalid id format' });
 
