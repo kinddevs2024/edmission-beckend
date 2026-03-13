@@ -542,6 +542,8 @@ export async function createCatalogUniversity(body: Record<string, unknown>) {
     facultyItems: typeof body.facultyItems === 'object' && body.facultyItems !== null && !Array.isArray(body.facultyItems)
       ? (body.facultyItems as Record<string, string[]>) : undefined,
     targetStudentCountries: Array.isArray(body.targetStudentCountries) ? body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) : undefined,
+    minLanguageLevel: typeof body.minLanguageLevel === 'string' ? (body.minLanguageLevel.trim() || undefined) : undefined,
+    tuitionPrice: typeof body.tuitionPrice === 'number' ? body.tuitionPrice : (body.tuitionPrice != null && body.tuitionPrice !== '' ? Number(body.tuitionPrice) : undefined),
     programs: Array.isArray(body.programs) ? body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
       name: p.name != null ? String(p.name) : '',
       degreeLevel: p.degreeLevel != null ? String(p.degreeLevel) : '',
@@ -587,6 +589,8 @@ export async function updateCatalogUniversity(id: string, body: Record<string, u
           : undefined,
       }),
       ...(Array.isArray(body.targetStudentCountries) && { targetStudentCountries: body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) }),
+      ...(typeof body.minLanguageLevel === 'string' && { minLanguageLevel: body.minLanguageLevel.trim() || undefined }),
+      ...(body.tuitionPrice !== undefined && { tuitionPrice: body.tuitionPrice != null && body.tuitionPrice !== '' ? Number(body.tuitionPrice) : undefined }),
       ...(Array.isArray(body.programs) && {
         programs: body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
           name: p.name != null ? String(p.name) : '',

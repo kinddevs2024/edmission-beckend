@@ -15,6 +15,10 @@ const universityCatalogSchema = new mongoose.Schema(
     /** Per-category included items: { [categoryId]: string[] }. If missing, all items from catalog are implied. */
     facultyItems: { type: mongoose.Schema.Types.Mixed, default: undefined },
     targetStudentCountries: [String],
+    /** Minimum requirements (e.g. IELTS 6.5, CEFR B2, GPA 3.0) */
+    minLanguageLevel: String,
+    /** Minimum tuition per year in primary currency */
+    tuitionPrice: Number,
     /** Set when a UniversityProfile is created from this catalog (on approval). Catalog is then hidden from students. */
     linkedUniversityProfileId: { type: mongoose.Schema.Types.ObjectId, ref: 'UniversityProfile' },
     /** Embedded programs to copy to UniversityProfile on approve */
