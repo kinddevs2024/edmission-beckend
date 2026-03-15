@@ -9,6 +9,7 @@ import * as deepseek from './deepseek.client';
 import * as ollama from './ollama.client';
 
 export type ChatMessage = openai.ChatMessage;
+export type OpenAITool = openai.OpenAITool;
 
 export type StreamChunk = { type: 'content' | 'thinking'; text: string };
 
@@ -29,6 +30,22 @@ export async function chat(messages: ChatMessage[], model?: string): Promise<str
   if (useGemini()) return gemini.chat(messages, model);
   if (useDeepSeek()) return deepseek.chat(messages, model);
   return ollama.chat(messages, model);
+}
+
+/**
+ * Chat with tools (search_universities, get_university_details, search_students).
+ * Only OpenAI supports native tool_calls; other providers fall back to regular chat.
+ */
+export async function chatWithTools(
+  messages: ChatMessage[],
+  tools: OpenAITool[],
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<string>,
+  model?: string
+): Promise<string> {
+  if (useOpenAI() && tools.length > 0) {
+    return openai.chatWithTools(messages, tools, executeTool, model);
+  }
+  return chat(messages, model);
 }
 
 /** Stream chat: yields content (and optionally thinking) chunks for all providers. */

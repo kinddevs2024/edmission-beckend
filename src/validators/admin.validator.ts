@@ -130,6 +130,8 @@ export const createCatalogUniversitySchema = z.object({
     targetStudentCountries: z.array(z.string()).max(50).optional(),
     programs: z.array(programSchema).max(50).optional(),
     scholarships: z.array(scholarshipCatalogSchema).max(30).optional(),
+    minLanguageLevel: z.string().max(50).optional(),
+    tuitionPrice: z.number().min(0).optional(),
   }).strict(),
 });
 
@@ -148,6 +150,8 @@ export const updateCatalogUniversitySchema = z.object({
     targetStudentCountries: z.array(z.string()).max(50).optional(),
     programs: z.array(programSchema).max(50).optional(),
     scholarships: z.array(scholarshipCatalogSchema).max(30).optional(),
+    minLanguageLevel: z.string().max(50).optional(),
+    tuitionPrice: z.number().min(0).optional(),
   }).strict(),
 });
 

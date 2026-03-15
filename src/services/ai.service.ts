@@ -1,6 +1,7 @@
 import { buildContext } from '../ai/context.builder';
 import { getSystemPrompt } from '../ai/prompts';
 import * as aiProvider from '../ai/provider';
+import { runTool, getOpenAIToolsDefinitions, getToolFallbackPromptAppendix, parseToolCall, type ToolName } from '../ai/tools';
 import * as subscriptionService from './subscription.service';
 import { AIConversation } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
@@ -21,6 +22,34 @@ export interface ChatInput {
 }
 
 const MAX_HISTORY_MESSAGES = 20;
+const MAX_TOOL_FALLBACK_ITERATIONS = 5;
+
+/** When not using OpenAI: parse [TOOL:name]{json} from model reply, run tool, append result, call again. */
+async function chatWithToolsFallback(
+  initialMessages: aiProvider.ChatMessage[],
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<string>,
+  model?: string
+): Promise<string> {
+  let messages = initialMessages;
+  let lastReply = '';
+  for (let i = 0; i < MAX_TOOL_FALLBACK_ITERATIONS; i++) {
+    lastReply = await aiProvider.chat(messages, model);
+    const parsed = parseToolCall(lastReply);
+    if (!parsed) return lastReply;
+    let result: string;
+    try {
+      result = await executeTool(parsed.toolName, parsed.params);
+    } catch (e) {
+      result = e instanceof Error ? e.message : String(e);
+    }
+    messages = [
+      ...messages,
+      { role: 'assistant', content: lastReply },
+      { role: 'user', content: `Tool result:\n${result}` },
+    ];
+  }
+  return lastReply;
+}
 
 export async function chat(userId: string, role: Role, input: ChatInput): Promise<string> {
   const context = await buildContext(userId, role);
@@ -46,7 +75,23 @@ export async function chat(userId: string, role: Role, input: ChatInput): Promis
 
   try {
     const model = await subscriptionService.getChatModel(userId, role);
-    const reply = await aiProvider.chat(messages, model);
+    const tools = getOpenAIToolsDefinitions(role);
+    const executeTool = async (name: string, args: Record<string, unknown>) =>
+      runTool(name as ToolName, args, userId, role);
+
+    let reply: string;
+    if (aiProvider.useOpenAI() && tools.length > 0) {
+      reply = await aiProvider.chatWithTools(messages, tools, executeTool, model);
+    } else if (tools.length > 0) {
+      const appendix = getToolFallbackPromptAppendix(role);
+      const messagesWithAppendix: aiProvider.ChatMessage[] = [
+        { role: 'system', content: systemPrompt + '\n\n' + appendix },
+        ...messages.slice(1),
+      ];
+      reply = await chatWithToolsFallback(messagesWithAppendix, executeTool, model);
+    } else {
+      reply = await aiProvider.chat(messages, model);
+    }
 
     await AIConversation.findOneAndUpdate(
       { userId, role },

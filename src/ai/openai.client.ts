@@ -11,8 +11,21 @@ export interface ChatMessage {
   content: string
 }
 
+/** OpenAI tool definition for chat completions. */
+export type OpenAITool = {
+  type: 'function'
+  function: { name: string; description: string; parameters: { type: 'object'; properties?: Record<string, unknown>; required?: string[] } }
+}
+
+/** Message that can include tool_calls (assistant) or tool result (tool). */
+type OpenAIMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
+  | { role: 'tool'; tool_call_id: string; content: string }
+
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 const { apiKey, model: defaultModel, chatTimeoutMs } = config.openai
+const MAX_TOOL_ITERATIONS = 5
 
 export async function chat(messages: ChatMessage[], _model?: string): Promise<string> {
   if (!apiKey?.trim()) {
@@ -150,6 +163,108 @@ export async function* chatStream(
     }
     throw e
   }
+}
+
+/**
+ * Chat with tool support: if the model returns tool_calls, executes them and calls the API again until no tool_calls or max iterations.
+ */
+export async function chatWithTools(
+  messages: ChatMessage[],
+  tools: OpenAITool[],
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<string>,
+  modelOverride?: string
+): Promise<string> {
+  if (!apiKey?.trim()) {
+    throw new Error('OPENAI_API_KEY is not set')
+  }
+  const model = modelOverride?.trim() || defaultModel
+  let apiMessages: OpenAIMessage[] = messages.map((m) =>
+    m.role === 'assistant' ? { role: 'assistant' as const, content: m.content } : { role: m.role, content: m.content }
+  )
+
+  for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    const body: Record<string, unknown> = {
+      model,
+      messages: apiMessages,
+      stream: false,
+    }
+    if (tools.length > 0) body.tools = tools
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), chatTimeoutMs)
+
+    const res = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const text = await res.text()
+      logger.warn({ status: res.status, body: text }, 'OpenAI API error')
+      let errMsg = `OpenAI API error: ${res.status}`
+      try {
+        const errJson = JSON.parse(text) as { error?: { message?: string } }
+        if (errJson.error?.message) errMsg = errJson.error.message
+      } catch (_) {
+        /* ignore */
+      }
+      throw new Error(errMsg)
+    }
+
+    const data = (await res.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string | null
+          tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
+        }
+        finish_reason?: string
+      }>
+      error?: { message?: string }
+    }
+    if (data.error?.message) {
+      throw new Error(data.error.message)
+    }
+
+    const choice = data.choices?.[0]
+    const msg = choice?.message
+    const toolCalls = msg?.tool_calls?.length ? msg.tool_calls : undefined
+
+    if (!toolCalls?.length) {
+      const content = msg?.content ?? ''
+      return typeof content === 'string' ? content : String(content)
+    }
+
+    apiMessages.push({
+      role: 'assistant',
+      content: msg?.content ?? null,
+      tool_calls: toolCalls,
+    })
+
+    for (const tc of toolCalls) {
+      let result: string
+      try {
+        const args = (() => {
+          try {
+            return (JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>) || {}
+          } catch {
+            return {}
+          }
+        })()
+        result = await executeTool(tc.function.name, args)
+      } catch (e) {
+        result = e instanceof Error ? e.message : String(e)
+      }
+      apiMessages.push({ role: 'tool', tool_call_id: tc.id, content: result })
+    }
+  }
+
+  return 'Tool loop reached max iterations. Please try again with a simpler question.'
 }
 
 export async function healthCheck(): Promise<boolean> {

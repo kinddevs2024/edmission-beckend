@@ -1,3 +1,4 @@
+import multer from 'multer';
 import { Router } from 'express';
 import * as adminController from '../controllers/admin.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
@@ -7,6 +8,18 @@ import { validateObjectId } from '../middlewares/validateObjectId.middleware';
 import * as adminValidator from '../validators/admin.validator';
 
 const router = Router();
+
+const uploadExcel = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok =
+      file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.originalname?.toLowerCase().endsWith('.xlsx');
+    if (ok) cb(null, true);
+    else cb(new Error('Only .xlsx files are allowed'));
+  },
+});
 
 router.use(authMiddleware);
 router.use(requireRole('admin', 'school_counsellor'));
@@ -25,10 +38,18 @@ router.get('/users/:id/university-profile', validateObjectId('id'), adminControl
 router.patch('/users/:id/university-profile', requireAdminOnly, validateObjectId('id'), adminController.updateUniversityProfileByUser);
 router.get('/universities/verification', adminController.getVerificationQueue);
 router.post('/universities/:id/verify', requireAdminOnly, validateObjectId('id'), validate(adminValidator.verifyUniversitySchema.shape.body, 'body'), adminController.verifyUniversity);
+router.get('/universities/template', adminController.downloadUniversitiesTemplate);
+router.post('/universities/import', requireAdminOnly, (req, res, next) => {
+  uploadExcel.single('file')(req, res, (err) => {
+    if (err) return next(err);
+    next();
+  });
+}, adminController.uploadUniversitiesExcel);
 router.get('/universities', validate(adminValidator.catalogUniversitiesQuerySchema, 'query'), adminController.getCatalogUniversities);
 router.post('/universities', requireAdminOnly, validate(adminValidator.createCatalogUniversitySchema.shape.body, 'body'), adminController.createCatalogUniversity);
 router.get('/universities/:id', validateObjectId('id'), adminController.getCatalogUniversity);
 router.patch('/universities/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateCatalogUniversitySchema.shape.body, 'body'), adminController.updateCatalogUniversity);
+router.delete('/universities/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteCatalogUniversity);
 router.get('/university-requests', adminController.getUniversityVerificationRequests);
 router.post('/university-requests/:id/approve', requireAdminOnly, validateObjectId('id'), adminController.approveUniversityRequest);
 router.post('/university-requests/:id/reject', requireAdminOnly, validateObjectId('id'), adminController.rejectUniversityRequest);

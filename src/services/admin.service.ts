@@ -618,6 +618,15 @@ export async function updateCatalogUniversity(id: string, body: Record<string, u
   return { ...doc, id: String((doc as { _id: unknown })._id) };
 }
 
+export async function deleteCatalogUniversity(id: string) {
+  const catalog = await UniversityCatalog.findById(id);
+  if (!catalog) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
+  await CatalogInterest.deleteMany({ catalogUniversityId: id });
+  await UniversityVerificationRequest.deleteMany({ universityCatalogId: id });
+  await UniversityCatalog.findByIdAndDelete(id);
+  return { deleted: true };
+}
+
 export async function getUniversityVerificationRequests(query: { status?: string }) {
   const filter: Record<string, string> = {};
   if (query.status === 'pending' || query.status === 'approved' || query.status === 'rejected') filter.status = query.status;
@@ -790,4 +799,194 @@ export async function deleteLandingCertificate(id: string) {
   const doc = await LandingCertificate.findByIdAndDelete(id);
   if (!doc) throw new AppError(404, 'Landing certificate not found', ErrorCodes.NOT_FOUND);
   return { deleted: true };
+}
+
+// ——— Universities Excel import / template ———
+
+function parseNumFromText(s: unknown): number | undefined {
+  if (s == null || s === '') return undefined;
+  const str = String(s).trim();
+  if (!str || /^varies$/i.test(str) || /^n\/a$/i.test(str)) return undefined;
+  const match = str.replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : undefined;
+}
+
+function parseDateFromText(s: unknown): Date | undefined {
+  if (s == null || s === '') return undefined;
+  const str = String(s).trim();
+  if (!str || /^varies$/i.test(str)) return undefined;
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? undefined : d;
+}
+
+function splitList(s: unknown): string[] {
+  if (s == null || s === '') return [];
+  return String(s)
+    .split(/[;,\n]/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+/** Parse universities Excel buffer (Universities + Programs + Scholarships sheets). Returns array of bodies for createCatalogUniversity. */
+export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[] {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false });
+  const sheetNames = wb.SheetNames || [];
+
+  const universitiesSheet = sheetNames.find((n: string) => /universit/i.test(n)) || sheetNames[0];
+  const programsSheet = sheetNames.find((n: string) => /program/i.test(n));
+  const scholarshipsSheet = sheetNames.find((n: string) => /scholarship/i.test(n));
+
+  const uniRows = XLSX.utils.sheet_to_json(wb.Sheets[universitiesSheet] || {}) as Record<string, unknown>[];
+  if (!uniRows.length) return [];
+
+  const programsByUni = new Map<string, Array<{ name: string; degreeLevel?: string; field?: string; durationYears?: number; tuitionFee?: number; language?: string; entryRequirements?: string }>>();
+  if (programsSheet && wb.Sheets[programsSheet]) {
+    const progRows = XLSX.utils.sheet_to_json(wb.Sheets[programsSheet]) as Record<string, unknown>[];
+    for (const row of progRows) {
+      const uniName = String(row['University name'] ?? row['universityName'] ?? '').trim();
+      if (!uniName) continue;
+      const list = programsByUni.get(uniName) || [];
+      list.push({
+        name: String(row['Program name'] ?? row['programName'] ?? '').trim() || 'Program',
+        degreeLevel: String(row['Degree'] ?? row['degreeLevel'] ?? '').trim() || undefined,
+        field: String(row['Field'] ?? row['field'] ?? '').trim() || undefined,
+        durationYears: parseNumFromText(row['Years'] ?? row['durationYears']),
+        tuitionFee: parseNumFromText(row['Tuition'] ?? row['tuitionFee'] ?? row['Tuition']),
+        language: String(row['Language'] ?? row['language'] ?? '').trim() || undefined,
+        entryRequirements: String(row['Entry requirements'] ?? row['entryRequirements'] ?? '').trim() || undefined,
+      });
+      programsByUni.set(uniName, list);
+    }
+  }
+
+  const scholarshipsByUni = new Map<string, Array<{ name: string; coveragePercent: number; maxSlots: number; deadline?: Date; eligibility?: string }>>();
+  if (scholarshipsSheet && wb.Sheets[scholarshipsSheet]) {
+    const schRows = XLSX.utils.sheet_to_json(wb.Sheets[scholarshipsSheet]) as Record<string, unknown>[];
+    for (const row of schRows) {
+      const uniName = String(row['University name'] ?? row['universityName'] ?? '').trim();
+      if (!uniName) continue;
+      const list = scholarshipsByUni.get(uniName) || [];
+      list.push({
+        name: String(row['Scholarship name'] ?? row['scholarshipName'] ?? '').trim() || 'Scholarship',
+        coveragePercent: parseNumFromText(row['Coverage %'] ?? row['coveragePercent']) ?? 0,
+        maxSlots: parseNumFromText(row['Max slots'] ?? row['maxSlots']) ?? 0,
+        deadline: parseDateFromText(row['Deadline'] ?? row['deadline']),
+        eligibility: String(row['Eligibility'] ?? row['eligibility'] ?? '').trim() || undefined,
+      });
+      scholarshipsByUni.set(uniName, list);
+    }
+  }
+
+  const result: Record<string, unknown>[] = [];
+  for (const row of uniRows) {
+    const universityName = String(row['University name'] ?? row['universityName'] ?? '').trim();
+    if (!universityName) continue;
+
+    const tuitionPrice = parseNumFromText(row['Minimum tuition (annual)'] ?? row['tuitionPrice']);
+    const establishedYear = parseNumFromText(row['Year founded'] ?? row['establishedYear']);
+    const studentCount = parseNumFromText(row['Number of students'] ?? row['studentCount']);
+    const facultiesRaw = row['Faculties'] ?? row['faculties'];
+    const targetRaw = row['Target student countries'] ?? row['targetStudentCountries'];
+    const facultyCodes = splitList(facultiesRaw);
+    const targetStudentCountries = splitList(targetRaw);
+
+    const body: Record<string, unknown> = {
+      universityName,
+      country: String(row['Country'] ?? row['country'] ?? '').trim() || undefined,
+      city: String(row['City'] ?? row['city'] ?? '').trim() || undefined,
+      tagline: String(row['Slogan'] ?? row['tagline'] ?? '').trim() || undefined,
+      logoUrl: String(row['Logo URL'] ?? row['logoUrl'] ?? '').trim() || undefined,
+      description: String(row['Description'] ?? row['description'] ?? '').trim() || undefined,
+      minLanguageLevel: String(row['Minimum requirements'] ?? row['minLanguageLevel'] ?? '').trim() || undefined,
+      tuitionPrice: tuitionPrice != null ? tuitionPrice : undefined,
+      establishedYear: establishedYear != null ? establishedYear : undefined,
+      studentCount: studentCount != null ? studentCount : undefined,
+      facultyCodes: facultyCodes.length ? facultyCodes : undefined,
+      targetStudentCountries: targetStudentCountries.length ? targetStudentCountries : undefined,
+      programs: (programsByUni.get(universityName) || []).slice(0, 50),
+      scholarships: (scholarshipsByUni.get(universityName) || []).slice(0, 30).map((s) => ({
+        name: s.name,
+        coveragePercent: s.coveragePercent,
+        maxSlots: s.maxSlots,
+        deadline: s.deadline ? (s.deadline instanceof Date ? s.deadline.toISOString().slice(0, 10) : String(s.deadline)) : undefined,
+        eligibility: s.eligibility,
+      })),
+    };
+    result.push(body);
+  }
+  return result;
+}
+
+/** Import universities from Excel buffer: parse and create each. Returns created count and errors. */
+export async function importUniversitiesFromExcel(buffer: Buffer): Promise<{ created: number; errors: Array<{ row: number; name: string; message: string }> }> {
+  const rows = parseUniversitiesExcel(buffer);
+  const errors: Array<{ row: number; name: string; message: string }> = [];
+  let created = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const body = rows[i];
+    const name = String(body.universityName ?? '').trim();
+    try {
+      await createCatalogUniversity(body);
+      created++;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      errors.push({ row: i + 2, name, message });
+    }
+  }
+  return { created, errors };
+}
+
+/** Generate Excel template buffer (Universities, Programs, Scholarships sheets with headers + one example row). */
+export function getUniversitiesExcelTemplateBuffer(): Buffer {
+  const XLSX = require('xlsx');
+  const uniHeaders = [
+    'University name',
+    'Country',
+    'City',
+    'Slogan',
+    'Logo URL',
+    'Description',
+    'Minimum requirements',
+    'Minimum tuition (annual)',
+    'Year founded',
+    'Number of students',
+    'Faculties',
+    'Target student countries',
+    'Source URL',
+    'Source site',
+    'Extraction notes',
+  ];
+  const progHeaders = ['University name', 'Program name', 'Degree', 'Field', 'Years', 'Tuition', 'Language', 'Source URL', 'Notes'];
+  const schHeaders = ['University name', 'Scholarship name', 'Coverage %', 'Max slots', 'Deadline', 'Eligibility', 'Source URL', 'Notes'];
+
+  const uniData = [
+    uniHeaders,
+    [
+      'Example University',
+      'Country',
+      'City',
+      'Short slogan',
+      'https://example.com/logo.png',
+      'Description text',
+      'IELTS 6.5 or equivalent',
+      '5000',
+      '1990',
+      '10000',
+      'Engineering; Science; Arts',
+      'Uzbekistan; Kazakhstan; Turkey',
+      '',
+      '',
+      '',
+    ],
+  ];
+  const progData = [progHeaders, ['Example University', 'Bachelor in Computer Science', 'Bachelor', 'Computer Science', '4', '5000', 'English', '', '']];
+  const schData = [schHeaders, ['Example University', 'Merit Scholarship', '50', '10', '2025-06-30', 'GPA 3.5+', '', '']];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(uniData), 'Universities');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(progData), 'Programs');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(schData), 'Scholarships');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }

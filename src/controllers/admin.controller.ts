@@ -429,6 +429,30 @@ export async function createCatalogUniversity(req: Request, res: Response, next:
   }
 }
 
+export async function downloadUniversitiesTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const buffer = adminService.getUniversitiesExcelTemplateBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="universities_template.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function uploadUniversitiesExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.file?.buffer) {
+      res.status(400).json({ message: 'No file uploaded. Use form field "file" with an .xlsx file.' });
+      return;
+    }
+    const result = await adminService.importUniversitiesFromExcel(req.file.buffer);
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getCatalogUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = await adminService.getCatalogUniversityById(req.params.id);
@@ -441,6 +465,15 @@ export async function getCatalogUniversity(req: Request, res: Response, next: Ne
 export async function updateCatalogUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = await adminService.updateCatalogUniversity(req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteCatalogUniversity(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.deleteCatalogUniversity(req.params.id);
     res.json(data);
   } catch (e) {
     next(e);
