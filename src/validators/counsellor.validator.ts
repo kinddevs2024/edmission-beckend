@@ -42,6 +42,12 @@ export const listJoinRequestsQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(50).optional(),
 });
 
+export const listMyInvitationsQuerySchema = z.object({
+  status: z.enum(['pending', 'accepted', 'declined']).optional(),
+  page: z.coerce.number().min(1).optional(),
+  limit: z.coerce.number().min(1).max(50).optional(),
+});
+
 export const searchStudentsForInviteQuerySchema = z.object({
   search: z.string().min(1).max(200),
   limit: z.coerce.number().min(1).max(20).optional(),

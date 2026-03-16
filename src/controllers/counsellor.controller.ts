@@ -212,7 +212,7 @@ export async function searchStudentsForInvite(req: Request, res: Response, next:
   }
 }
 
-/** Invite existing student to my school. */
+/** Invite existing student to my school. Sends request; student must accept or decline. */
 export async function inviteStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
@@ -222,6 +222,25 @@ export async function inviteStudent(req: Request, res: Response, next: NextFunct
     const userId = (req.body && typeof req.body === 'object' && req.body.userId) ? req.body.userId : '';
     const data = await counsellorService.inviteStudentToSchool(req.user.id, userId);
     res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** List invitations I sent (pending = awaiting response; accepted/declined = already responded). */
+export async function listMyInvitations(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const query = (req.query && typeof req.query === 'object') ? req.query : {};
+    const data = await counsellorService.listMyInvitations(req.user.id, {
+      status: (query.status === 'pending' || query.status === 'accepted' || query.status === 'declined') ? query.status : undefined,
+      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
+      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+    });
+    res.json(data);
   } catch (e) {
     next(e);
   }

@@ -29,5 +29,8 @@ router.get('/documents', studentController.getMyDocuments);
 router.post('/documents', validate(studentValidator.documentSchema.shape.body, 'body'), studentController.addDocument);
 router.get('/schools', studentController.listSchools);
 router.post('/schools/:counsellorUserId/request', validateObjectId('counsellorUserId'), studentController.requestToJoinSchool);
+router.get('/school-invitations', studentController.listSchoolInvitations);
+router.post('/school-invitations/:id/accept', validateObjectId('id'), studentController.acceptSchoolInvitation);
+router.post('/school-invitations/:id/decline', validateObjectId('id'), studentController.declineSchoolInvitation);
 
 export default router;

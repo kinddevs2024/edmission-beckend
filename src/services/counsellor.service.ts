@@ -7,6 +7,7 @@ import {
   StudentDocument,
   CounsellorProfile,
   SchoolJoinRequest,
+  SchoolInvitation,
   Interest,
 } from '../models';
 import * as subscriptionService from './subscription.service';
@@ -444,8 +445,15 @@ export async function searchStudentsForInvite(
     .select('userId')
     .lean();
   const myStudentIds = new Set(myProfileStudentIds.map((p: { userId?: unknown }) => String(p.userId)));
+  const pendingInvitationStudentIds = await SchoolInvitation.find({
+    counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    status: 'pending',
+  })
+    .select('studentUserId')
+    .lean();
+  const pendingIds = new Set(pendingInvitationStudentIds.map((p: { studentUserId?: unknown }) => String(p.studentUserId)));
   const data = studentUsers
-    .filter((u: { _id: unknown }) => !myStudentIds.has(String(u._id)))
+    .filter((u: { _id: unknown }) => !myStudentIds.has(String(u._id)) && !pendingIds.has(String(u._id)))
     .slice(0, limit)
     .map((u: Record<string, unknown>) => ({
       id: String(u._id),
@@ -455,7 +463,7 @@ export async function searchStudentsForInvite(
   return { data };
 }
 
-/** Invite existing student to this school: link their profile to this counsellor (or create profile if missing). */
+/** Invite existing student to this school: send invitation (pending). Student must accept or decline. Until then, school cannot access student data. */
 export async function inviteStudentToSchool(counsellorUserId: string, studentUserId: string) {
   const user = await User.findById(counsellorUserId);
   if (!user || user.role !== 'school_counsellor') {
@@ -466,21 +474,152 @@ export async function inviteStudentToSchool(counsellorUserId: string, studentUse
   if (studentUser.role !== 'student') {
     throw new AppError(400, 'Only students can be invited to a school', ErrorCodes.VALIDATION);
   }
-  let profile = await StudentProfile.findOne({ userId: studentUserId });
-  if (profile) {
-    if (String(profile.counsellorUserId) === String(counsellorUserId)) {
+  const existingLink = await StudentProfile.findOne({ userId: studentUserId, counsellorUserId: counsellorUserId });
+  if (existingLink) {
+    return { success: true, message: 'Already in your school' };
+  }
+  let invitation = await SchoolInvitation.findOne({ counsellorUserId, studentUserId });
+  if (invitation) {
+    if (invitation.status === 'pending') {
+      throw new AppError(409, 'Invitation already sent. Waiting for student response.', ErrorCodes.CONFLICT);
+    }
+    if (invitation.status === 'accepted') {
       return { success: true, message: 'Already in your school' };
     }
-    await StudentProfile.findByIdAndUpdate(profile._id, {
+    if (invitation.status === 'declined') {
+      await SchoolInvitation.findByIdAndUpdate(invitation._id, { status: 'pending', respondedAt: undefined });
+    }
+  } else {
+    const created = await SchoolInvitation.create({
       counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+      studentUserId: new mongoose.Types.ObjectId(studentUserId),
+      status: 'pending',
     });
+    invitation = created;
+  }
+  const invitationId = String(invitation._id);
+  const profile = await CounsellorProfile.findOne({ userId: counsellorUserId }).lean();
+  const schoolName = (profile as { schoolName?: string })?.schoolName ?? 'A school';
+  await notificationService.createNotification(studentUserId, {
+    type: 'school_invitation',
+    title: 'School invitation',
+    body: `${schoolName} invited you to join. You can accept or decline.`,
+    referenceType: 'school_invitation',
+    referenceId: invitationId,
+    metadata: { counsellorUserId, schoolName },
+  });
+  return { success: true, message: 'Invitation sent. The student can accept or decline.' };
+}
+
+/** List invitations sent by this counsellor (pending = awaiting student response; accepted/declined = already responded). */
+export async function listMyInvitations(counsellorUserId: string, params?: { status?: 'pending' | 'accepted' | 'declined'; page?: number; limit?: number }) {
+  const user = await User.findById(counsellorUserId);
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+  }
+  const page = Math.max(1, params?.page ?? 1);
+  const limit = Math.min(50, Math.max(1, params?.limit ?? 20));
+  const skip = (page - 1) * limit;
+  const where: Record<string, unknown> = { counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId) };
+  if (params?.status) where.status = params.status;
+  const [list, total] = await Promise.all([
+    SchoolInvitation.find(where).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    SchoolInvitation.countDocuments(where),
+  ]);
+  const studentIds = list.map((r: Record<string, unknown>) => r.studentUserId).filter(Boolean);
+  const users = await User.find({ _id: { $in: studentIds } }).select('email name').lean();
+  const userMap = new Map(users.map((u: Record<string, unknown>) => [String(u._id), u]));
+  const data = list.map((r: Record<string, unknown>) => {
+    const u = userMap.get(String(r.studentUserId)) as { email?: string; name?: string } | undefined;
+    return {
+      id: String(r._id),
+      studentUserId: String(r.studentUserId),
+      status: r.status,
+      createdAt: r.createdAt,
+      respondedAt: r.respondedAt,
+      studentEmail: u?.email ?? '',
+      studentName: u?.name ?? '',
+    };
+  });
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+}
+
+/** Student accepts school invitation. Links student to school and notifies counsellor. */
+export async function acceptSchoolInvitation(studentUserId: string, invitationId: string) {
+  const invitation = await SchoolInvitation.findOne({ _id: invitationId, studentUserId });
+  if (!invitation) throw new AppError(404, 'Invitation not found', ErrorCodes.NOT_FOUND);
+  if (invitation.status !== 'pending') {
+    throw new AppError(400, 'Invitation already responded to', ErrorCodes.VALIDATION);
+  }
+  const counsellorUserId = String(invitation.counsellorUserId);
+  await SchoolInvitation.findByIdAndUpdate(invitationId, { status: 'accepted', respondedAt: new Date() });
+  let profile = await StudentProfile.findOne({ userId: studentUserId });
+  if (profile) {
+    await StudentProfile.findByIdAndUpdate(profile._id, { counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId) });
   } else {
     await StudentProfile.create({
       userId: studentUserId,
       counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
     });
   }
-  return { success: true, message: 'Student invited to your school' };
+  const counsellorProfile = await CounsellorProfile.findOne({ userId: counsellorUserId }).lean();
+  const schoolName = (counsellorProfile as { schoolName?: string })?.schoolName ?? 'School';
+  const studentUser = await User.findById(studentUserId).select('name email').lean();
+  const studentName = (studentUser as { name?: string; email?: string })?.name ?? (studentUser as { email?: string })?.email ?? 'A student';
+  await notificationService.createNotification(counsellorUserId, {
+    type: 'school_invitation_accepted',
+    title: 'Invitation accepted',
+    body: `${studentName} accepted your invitation to join ${schoolName}.`,
+    referenceType: 'school_invitation',
+    referenceId: invitationId,
+    metadata: { studentUserId },
+  });
+  return { success: true, message: 'You have joined the school.' };
+}
+
+/** Student declines school invitation. Notifies counsellor. */
+export async function declineSchoolInvitation(studentUserId: string, invitationId: string) {
+  const invitation = await SchoolInvitation.findOne({ _id: invitationId, studentUserId });
+  if (!invitation) throw new AppError(404, 'Invitation not found', ErrorCodes.NOT_FOUND);
+  if (invitation.status !== 'pending') {
+    throw new AppError(400, 'Invitation already responded to', ErrorCodes.VALIDATION);
+  }
+  const counsellorUserId = String(invitation.counsellorUserId);
+  await SchoolInvitation.findByIdAndUpdate(invitationId, { status: 'declined', respondedAt: new Date() });
+  const counsellorProfile = await CounsellorProfile.findOne({ userId: counsellorUserId }).lean();
+  const schoolName = (counsellorProfile as { schoolName?: string })?.schoolName ?? 'School';
+  const studentUser = await User.findById(studentUserId).select('name email').lean();
+  const studentName = (studentUser as { name?: string; email?: string })?.name ?? (studentUser as { email?: string })?.email ?? 'A student';
+  await notificationService.createNotification(counsellorUserId, {
+    type: 'school_invitation_declined',
+    title: 'Invitation declined',
+    body: `${studentName} declined your invitation to join ${schoolName}.`,
+    referenceType: 'school_invitation',
+    referenceId: invitationId,
+    metadata: { studentUserId },
+  });
+  return { success: true, message: 'Invitation declined.' };
+}
+
+/** List pending school invitations for a student (invitations sent to this student). */
+export async function listSchoolInvitationsForStudent(studentUserId: string) {
+  const list = await SchoolInvitation.find({ studentUserId, status: 'pending' })
+    .sort({ createdAt: -1 })
+    .lean();
+  const counsellorIds = list.map((r: Record<string, unknown>) => r.counsellorUserId).filter(Boolean);
+  const profiles = await CounsellorProfile.find({ userId: { $in: counsellorIds } }).lean();
+  const profileMap = new Map(profiles.map((p: Record<string, unknown>) => [String(p.userId), p]));
+  return list.map((r: Record<string, unknown>) => {
+    const profile = profileMap.get(String(r.counsellorUserId)) as { schoolName?: string; city?: string; country?: string } | undefined;
+    return {
+      id: String(r._id),
+      counsellorUserId: String(r.counsellorUserId),
+      schoolName: profile?.schoolName ?? '',
+      city: profile?.city ?? '',
+      country: profile?.country ?? '',
+      createdAt: r.createdAt,
+    };
+  });
 }
 
 /** List documents of a student (counsellor must own the student). */

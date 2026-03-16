@@ -207,3 +207,45 @@ export async function requestToJoinSchool(req: Request, res: Response, next: Nex
     next(e);
   }
 }
+
+/** List pending school invitations (schools that invited this student). */
+export async function listSchoolInvitations(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.listSchoolInvitationsForStudent(req.user.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Accept a school invitation. */
+export async function acceptSchoolInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.acceptSchoolInvitation(req.user.id, req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Decline a school invitation. */
+export async function declineSchoolInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.declineSchoolInvitation(req.user.id, req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}

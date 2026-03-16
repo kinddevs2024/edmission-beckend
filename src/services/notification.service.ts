@@ -92,6 +92,11 @@ function buildNotificationLink(
       return '/admin/university-requests';
     case 'school_join_request':
       return '/school/join-requests';
+    case 'school_invitation':
+      return '/student/school-invitations';
+    case 'school_invitation_accepted':
+    case 'school_invitation_declined':
+      return '/school/my-students';
     default:
       return null;
   }
