@@ -28,3 +28,4 @@ export { AIConversation } from './AIConversation';
 export { StudentProfileView } from './StudentProfileView';
 export { SystemSettings } from './SystemSettings';
 export { LandingCertificate } from './LandingCertificate';
+export { OfferCertificateTemplate } from './OfferCertificateTemplate';

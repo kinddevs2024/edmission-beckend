@@ -34,6 +34,11 @@ router.delete('/scholarships/:id', validateObjectId('id'), universityController.
 router.post('/offers', validate(universityValidator.createOfferSchema.shape.body, 'body'), universityController.createOffer);
 router.get('/recommendations', universityController.getRecommendations);
 
+router.get('/offer-templates', universityController.listOfferTemplates);
+router.post('/offer-templates', validate(universityValidator.createOfferTemplateSchema.shape.body, 'body'), universityController.createOfferTemplate);
+router.patch('/offer-templates/:id', validateObjectId('id'), validate(universityValidator.updateOfferTemplateSchema.shape.body, 'body'), universityController.updateOfferTemplate);
+router.delete('/offer-templates/:id', validateObjectId('id'), universityController.deleteOfferTemplate);
+
 router.get('/faculties', universityController.getFaculties);
 router.post('/faculties', universityController.createFaculty);
 router.get('/faculties/:id', validateObjectId('id'), universityController.getFacultyById);

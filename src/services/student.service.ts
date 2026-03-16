@@ -527,6 +527,8 @@ export async function getOffers(userId: string) {
       id: String(o._id),
       university: uni ? { universityName: uni.universityName } : undefined,
       scholarship: sch ? { name: sch.name, coveragePercent: sch.coveragePercent } : undefined,
+      status: o.status,
+      expiresAt: o.expiresAt,
     };
   });
 }
@@ -537,14 +539,16 @@ export async function acceptOffer(userId: string, offerId: string) {
 
   const offer = await Offer.findById(offerId).populate('scholarshipId');
   if (!offer || String(offer.studentId) !== String(profile._id)) throw new AppError(404, 'Offer not found', ErrorCodes.NOT_FOUND);
-  if (offer.status !== 'pending') throw new AppError(400, 'Offer already processed', ErrorCodes.CONFLICT);
+  if (offer.status !== 'pending' && offer.status !== 'waiting') {
+    throw new AppError(400, 'Offer already processed', ErrorCodes.CONFLICT);
+  }
   const offerUniId = toObjectIdString(offer.universityId);
   if (!offerUniId) throw new AppError(404, 'Offer invalid', ErrorCodes.NOT_FOUND);
 
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    await Offer.findByIdAndUpdate(offerId, { status: 'accepted' }, { session });
+    await Offer.findByIdAndUpdate(offerId, { status: 'accepted', expiresAt: undefined }, { session });
     await Interest.updateMany(
       { studentId: profile._id, universityId: offerUniId },
       { status: 'accepted' },
@@ -582,9 +586,11 @@ export async function declineOffer(userId: string, offerId: string) {
 
   const offer = await Offer.findOne({ _id: offerId, studentId: profile._id });
   if (!offer) throw new AppError(404, 'Offer not found', ErrorCodes.NOT_FOUND);
-  if (offer.status !== 'pending') throw new AppError(400, 'Offer already processed', ErrorCodes.CONFLICT);
+  if (offer.status !== 'pending' && offer.status !== 'waiting') {
+    throw new AppError(400, 'Offer already processed', ErrorCodes.CONFLICT);
+  }
 
-  await Offer.findByIdAndUpdate(offerId, { status: 'declined' });
+  await Offer.findByIdAndUpdate(offerId, { status: 'declined', expiresAt: undefined });
   // Return the scholarship slot when offer is declined
   if (offer.scholarshipId) {
     await Scholarship.findByIdAndUpdate(offer.scholarshipId, { $inc: { remainingSlots: 1 } });
@@ -606,6 +612,25 @@ export async function declineOffer(userId: string, offerId: string) {
       metadata: { offerId, studentName },
     });
   }
+
+  const updated = await Offer.findById(offerId).lean();
+  return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+}
+
+/** Student asks to wait with decision: move offer to 'waiting' and set/extend expiresAt for 14 days from now. */
+export async function waitOnOffer(userId: string, offerId: string) {
+  const profile = await StudentProfile.findOne({ userId });
+  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+
+  const offer = await Offer.findOne({ _id: offerId, studentId: profile._id });
+  if (!offer) throw new AppError(404, 'Offer not found', ErrorCodes.NOT_FOUND);
+  if (offer.status !== 'pending' && offer.status !== 'waiting') {
+    throw new AppError(400, 'Offer already processed', ErrorCodes.CONFLICT);
+  }
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  await Offer.findByIdAndUpdate(offerId, { status: 'waiting', expiresAt });
 
   const updated = await Offer.findById(offerId).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;

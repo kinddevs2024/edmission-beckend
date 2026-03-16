@@ -23,7 +23,35 @@ export const createOfferSchema = z.object({
     scholarshipId: objectIdZod.optional(),
     coveragePercent: z.number().min(0).max(100),
     deadline: z.string().optional(),
+    certificateTemplateId: objectIdZod.optional(),
+    certificateData: z.record(z.string(), z.string()).optional(),
   }),
+});
+
+export const createOfferTemplateSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).max(200),
+    layoutKey: z.enum(['classic', 'modern', 'minimal']).optional(),
+    primaryColor: z.string().max(50).optional(),
+    accentColor: z.string().max(50).optional(),
+    backgroundImageUrl: z.string().max(500).optional(),
+    bodyTemplate: z.string().min(1).max(5000),
+    titleTemplate: z.string().max(500).optional(),
+    isDefault: z.boolean().optional(),
+  }),
+});
+
+export const updateOfferTemplateSchema = z.object({
+  body: z.object({
+    name: z.string().max(200).optional(),
+    layoutKey: z.enum(['classic', 'modern', 'minimal']).optional(),
+    primaryColor: z.string().max(50).optional(),
+    accentColor: z.string().max(50).optional(),
+    backgroundImageUrl: z.string().max(500).optional(),
+    bodyTemplate: z.string().max(5000).optional(),
+    titleTemplate: z.string().max(500).optional(),
+    isDefault: z.boolean().optional(),
+  }).strict(),
 });
 
 export const verificationRequestSchema = z.object({

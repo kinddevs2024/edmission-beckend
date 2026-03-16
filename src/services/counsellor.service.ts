@@ -208,7 +208,9 @@ export async function createStudentByCounsellor(
 export async function listMyStudents(counsellorUserId: string, params?: { page?: number; limit?: number; search?: string }) {
   const user = await User.findById(counsellorUserId);
   if (!user || user.role !== 'school_counsellor') {
-    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+    // If the user record is missing or role is different, just return an empty list
+    // instead of throwing, so that UI for new/empty counsellor accounts does not break.
+    return { data: [], total: 0, page: 1, limit: params?.limit ?? 20, totalPages: 0 };
   }
   const page = Math.max(1, params?.page ?? 1);
   const limit = Math.min(100, Math.max(1, params?.limit ?? 20));
@@ -336,7 +338,8 @@ export async function requestToJoinSchool(studentUserId: string, counsellorUserI
 export async function listJoinRequests(counsellorUserId: string, params?: { status?: string; page?: number; limit?: number }) {
   const user = await User.findById(counsellorUserId);
   if (!user || user.role !== 'school_counsellor') {
-    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+    // Gracefully handle cases where there is no counsellor profile / user yet
+    return { data: [], total: 0, page: 1, limit: params?.limit ?? 20, totalPages: 0 };
   }
   const page = Math.max(1, params?.page ?? 1);
   const limit = Math.min(50, Math.max(1, params?.limit ?? 20));
@@ -422,7 +425,8 @@ export async function searchStudentsForInvite(
 ) {
   const user = await User.findById(counsellorUserId);
   if (!user || user.role !== 'school_counsellor') {
-    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+    // For safety, if user is not a counsellor just return no results
+    return { data: [] };
   }
   const search = (params.search ?? '').trim();
   if (!search || search.length < 2) {
@@ -542,6 +546,23 @@ export async function listMyInvitations(counsellorUserId: string, params?: { sta
     };
   });
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+}
+
+/** Cancel a pending school invitation (counsellor can withdraw the invite). */
+export async function cancelSchoolInvitation(counsellorUserId: string, invitationId: string) {
+  const user = await User.findById(counsellorUserId);
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+  }
+  const invitation = await SchoolInvitation.findOne({ _id: invitationId, counsellorUserId });
+  if (!invitation) {
+    throw new AppError(404, 'Invitation not found', ErrorCodes.NOT_FOUND);
+  }
+  if (invitation.status !== 'pending') {
+    throw new AppError(400, 'Only pending invitations can be cancelled', ErrorCodes.VALIDATION);
+  }
+  await SchoolInvitation.findByIdAndDelete(invitationId);
+  return { success: true, message: 'Invitation cancelled.' };
 }
 
 /** Student accepts school invitation. Links student to school and notifies counsellor. */

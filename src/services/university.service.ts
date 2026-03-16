@@ -12,6 +12,7 @@ import {
   Recommendation,
   StudentDocument,
   StudentProfileView,
+  OfferCertificateTemplate,
 } from '../models';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
@@ -476,7 +477,14 @@ export async function deleteScholarship(userId: string, scholarshipId: string) {
 
 export async function createOffer(
   userId: string,
-  data: { studentId: string; scholarshipId?: string; coveragePercent: number; deadline?: Date }
+  data: {
+    studentId: string;
+    scholarshipId?: string;
+    coveragePercent: number;
+    deadline?: Date;
+    certificateTemplateId?: string;
+    certificateData?: Record<string, string>;
+  }
 ) {
   const profile = await UniversityProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
@@ -495,12 +503,49 @@ export async function createOffer(
     if (sch.remainingSlots < 1) throw new AppError(400, 'No remaining slots', ErrorCodes.CONFLICT);
   }
 
+  let certificateTitle: string | undefined;
+  let certificateBody: string | undefined;
+  let certificateMeta: Record<string, unknown> | undefined;
+
+  if (data.certificateTemplateId) {
+    const tmpl = await OfferCertificateTemplate.findOne({
+      _id: data.certificateTemplateId,
+      universityUserId: userId,
+    }).lean();
+    if (!tmpl) {
+      throw new AppError(404, 'Offer certificate template not found', ErrorCodes.NOT_FOUND);
+    }
+    const payload = data.certificateData ?? {};
+    const studentName = [studentProfile.firstName, studentProfile.lastName].filter(Boolean).join(' ') || 'Student';
+    const universityName = profile.universityName ?? 'University';
+    const replacements: Record<string, string> = {
+      studentName,
+      universityName,
+      date: new Date().toLocaleDateString(),
+      ...payload,
+    };
+    const render = (tpl?: string | null) =>
+      tpl
+        ? Object.entries(replacements).reduce(
+            (acc, [key, val]) => acc.replace(new RegExp(`{{\\s*${key}\\s*}}`, 'g'), String(val)),
+            tpl
+          )
+        : undefined;
+    certificateTitle = render((tmpl as { titleTemplate?: string }).titleTemplate) ?? tmpl.name;
+    certificateBody = render((tmpl as { bodyTemplate: string }).bodyTemplate);
+    certificateMeta = { templateId: String(tmpl._id), ...payload };
+  }
+
   const offer = await Offer.create({
     studentId: data.studentId,
     universityId: profile._id,
     scholarshipId: data.scholarshipId ?? undefined,
     coveragePercent: data.coveragePercent,
     deadline: data.deadline ?? undefined,
+    certificateTemplateId: data.certificateTemplateId ?? undefined,
+    certificateTitle,
+    certificateBody,
+    certificateMeta,
   });
 
   if (data.scholarshipId) {
@@ -522,6 +567,70 @@ export async function createOffer(
   });
 
   return offer.toObject ? offer.toObject() : offer;
+}
+
+export async function listOfferTemplates(userId: string) {
+  const templates = await OfferCertificateTemplate.find({ universityUserId: userId })
+    .sort({ createdAt: -1 })
+    .lean();
+  return templates.map((t) => ({ ...t, id: String((t as { _id: unknown })._id) }));
+}
+
+export async function createOfferTemplate(
+  userId: string,
+  body: {
+    name: string;
+    layoutKey?: 'classic' | 'modern' | 'minimal';
+    primaryColor?: string;
+    accentColor?: string;
+    backgroundImageUrl?: string;
+    bodyTemplate: string;
+    titleTemplate?: string;
+    isDefault?: boolean;
+  }
+) {
+  const doc = await OfferCertificateTemplate.create({
+    universityUserId: userId,
+    name: body.name,
+    layoutKey: body.layoutKey ?? 'classic',
+    primaryColor: body.primaryColor,
+    accentColor: body.accentColor,
+    backgroundImageUrl: body.backgroundImageUrl,
+    bodyTemplate: body.bodyTemplate,
+    titleTemplate: body.titleTemplate,
+    isDefault: body.isDefault ?? false,
+  });
+  const t = doc.toObject() as Record<string, unknown>;
+  return { ...t, id: String(t._id) };
+}
+
+export async function updateOfferTemplate(
+  userId: string,
+  templateId: string,
+  patch: {
+    name?: string;
+    layoutKey?: 'classic' | 'modern' | 'minimal';
+    primaryColor?: string;
+    accentColor?: string;
+    backgroundImageUrl?: string;
+    bodyTemplate?: string;
+    titleTemplate?: string;
+    isDefault?: boolean;
+  }
+) {
+  const doc = await OfferCertificateTemplate.findOneAndUpdate(
+    { _id: templateId, universityUserId: userId },
+    patch,
+    { new: true }
+  ).lean();
+  if (!doc) throw new AppError(404, 'Offer certificate template not found', ErrorCodes.NOT_FOUND);
+  return { ...doc, id: String((doc as { _id: unknown })._id) };
+}
+
+export async function deleteOfferTemplate(userId: string, templateId: string) {
+  const doc = await OfferCertificateTemplate.findOneAndDelete({ _id: templateId, universityUserId: userId }).lean();
+  if (!doc) throw new AppError(404, 'Offer certificate template not found', ErrorCodes.NOT_FOUND);
+  return { success: true };
 }
 
 export async function getRecommendations(userId: string) {

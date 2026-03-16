@@ -131,6 +131,16 @@ export async function declineOffer(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function waitOnOffer(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await studentService.waitOnOffer(req.user.id, req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getRecommendations(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();

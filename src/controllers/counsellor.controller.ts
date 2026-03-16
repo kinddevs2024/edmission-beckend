@@ -246,6 +246,20 @@ export async function listMyInvitations(req: Request, res: Response, next: NextF
   }
 }
 
+/** Cancel a pending school invitation. */
+export async function cancelSchoolInvitation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    await counsellorService.cancelSchoolInvitation(req.user.id, req.params.invitationId);
+    res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+}
+
 /** List documents of a student. */
 export async function getStudentDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {

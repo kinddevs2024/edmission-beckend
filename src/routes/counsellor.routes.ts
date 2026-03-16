@@ -27,6 +27,7 @@ router.post('/students/:studentUserId/documents', validateObjectId('studentUserI
 router.delete('/students/:studentUserId/documents/:documentId', validateObjectId('studentUserId'), validateObjectId('documentId'), counsellorController.deleteStudentDocument);
 
 router.get('/invitations', validate(counsellorValidator.listMyInvitationsQuerySchema, 'query'), counsellorController.listMyInvitations);
+router.post('/invitations/:invitationId/cancel', validateObjectId('invitationId'), counsellorController.cancelSchoolInvitation);
 router.get('/join-requests', validate(counsellorValidator.listJoinRequestsQuerySchema, 'query'), counsellorController.listJoinRequests);
 router.post('/join-requests/:requestId/accept', validateObjectId('requestId'), counsellorController.acceptJoinRequest);
 router.post('/join-requests/:requestId/reject', validateObjectId('requestId'), counsellorController.rejectJoinRequest);

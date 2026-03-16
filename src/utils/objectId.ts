@@ -13,7 +13,14 @@ export function toObjectIdString(value: unknown): string | null {
   if (typeof value === 'object') {
     const o = value as Record<string, unknown>;
     const id = o._id ?? o.id;
-    if (id != null) return toObjectIdString(id);
+    if (typeof id === 'string') {
+      const s = id.trim();
+      return s && s.length === 24 && mongoose.Types.ObjectId.isValid(s) ? s : null;
+    }
+    if (id != null && typeof id !== 'object') {
+      const s = String(id).trim();
+      return s && s.length === 24 && mongoose.Types.ObjectId.isValid(s) ? s : null;
+    }
   }
   return null;
 }

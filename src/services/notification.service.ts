@@ -84,6 +84,7 @@ function buildNotificationLink(
       return '/student/offers';
     case 'offer_accepted':
     case 'offer_declined':
+    case 'offer_expired':
     case 'interest':
       return '/university/pipeline';
     case 'status_update':

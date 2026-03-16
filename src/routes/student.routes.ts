@@ -23,6 +23,7 @@ router.get('/applications', studentController.getApplications);
 router.get('/offers', studentController.getOffers);
 router.post('/offers/:id/accept', validateObjectId('id'), studentController.acceptOffer);
 router.post('/offers/:id/decline', validateObjectId('id'), studentController.declineOffer);
+router.post('/offers/:id/wait', validateObjectId('id'), studentController.waitOnOffer);
 router.get('/recommendations', studentController.getRecommendations);
 router.get('/compare', studentController.getCompare);
 router.get('/documents', studentController.getMyDocuments);

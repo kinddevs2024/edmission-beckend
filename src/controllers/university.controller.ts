@@ -167,12 +167,59 @@ export async function deleteScholarship(req: Request, res: Response, next: NextF
 export async function createOffer(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = req.body as { studentId: string; scholarshipId?: string; coveragePercent: number; deadline?: string };
+    const body = req.body as {
+      studentId: string;
+      scholarshipId?: string;
+      coveragePercent: number;
+      deadline?: string;
+      certificateTemplateId?: string;
+      certificateData?: Record<string, string>;
+    };
     const data = await universityService.createOffer(req.user.id, {
       ...body,
       deadline: body.deadline ? new Date(body.deadline) : undefined,
     });
     res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function listOfferTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await universityService.listOfferTemplates(req.user.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createOfferTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await universityService.createOfferTemplate(req.user.id, req.body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateOfferTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await universityService.updateOfferTemplate(req.user.id, req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteOfferTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    await universityService.deleteOfferTemplate(req.user.id, req.params.id);
+    res.status(204).send();
   } catch (e) {
     next(e);
   }
