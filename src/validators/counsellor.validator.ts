@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { objectIdZod } from '../utils/validators';
 import { updateProfileSchema } from './student.validator';
 
 export const counsellorProfileSchema = z.object({
@@ -39,4 +40,24 @@ export const listJoinRequestsQuerySchema = z.object({
   status: z.enum(['pending', 'accepted', 'rejected']).optional(),
   page: z.coerce.number().min(1).optional(),
   limit: z.coerce.number().min(1).max(50).optional(),
+});
+
+export const searchStudentsForInviteQuerySchema = z.object({
+  search: z.string().min(1).max(200),
+  limit: z.coerce.number().min(1).max(20).optional(),
+});
+
+export const inviteStudentSchema = z.object({
+  body: z.object({ userId: objectIdZod }),
+});
+
+const docTypeEnum = z.enum(['transcript', 'diploma', 'language_certificate', 'course_certificate', 'passport', 'id_card', 'other']);
+export const addDocumentForStudentSchema = z.object({
+  body: z.object({
+    type: docTypeEnum,
+    fileUrl: z.string().min(1),
+    name: z.string().max(200).optional(),
+    certificateType: z.string().max(100).optional(),
+    score: z.string().max(50).optional(),
+  }),
 });

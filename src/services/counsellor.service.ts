@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import {
   User,
   StudentProfile,
+  StudentDocument,
   CounsellorProfile,
   SchoolJoinRequest,
   Interest,
@@ -411,4 +412,114 @@ export async function addInterestOnBehalfOfStudent(
   await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
   const { addInterest } = await import('./student.service');
   return addInterest(studentUserId, universityProfileId);
+}
+
+/** Search existing students (by email/name) who are not in this counsellor's school. For invite flow. */
+export async function searchStudentsForInvite(
+  counsellorUserId: string,
+  params: { search: string; limit?: number }
+) {
+  const user = await User.findById(counsellorUserId);
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+  }
+  const search = (params.search ?? '').trim();
+  if (!search || search.length < 2) {
+    return { data: [] };
+  }
+  const limit = Math.min(20, Math.max(1, params.limit ?? 10));
+  const studentUsers = await User.find({
+    role: 'student',
+    $or: [
+      { email: new RegExp(escapeRegex(search), 'i') },
+      { name: new RegExp(escapeRegex(search), 'i') },
+    ],
+  })
+    .select('_id email name')
+    .limit(limit * 2)
+    .lean();
+  const myProfileStudentIds = await StudentProfile.find({
+    counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+  })
+    .select('userId')
+    .lean();
+  const myStudentIds = new Set(myProfileStudentIds.map((p: { userId?: unknown }) => String(p.userId)));
+  const data = studentUsers
+    .filter((u: { _id: unknown }) => !myStudentIds.has(String(u._id)))
+    .slice(0, limit)
+    .map((u: Record<string, unknown>) => ({
+      id: String(u._id),
+      email: String(u.email ?? ''),
+      name: String(u.name ?? ''),
+    }));
+  return { data };
+}
+
+/** Invite existing student to this school: link their profile to this counsellor (or create profile if missing). */
+export async function inviteStudentToSchool(counsellorUserId: string, studentUserId: string) {
+  const user = await User.findById(counsellorUserId);
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+  }
+  const studentUser = await User.findById(studentUserId);
+  if (!studentUser) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (studentUser.role !== 'student') {
+    throw new AppError(400, 'Only students can be invited to a school', ErrorCodes.VALIDATION);
+  }
+  let profile = await StudentProfile.findOne({ userId: studentUserId });
+  if (profile) {
+    if (String(profile.counsellorUserId) === String(counsellorUserId)) {
+      return { success: true, message: 'Already in your school' };
+    }
+    await StudentProfile.findByIdAndUpdate(profile._id, {
+      counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    });
+  } else {
+    await StudentProfile.create({
+      userId: studentUserId,
+      counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    });
+  }
+  return { success: true, message: 'Student invited to your school' };
+}
+
+/** List documents of a student (counsellor must own the student). */
+export async function getStudentDocuments(counsellorUserId: string, studentUserId: string) {
+  const profile = await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const list = await StudentDocument.find({ studentId: profile._id }).sort({ createdAt: -1 }).lean();
+  return list.map((d: Record<string, unknown>) => ({
+    ...d,
+    id: String(d._id),
+  }));
+}
+
+/** Add document for a student (counsellor adds with status approved). */
+export async function addDocumentForStudent(
+  counsellorUserId: string,
+  studentUserId: string,
+  data: { type: string; fileUrl: string; name?: string; certificateType?: string; score?: string }
+) {
+  const profile = await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const allowed = ['transcript', 'diploma', 'language_certificate', 'course_certificate', 'passport', 'id_card', 'other'];
+  if (!allowed.includes(data.type)) throw new AppError(400, 'Invalid document type', ErrorCodes.VALIDATION);
+  const doc = await StudentDocument.create({
+    studentId: profile._id,
+    type: data.type,
+    fileUrl: data.fileUrl,
+    name: data.name ? String(data.name).trim() : undefined,
+    certificateType: data.certificateType ? String(data.certificateType).trim() : undefined,
+    score: data.score != null ? String(data.score) : undefined,
+    status: 'approved',
+  });
+  const d = doc.toObject() as Record<string, unknown>;
+  return { ...d, id: String(d._id) };
+}
+
+/** Delete a document of a student (counsellor must own the student). */
+export async function deleteDocumentForStudent(counsellorUserId: string, studentUserId: string, documentId: string) {
+  const profile = await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const doc = await StudentDocument.findOne({ _id: documentId, studentId: profile._id });
+  if (!doc) throw new AppError(404, 'Document not found', ErrorCodes.NOT_FOUND);
+  await StudentDocument.findByIdAndDelete(documentId);
+  return { success: true };
 }

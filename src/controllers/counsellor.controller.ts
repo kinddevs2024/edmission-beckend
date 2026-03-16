@@ -193,3 +193,85 @@ export async function addInterestForStudent(req: Request, res: Response, next: N
     next(e);
   }
 }
+
+/** Search existing students (not in my school) for invite. */
+export async function searchStudentsForInvite(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const query = (req.query && typeof req.query === 'object') ? req.query : {};
+    const data = await counsellorService.searchStudentsForInvite(req.user.id, {
+      search: typeof query.search === 'string' ? query.search : '',
+      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Invite existing student to my school. */
+export async function inviteStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const userId = (req.body && typeof req.body === 'object' && req.body.userId) ? req.body.userId : '';
+    const data = await counsellorService.inviteStudentToSchool(req.user.id, userId);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** List documents of a student. */
+export async function getStudentDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.getStudentDocuments(req.user.id, req.params.studentUserId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Add document for a student (approved by default). */
+export async function addStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const data = await counsellorService.addDocumentForStudent(req.user.id, req.params.studentUserId, {
+      type: body.type,
+      fileUrl: body.fileUrl,
+      name: body.name,
+      certificateType: body.certificateType,
+      score: body.score,
+    });
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Delete a document of a student. */
+export async function deleteStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    await counsellorService.deleteDocumentForStudent(req.user.id, req.params.studentUserId, req.params.documentId);
+    res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+}
