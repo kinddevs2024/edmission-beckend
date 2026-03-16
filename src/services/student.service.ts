@@ -664,8 +664,11 @@ export async function getCompare(userId: string, ids: unknown[]) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
   const rawIds = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
-  if (!rawIds.length || rawIds.length > 5) {
+  if (rawIds.length > 5) {
     throw new AppError(400, 'Provide 1-5 university ids', ErrorCodes.VALIDATION);
+  }
+  if (rawIds.length === 0) {
+    return [];
   }
 
   const catalogIds = rawIds.filter((id) => id.startsWith('catalog-')).map((id) => toObjectIdString(id.replace(/^catalog-/, ''))).filter(Boolean);

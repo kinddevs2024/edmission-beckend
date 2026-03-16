@@ -25,6 +25,7 @@ router.use(authMiddleware);
 router.use(requireRole('admin', 'school_counsellor'));
 
 router.get('/dashboard', adminController.getDashboard);
+router.get('/analytics/university-interests', adminController.getUniversityInterestAnalytics);
 router.get('/users', validate(adminValidator.usersQuerySchema, 'query'), adminController.getUsers);
 router.post('/users', requireAdminOnly, validate(adminValidator.createUserSchema.shape.body, 'body'), adminController.createUser);
 router.get('/users/:id', validateObjectId('id'), adminController.getUser);

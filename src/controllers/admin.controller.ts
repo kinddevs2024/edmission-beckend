@@ -12,6 +12,16 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function getUniversityInterestAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const limit = req.query.limit ? Math.min(50, Math.max(1, Number(req.query.limit))) : 20;
+    const data = await adminService.getUniversityInterestAnalytics(limit);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, role } = req.query;

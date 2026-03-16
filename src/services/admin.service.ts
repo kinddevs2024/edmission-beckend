@@ -58,6 +58,57 @@ export async function getDashboard() {
   return { users, universities, pendingOffers: offers, pendingVerification, subscriptionsByPlan: byPlan, mrr: Math.round(mrr * 100) / 100 };
 }
 
+/** Top universities by student interest count (for admin analytics). */
+export async function getUniversityInterestAnalytics(limit: number = 20) {
+  const cap = Math.min(50, Math.max(1, limit));
+  const [profileAgg, catalogAgg] = await Promise.all([
+    Interest.aggregate([
+      { $group: { _id: '$universityId', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: cap },
+      {
+        $lookup: {
+          from: 'universityprofiles',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'uni',
+        },
+      },
+      { $unwind: { path: '$uni', preserveNullAndEmptyArrays: true } },
+      { $project: { universityId: { $toString: '$_id' }, count: 1, name: '$uni.universityName' } },
+    ]).exec(),
+    CatalogInterest.aggregate([
+      { $group: { _id: '$catalogUniversityId', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: cap },
+      {
+        $lookup: {
+          from: 'universitycatalogs',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'uni',
+        },
+      },
+      { $unwind: { path: '$uni', preserveNullAndEmptyArrays: true } },
+      { $project: { universityId: { $toString: '$_id' }, count: 1, name: '$uni.universityName' } },
+    ]).exec(),
+  ]);
+  const profileItems = profileAgg.map((r: { universityId: string; count: number; name?: string }) => ({
+    universityId: r.universityId,
+    universityName: r.name ?? '—',
+    interestCount: r.count,
+    source: 'profile' as const,
+  }));
+  const catalogItems = catalogAgg.map((r: { universityId: string; count: number; name?: string }) => ({
+    universityId: r.universityId,
+    universityName: r.name ?? '—',
+    interestCount: r.count,
+    source: 'catalog' as const,
+  }));
+  const merged = [...profileItems, ...catalogItems].sort((a, b) => b.interestCount - a.interestCount).slice(0, cap);
+  return merged;
+}
+
 export async function getUsers(query: { page?: number; limit?: number; role?: string }) {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 20));
