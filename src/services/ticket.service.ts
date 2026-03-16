@@ -6,8 +6,8 @@ import type { Role } from '../types/role';
 const STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
 
 export async function createTicket(userId: string, role: Role, data: { subject: string; message: string }) {
-  if (role !== 'student' && role !== 'university') {
-    throw new AppError(403, 'Only students and universities can create support tickets', ErrorCodes.FORBIDDEN);
+  if (role !== 'student' && role !== 'university' && role !== 'school_counsellor') {
+    throw new AppError(403, 'Only students, universities and school counsellors can create support tickets', ErrorCodes.FORBIDDEN);
   }
   const ticket = await Ticket.create({
     userId,

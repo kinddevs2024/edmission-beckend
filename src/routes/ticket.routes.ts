@@ -9,7 +9,7 @@ import * as ticketValidator from '../validators/ticket.validator';
 const router = Router();
 
 router.use(authMiddleware);
-router.use(requireRole('student', 'university'));
+router.use(requireRole('student', 'university', 'school_counsellor'));
 
 router.post('/', validate(ticketValidator.createTicketSchema.shape.body, 'body'), ticketController.create);
 router.get('/', ticketController.getMyTickets);

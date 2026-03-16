@@ -5,7 +5,7 @@ export async function create(req: Request, res: Response, next: NextFunction): P
   try {
     if (!req.user) return next();
     const userId = req.user.id;
-    const role = req.user!.role as 'student' | 'university';
+    const role = req.user!.role as 'student' | 'university' | 'school_counsellor';
     const { subject, message } = req.body;
     if (!subject?.trim() || !message?.trim()) {
       res.status(400).json({ message: 'Subject and message are required' });
@@ -50,7 +50,7 @@ export async function addReply(req: Request, res: Response, next: NextFunction):
       res.status(400).json({ message: 'Message is required' });
       return;
     }
-    const data = await ticketService.addReply(req.params.id, req.user.id, req.user.role as 'student' | 'university', message, false);
+    const data = await ticketService.addReply(req.params.id, req.user.id, req.user.role as 'student' | 'university' | 'school_counsellor', message, false);
     res.json(data);
   } catch (e) {
     next(e);

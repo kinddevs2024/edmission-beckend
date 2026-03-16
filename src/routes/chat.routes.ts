@@ -9,7 +9,7 @@ import * as chatValidator from '../validators/chat.validator';
 const router = Router();
 
 router.use(authMiddleware);
-router.use(requireRole('student', 'university'));
+router.use(requireRole('student', 'university', 'school_counsellor'));
 
 router.get('/', chatController.getChats);
 router.post('/', validate(chatValidator.createChatSchema.shape.body, 'body'), chatController.createChat);
