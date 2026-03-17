@@ -4,6 +4,7 @@ import {
   Chat,
   DocumentTemplate,
   DocumentTemplateAsset,
+  Interest,
   Message,
   StudentDocumentEvent,
   StudentIssuedDocument,
@@ -70,6 +71,7 @@ type TemplateUpdateInput = Partial<TemplateInput>;
 type RenderPreviewInput = {
   studentId?: string;
   acceptDeadline?: string;
+  universityMessage?: string;
   documentData?: Record<string, unknown>;
 };
 
@@ -258,6 +260,7 @@ export async function renderTemplatePreview(userId: string, templateId: string, 
         university,
         studentProfileId: input.studentId,
         acceptDeadline: input.acceptDeadline,
+        universityMessage: input.universityMessage,
         documentData: input.documentData,
       })
     : createSamplePayload(template.type as DocumentType);
@@ -322,8 +325,8 @@ export async function sendStudentDocument(userId: string, input: SendDocumentInp
   const student = await StudentProfile.findById(input.studentId).lean();
   if (!student) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
 
-  const acceptDeadline = input.acceptDeadline ? new Date(input.acceptDeadline) : undefined;
-  if (acceptDeadline && Number.isNaN(acceptDeadline.getTime())) {
+  const acceptDeadline = parseDocumentDeadline(input.acceptDeadline);
+  if (acceptDeadline === null) {
     throw new AppError(400, 'Invalid accept deadline', ErrorCodes.VALIDATION);
   }
   if (acceptDeadline && acceptDeadline.getTime() <= Date.now()) {
@@ -341,6 +344,7 @@ export async function sendStudentDocument(userId: string, input: SendDocumentInp
     university,
     studentProfileId: input.studentId,
     acceptDeadline: input.acceptDeadline,
+    universityMessage: input.universityMessage,
     documentData: input.documentData,
   });
   const frozenScene = parseScene(
@@ -417,6 +421,15 @@ export async function sendStudentDocument(userId: string, input: SendDocumentInp
       notificationType: 'document',
     });
   }
+
+  await Interest.findOneAndUpdate(
+    {
+      studentId: student._id,
+      universityId: university._id,
+      status: { $in: ['interested', 'chat_opened', 'under_review'] },
+    },
+    { $set: { status: 'offer_sent' } }
+  );
 
   return mapIssuedDocument(created.toObject(), 'university');
 }
@@ -939,6 +952,7 @@ async function buildRenderedPayload(params: {
   university: { _id: unknown; universityName?: string | null; city?: string | null; country?: string | null; logoUrl?: string | null };
   studentProfileId: string;
   acceptDeadline?: string;
+  universityMessage?: string;
   documentData?: Record<string, unknown>;
 }) {
   const studentProfile = await StudentProfile.findById(params.studentProfileId).lean();
@@ -951,9 +965,38 @@ async function buildRenderedPayload(params: {
   const documentData = params.documentData ?? {};
   const offer = readRecord(documentData.offer);
   const scholarship = readRecord(documentData.scholarship);
+  const issuedAt = new Date();
+  const issuedOn = issuedAt.toISOString().slice(0, 10);
+  const issuedOnLabel = formatDocumentDate(issuedAt);
+  const deadlineDate = parseDocumentDeadline(params.acceptDeadline);
+  const acceptBy = normalizeDateValue(params.acceptDeadline, deadlineDate);
+  const acceptByLabel = deadlineDate ? formatDocumentDate(deadlineDate) : '';
+  const startDate = String(offer.startDate ?? '');
+  const startDateLabel = formatDocumentDate(startDate);
+  const tuitionDisplay = formatMoneyDisplay(String(offer.tuitionFee ?? ''), String(offer.currency ?? ''));
+  const scholarshipSummary = buildScholarshipSummary(scholarship);
+  const universityMessage = params.universityMessage?.trim() ?? '';
+  const summary = [
+    `Issued on ${issuedOnLabel}.`,
+    offer.programName ? `Program: ${String(offer.programName).trim()}.` : '',
+    offer.degreeLevel ? `Degree level: ${String(offer.degreeLevel).trim()}.` : '',
+    startDateLabel ? `Start date: ${startDateLabel}.` : '',
+    tuitionDisplay ? `Tuition fee: ${tuitionDisplay}.` : '',
+    scholarshipSummary ? `Scholarship: ${scholarshipSummary}.` : '',
+    acceptByLabel ? `Accept by: ${acceptByLabel}.` : 'No acceptance deadline specified.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const smallPrint = [
+    'This summary is included to make the main terms, deadlines, fees, conditions, and scholarship details explicit.',
+    acceptByLabel ? `Please review the full document and respond by ${acceptByLabel}.` : 'Please review the full document carefully before making a decision.',
+    String(offer.conditions ?? '').trim() ? 'Any stated offer conditions remain part of this document.' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return {
-    today: new Date().toISOString().slice(0, 10),
+    today: issuedOn,
     student: {
       firstName: studentProfile.firstName ?? '',
       lastName: studentProfile.lastName ?? '',
@@ -971,28 +1014,94 @@ async function buildRenderedPayload(params: {
       programName: String(offer.programName ?? ''),
       degreeLevel: String(offer.degreeLevel ?? ''),
       intake: String(offer.intake ?? ''),
-      startDate: String(offer.startDate ?? ''),
+      startDate,
+      startDateLabel,
       tuitionFee: String(offer.tuitionFee ?? ''),
       currency: String(offer.currency ?? ''),
+      tuitionDisplay,
       conditions: String(offer.conditions ?? ''),
     },
     scholarship: {
       amount: String(scholarship.amount ?? ''),
       percent: String(scholarship.percent ?? ''),
       type: String(scholarship.type ?? ''),
+      summary: scholarshipSummary,
     },
     deadline: {
-      acceptBy: params.acceptDeadline ?? '',
+      acceptBy,
+      acceptByLabel,
     },
     document: {
       id: params.documentId,
       type: params.type,
+      issuedOn,
+      issuedOnLabel,
+      message: universityMessage,
+      summary,
+      smallPrint,
     },
   };
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function parseDocumentDeadline(value?: string): Date | undefined | null {
+  if (!value || !value.trim()) return undefined;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [yearRaw, monthRaw, dayRaw] = trimmed.split('-');
+    const parsed = new Date(Number(yearRaw), Number(monthRaw) - 1, Number(dayRaw), 23, 59, 59, 999);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeDateValue(rawValue: string | undefined, parsed: Date | undefined | null) {
+  if (!rawValue || !rawValue.trim()) return '';
+  const trimmed = rawValue.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  if (!parsed || Number.isNaN(parsed.getTime())) return '';
+  return parsed.toISOString().slice(0, 10);
+}
+
+function formatDocumentDate(value: string | Date) {
+  const parsed = value instanceof Date ? value : parseDocumentDeadline(value);
+  if (!parsed || Number.isNaN(parsed.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(parsed);
+}
+
+function formatMoneyDisplay(amountValue: string, currencyValue: string) {
+  const amount = amountValue.trim();
+  const currency = currencyValue.trim();
+  if (!amount) return currency;
+
+  const normalized = amount.replace(/,/g, '');
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+    const formattedAmount = new Intl.NumberFormat('en-US', {
+      maximumFractionDigits: normalized.includes('.') ? 2 : 0,
+    }).format(Number(normalized));
+    return [formattedAmount, currency].filter(Boolean).join(' ');
+  }
+
+  return [amount, currency].filter(Boolean).join(' ');
+}
+
+function buildScholarshipSummary(scholarship: Record<string, unknown>) {
+  const amount = String(scholarship.amount ?? '').trim();
+  const percent = String(scholarship.percent ?? '').trim();
+  const type = String(scholarship.type ?? '').trim();
+
+  return [amount, percent ? `${percent}%` : '', type]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
 }
 
 async function replaceTemplateAssets(universityId: unknown, templateId: string, assets: TemplateAssetInput[]) {

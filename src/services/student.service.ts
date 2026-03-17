@@ -211,9 +211,58 @@ export async function getDashboard(userId: string) {
   };
 }
 
+type StudentUniversitiesQuery = {
+  page?: number;
+  limit?: number;
+  country?: string;
+  search?: string;
+  sort?: string;
+  hasScholarship?: boolean;
+  facultyCodes?: string[];
+  degreeLevels?: string[];
+  programLanguages?: string[];
+  targetStudentCountries?: string[];
+  minTuition?: number;
+  maxTuition?: number;
+  minEstablishedYear?: number;
+  maxEstablishedYear?: number;
+  minStudentCount?: number;
+  maxStudentCount?: number;
+  requirementsQuery?: string;
+  programQuery?: string;
+  useProfileFilters?: boolean;
+};
+
+type SearchableUniversityItem = {
+  id: string;
+  _source: 'catalog' | 'profile';
+  name: string;
+  universityName: string;
+  country?: string;
+  city?: string;
+  description?: string;
+  logo?: string;
+  logoUrl?: string;
+  hasScholarship: boolean;
+  matchScore: number | null;
+  breakdown?: unknown;
+  minLanguageLevel?: string;
+  tuitionPrice?: number;
+  facultyCodes: string[];
+  targetStudentCountries: string[];
+  programs: Array<Record<string, unknown>>;
+  scholarships: Array<Record<string, unknown>>;
+  faculties: Array<Record<string, unknown>>;
+  tagline?: string;
+  establishedYear?: number;
+  studentCount?: number;
+  rating?: number;
+  createdAt?: Date;
+};
+
 export async function getUniversities(
   userId: string,
-  query: { page?: number; limit?: number; country?: string; city?: string; useProfileFilters?: boolean }
+  query: StudentUniversitiesQuery
 ) {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
@@ -223,18 +272,20 @@ export async function getUniversities(
   const skip = (page - 1) * limit;
   const useProfileFilters = query.useProfileFilters !== false;
 
-  const baseWhere: { country?: string | { $in: string[] }; city?: string; facultyCodes?: unknown } = {};
-  if (query.country) baseWhere.country = query.country;
-  if (query.city && String(query.city).trim()) baseWhere.city = String(query.city).trim();
-  if (useProfileFilters) {
-    const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
-      ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
-      : [];
-    if (preferredCountries.length > 0) baseWhere.country = { $in: preferredCountries };
-    const interestedFaculties = Array.isArray((profile as { interestedFaculties?: string[] }).interestedFaculties)
-      ? ((profile as { interestedFaculties?: string[] }).interestedFaculties ?? []).filter(Boolean)
-      : [];
-    if (interestedFaculties.length > 0) baseWhere.facultyCodes = { $in: interestedFaculties };
+  const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
+    ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
+    : [];
+  const interestedFaculties = Array.isArray((profile as { interestedFaculties?: string[] }).interestedFaculties)
+    ? ((profile as { interestedFaculties?: string[] }).interestedFaculties ?? []).filter(Boolean)
+    : [];
+  const explicitFacultyCodes = normalizeStringArray(query.facultyCodes);
+  const explicitCountry = typeof query.country === 'string' && query.country.trim() ? query.country.trim() : '';
+
+  const baseWhere: { country?: string | { $in: string[] } } = {};
+  if (explicitCountry) {
+    baseWhere.country = explicitCountry;
+  } else if (useProfileFilters && preferredCountries.length > 0) {
+    baseWhere.country = { $in: preferredCountries };
   }
 
   const [catalogs, profiles] = await Promise.all([
@@ -242,14 +293,13 @@ export async function getUniversities(
     UniversityProfile.find({ ...baseWhere, verified: true }).sort({ universityName: 1 }).lean(),
   ]);
 
-  const catalogItems = catalogs.map((c) => {
+  const catalogItems: SearchableUniversityItem[] = catalogs.map((c) => {
     const id = `catalog-${String((c as { _id: unknown })._id)}`;
     const raw = c as unknown as Record<string, unknown>;
-    const progs = Array.isArray(raw.programs) ? raw.programs : [];
-    const schs = Array.isArray(raw.scholarships) ? raw.scholarships : [];
+    const progs = Array.isArray(raw.programs) ? raw.programs as Array<Record<string, unknown>> : [];
+    const schs = Array.isArray(raw.scholarships) ? raw.scholarships as Array<Record<string, unknown>> : [];
     const logoUrl = (c as { logoUrl?: string }).logoUrl;
     return {
-      _id: (c as { _id: unknown })._id,
       id,
       _source: 'catalog' as const,
       name: (c as { universityName?: string }).universityName ?? '',
@@ -260,57 +310,134 @@ export async function getUniversities(
       logo: logoUrl,
       logoUrl,
       hasScholarship: schs.length > 0,
-      programs: progs.slice(0, 3).map((p, i) => ({ ...p, id: `p-${i}` })),
+      programs: progs,
+      scholarships: schs,
+      faculties: [],
+      facultyCodes: Array.isArray((c as { facultyCodes?: string[] }).facultyCodes) ? ((c as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean) : [],
+      targetStudentCountries: Array.isArray((c as { targetStudentCountries?: string[] }).targetStudentCountries)
+        ? ((c as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
+        : [],
       matchScore: null,
       breakdown: null,
+      minLanguageLevel: (c as { minLanguageLevel?: string }).minLanguageLevel,
+      tuitionPrice: (c as { tuitionPrice?: number }).tuitionPrice,
+      tagline: (c as { tagline?: string }).tagline,
+      establishedYear: (c as { establishedYear?: number }).establishedYear,
+      studentCount: (c as { studentCount?: number }).studentCount,
+      rating: (c as { rating?: number }).rating,
+      createdAt: (c as { createdAt?: Date }).createdAt,
     };
   });
 
   const profileIds = profiles.map((u) => (u as { _id: unknown })._id);
-  const recs = await Recommendation.find({ studentId: profile._id, universityId: { $in: profileIds } }).lean();
+  const [recs, scholarships, programs, faculties] = await Promise.all([
+    Recommendation.find({ studentId: profile._id, universityId: { $in: profileIds } }).lean(),
+    profileIds.length > 0 ? Scholarship.find({ universityId: { $in: profileIds } }).sort({ createdAt: 1 }).lean() : [],
+    profileIds.length > 0 ? Program.find({ universityId: { $in: profileIds } }).sort({ createdAt: 1 }).lean() : [],
+    profileIds.length > 0 ? Faculty.find({ universityId: { $in: profileIds } }).sort({ order: 1, name: 1 }).lean() : [],
+  ]);
   const recMap: Record<string, { matchScore: number; breakdown?: unknown }> = {};
   for (const r of recs) {
     const uid = String((r as { universityId: unknown }).universityId);
     recMap[uid] = { matchScore: (r as { matchScore: number }).matchScore, breakdown: (r as { breakdown?: unknown }).breakdown };
   }
 
-  const scholarshipCounts = await Scholarship.aggregate([
-    { $match: { universityId: { $in: profileIds } } },
-    { $group: { _id: '$universityId', count: { $sum: 1 } } },
-  ]);
-  const schCountMap: Record<string, number> = {};
-  for (const s of scholarshipCounts) schCountMap[String(s._id)] = s.count;
+  const scholarshipMap: Record<string, Array<Record<string, unknown>>> = {};
+  for (const scholarship of scholarships) {
+    const universityId = String((scholarship as { universityId: unknown }).universityId);
+    if (!scholarshipMap[universityId]) scholarshipMap[universityId] = [];
+    scholarshipMap[universityId].push(scholarship as unknown as Record<string, unknown>);
+  }
 
-  const programsByUni = await Program.aggregate([
-    { $match: { universityId: { $in: profileIds } } },
-    { $sort: { createdAt: 1 } },
-    { $group: { _id: '$universityId', programs: { $push: '$$ROOT' } } },
-  ]);
-  const programsMap: Record<string, unknown[]> = {};
-  for (const p of programsByUni) programsMap[String(p._id)] = (p.programs as unknown[]).slice(0, 3);
+  const programsMap: Record<string, Array<Record<string, unknown>>> = {};
+  for (const program of programs) {
+    const universityId = String((program as { universityId: unknown }).universityId);
+    if (!programsMap[universityId]) programsMap[universityId] = [];
+    programsMap[universityId].push(program as unknown as Record<string, unknown>);
+  }
 
-  const profileItems = profiles.map((u) => {
+  const facultiesMap: Record<string, Array<Record<string, unknown>>> = {};
+  for (const faculty of faculties) {
+    const universityId = String((faculty as { universityId: unknown }).universityId);
+    if (!facultiesMap[universityId]) facultiesMap[universityId] = [];
+    facultiesMap[universityId].push(faculty as unknown as Record<string, unknown>);
+  }
+
+  const profileItems: SearchableUniversityItem[] = profiles.map((u) => {
     const id = String((u as { _id: unknown })._id);
     const logoUrl = (u as { logoUrl?: string }).logoUrl;
+    const universityScholarships = scholarshipMap[id] ?? [];
     return {
-      ...u,
       id,
       _source: 'profile' as const,
       name: (u as { universityName?: string }).universityName ?? '',
       universityName: (u as { universityName?: string }).universityName ?? '',
+      country: (u as { country?: string }).country,
+      city: (u as { city?: string }).city,
+      description: (u as { description?: string }).description,
       logo: logoUrl,
-      hasScholarship: (schCountMap[id] ?? 0) > 0,
+      logoUrl,
+      hasScholarship: universityScholarships.length > 0,
       programs: programsMap[id] ?? [],
+      scholarships: universityScholarships,
+      faculties: facultiesMap[id] ?? [],
+      facultyCodes: Array.isArray((u as { facultyCodes?: string[] }).facultyCodes) ? ((u as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean) : [],
+      targetStudentCountries: Array.isArray((u as { targetStudentCountries?: string[] }).targetStudentCountries)
+        ? ((u as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
+        : [],
+      minLanguageLevel: (u as { minLanguageLevel?: string }).minLanguageLevel,
+      tuitionPrice: (u as { tuitionPrice?: number }).tuitionPrice,
+      tagline: (u as { tagline?: string }).tagline,
+      establishedYear: (u as { establishedYear?: number }).establishedYear,
+      studentCount: (u as { studentCount?: number }).studentCount,
+      rating: (u as { rating?: number }).rating,
+      createdAt: (u as { createdAt?: Date }).createdAt,
       matchScore: recMap[id]?.matchScore ?? null,
       breakdown: recMap[id]?.breakdown ?? null,
     };
   });
 
-  const merged = [...catalogItems, ...profileItems].sort((a, b) =>
-    (a.name ?? '').localeCompare(b.name ?? '')
-  );
+  const merged = [...catalogItems, ...profileItems]
+    .filter((item) => {
+      if (!useProfileFilters) return true;
+      if (!explicitCountry && preferredCountries.length > 0 && item.country && !preferredCountries.includes(item.country)) {
+        return false;
+      }
+      if (explicitFacultyCodes.length > 0 || interestedFaculties.length === 0) {
+        return true;
+      }
+      return item.facultyCodes.some((code) => interestedFaculties.includes(code));
+    })
+    .filter((item) => matchesUniversityFilters(item, query))
+    .sort((left, right) => compareUniversities(left, right, query.sort));
+
   const total = merged.length;
-  const dataWithCount = merged.slice(skip, skip + limit);
+  const dataWithCount = merged
+    .slice(skip, skip + limit)
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      universityName: item.universityName,
+      country: item.country,
+      city: item.city,
+      description: item.description,
+      hasScholarship: item.hasScholarship,
+      logo: item.logo,
+      logoUrl: item.logoUrl,
+      matchScore: item.matchScore,
+      breakdown: item.breakdown,
+      matchBreakdown: item.breakdown,
+      minLanguageLevel: item.minLanguageLevel,
+      tuitionPrice: resolveTuitionPrice(item),
+      facultyCodes: item.facultyCodes,
+      targetStudentCountries: item.targetStudentCountries,
+      foundedYear: item.establishedYear,
+      studentCount: item.studentCount,
+      rating: item.rating,
+      programs: item.programs.slice(0, 3).map((program, index) => ({ ...program, id: program.id ?? `p-${index}` })),
+      scholarships: item.scholarships.slice(0, 3),
+      _source: item._source,
+    }));
 
   return {
     data: dataWithCount,
@@ -319,6 +446,154 @@ export async function getUniversities(
     limit,
     totalPages: Math.ceil(total / limit),
   };
+}
+
+function normalizeStringArray(values?: string[]) {
+  return Array.isArray(values)
+    ? values.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeString(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function matchesUniversityFilters(item: SearchableUniversityItem, query: StudentUniversitiesQuery) {
+  const search = normalizeString(query.search);
+  if (search) {
+    const searchableFields = [
+      item.name,
+      item.country,
+      item.description,
+      item.tagline,
+      item.minLanguageLevel,
+      ...item.facultyCodes,
+      ...item.targetStudentCountries,
+      ...item.faculties.flatMap((faculty) => [faculty.name, faculty.description]),
+      ...item.programs.flatMap((program) => [program.name, program.field, program.degreeLevel, program.language, program.entryRequirements]),
+      ...item.scholarships.flatMap((scholarship) => [scholarship.name, scholarship.eligibility]),
+    ];
+    if (!searchableFields.some((value) => normalizeString(value).includes(search))) {
+      return false;
+    }
+  }
+
+  const country = normalizeString(query.country);
+  if (country && normalizeString(item.country) !== country) return false;
+
+  if (query.hasScholarship && !item.hasScholarship) return false;
+
+  const facultyCodes = normalizeStringArray(query.facultyCodes).map((value) => value.toLowerCase());
+  if (facultyCodes.length > 0 && !item.facultyCodes.some((code) => facultyCodes.includes(String(code).toLowerCase()))) {
+    return false;
+  }
+
+  const degreeLevels = normalizeStringArray(query.degreeLevels).map((value) => value.toLowerCase());
+  if (degreeLevels.length > 0) {
+    const programDegreeLevels = item.programs.map((program) => normalizeString(program.degreeLevel));
+    if (!programDegreeLevels.some((degreeLevel) => degreeLevels.includes(degreeLevel))) {
+      return false;
+    }
+  }
+
+  const programLanguages = normalizeStringArray(query.programLanguages).map((value) => value.toLowerCase());
+  if (programLanguages.length > 0) {
+    const programLanguageValues = item.programs.map((program) => normalizeString(program.language));
+    if (!programLanguageValues.some((language) => programLanguages.includes(language))) {
+      return false;
+    }
+  }
+
+  const targetStudentCountries = normalizeStringArray(query.targetStudentCountries).map((value) => value.toLowerCase());
+  if (targetStudentCountries.length > 0) {
+    const targetCountryValues = item.targetStudentCountries.map((value) => String(value).trim().toLowerCase());
+    if (!targetCountryValues.some((value) => targetStudentCountries.includes(value))) {
+      return false;
+    }
+  }
+
+  const programQuery = normalizeString(query.programQuery);
+  if (programQuery) {
+    const programFields = item.programs.flatMap((program) => [program.name, program.field, program.degreeLevel, program.language, program.entryRequirements]);
+    if (!programFields.some((value) => normalizeString(value).includes(programQuery))) {
+      return false;
+    }
+  }
+
+  const requirementsQuery = normalizeString(query.requirementsQuery);
+  if (requirementsQuery) {
+    const requirementFields = [
+      item.minLanguageLevel,
+      ...item.programs.map((program) => program.entryRequirements),
+      ...item.scholarships.map((scholarship) => scholarship.eligibility),
+    ];
+    if (!requirementFields.some((value) => normalizeString(value).includes(requirementsQuery))) {
+      return false;
+    }
+  }
+
+  const tuitionPrice = resolveTuitionPrice(item);
+  if (query.minTuition != null && (tuitionPrice == null || tuitionPrice < query.minTuition)) return false;
+  if (query.maxTuition != null && (tuitionPrice == null || tuitionPrice > query.maxTuition)) return false;
+  if (query.minEstablishedYear != null && (item.establishedYear == null || item.establishedYear < query.minEstablishedYear)) return false;
+  if (query.maxEstablishedYear != null && (item.establishedYear == null || item.establishedYear > query.maxEstablishedYear)) return false;
+  if (query.minStudentCount != null && (item.studentCount == null || item.studentCount < query.minStudentCount)) return false;
+  if (query.maxStudentCount != null && (item.studentCount == null || item.studentCount > query.maxStudentCount)) return false;
+
+  return true;
+}
+
+function resolveTuitionPrice(item: SearchableUniversityItem) {
+  if (typeof item.tuitionPrice === 'number' && Number.isFinite(item.tuitionPrice)) return item.tuitionPrice;
+  const programTuition = item.programs
+    .map((program) => {
+      const value = program.tuitionFee ?? program.tuition;
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    })
+    .filter((value): value is number => value != null);
+  if (programTuition.length === 0) return null;
+  return Math.min(...programTuition);
+}
+
+function compareNullableNumber(left: number | null | undefined, right: number | null | undefined, direction: 'asc' | 'desc') {
+  const leftValue = left == null ? null : left;
+  const rightValue = right == null ? null : right;
+  if (leftValue == null && rightValue == null) return 0;
+  if (leftValue == null) return 1;
+  if (rightValue == null) return -1;
+  return direction === 'asc' ? leftValue - rightValue : rightValue - leftValue;
+}
+
+function compareUniversities(left: SearchableUniversityItem, right: SearchableUniversityItem, sort?: string) {
+  if (sort === 'name') {
+    return left.name.localeCompare(right.name);
+  }
+
+  if (sort === 'rating') {
+    const ratingCompare = compareNullableNumber(left.rating, right.rating, 'desc');
+    return ratingCompare !== 0 ? ratingCompare : left.name.localeCompare(right.name);
+  }
+
+  if (sort === 'tuition_asc') {
+    const tuitionCompare = compareNullableNumber(resolveTuitionPrice(left), resolveTuitionPrice(right), 'asc');
+    return tuitionCompare !== 0 ? tuitionCompare : left.name.localeCompare(right.name);
+  }
+
+  if (sort === 'tuition_desc') {
+    const tuitionCompare = compareNullableNumber(resolveTuitionPrice(left), resolveTuitionPrice(right), 'desc');
+    return tuitionCompare !== 0 ? tuitionCompare : left.name.localeCompare(right.name);
+  }
+
+  if (sort === 'newest') {
+    const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+    const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return left.name.localeCompare(right.name);
+  }
+
+  const matchCompare = compareNullableNumber(left.matchScore, right.matchScore, 'desc');
+  if (matchCompare !== 0) return matchCompare;
+  return left.name.localeCompare(right.name);
 }
 
 export async function getUniversityById(userId: string, universityId: unknown) {

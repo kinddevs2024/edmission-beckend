@@ -36,19 +36,62 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
 export async function getUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const { page, limit, country, city, useProfileFilters } = req.query;
+    const {
+      page,
+      limit,
+      country,
+      search,
+      sort,
+      hasScholarship,
+      facultyCodes,
+      degreeLevels,
+      programLanguages,
+      targetStudentCountries,
+      minTuition,
+      maxTuition,
+      minEstablishedYear,
+      maxEstablishedYear,
+      minStudentCount,
+      maxStudentCount,
+      requirementsQuery,
+      programQuery,
+      useProfileFilters,
+    } = req.query;
     const useProfile = useProfileFilters === undefined || useProfileFilters === '1' || useProfileFilters === 'true';
     const data = await studentService.getUniversities(req.user.id, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
-      country: country as string,
-      city: city as string,
+      country: typeof country === 'string' ? country : undefined,
+      search: typeof search === 'string' ? search : undefined,
+      sort: typeof sort === 'string' ? sort : undefined,
+      hasScholarship: hasScholarship === '1' || hasScholarship === 'true' ? true : undefined,
+      facultyCodes: splitCsvParam(facultyCodes),
+      degreeLevels: splitCsvParam(degreeLevels),
+      programLanguages: splitCsvParam(programLanguages),
+      targetStudentCountries: splitCsvParam(targetStudentCountries),
+      minTuition: typeof minTuition === 'string' && minTuition.trim() ? Number(minTuition) : undefined,
+      maxTuition: typeof maxTuition === 'string' && maxTuition.trim() ? Number(maxTuition) : undefined,
+      minEstablishedYear: typeof minEstablishedYear === 'string' && minEstablishedYear.trim() ? Number(minEstablishedYear) : undefined,
+      maxEstablishedYear: typeof maxEstablishedYear === 'string' && maxEstablishedYear.trim() ? Number(maxEstablishedYear) : undefined,
+      minStudentCount: typeof minStudentCount === 'string' && minStudentCount.trim() ? Number(minStudentCount) : undefined,
+      maxStudentCount: typeof maxStudentCount === 'string' && maxStudentCount.trim() ? Number(maxStudentCount) : undefined,
+      requirementsQuery: typeof requirementsQuery === 'string' ? requirementsQuery : undefined,
+      programQuery: typeof programQuery === 'string' ? programQuery : undefined,
       useProfileFilters: useProfile,
     });
     res.json(data);
   } catch (e) {
     next(e);
   }
+}
+
+function splitCsvParam(value: unknown): string[] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const list = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return list.length > 0 ? list : undefined;
 }
 
 export async function getUniversityById(req: Request, res: Response, next: NextFunction): Promise<void> {

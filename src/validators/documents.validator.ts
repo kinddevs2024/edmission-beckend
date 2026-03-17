@@ -59,6 +59,7 @@ export const renderTemplatePreviewSchema = z.object({
   body: z.object({
     studentId: objectIdZod.optional(),
     acceptDeadline: z.string().optional(),
+    universityMessage: z.string().max(2000).optional(),
     documentData: z.record(z.string(), z.unknown()).optional(),
   }),
 });

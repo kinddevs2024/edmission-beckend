@@ -13,6 +13,8 @@ import {
   StudentDocument,
   StudentProfileView,
   OfferCertificateTemplate,
+  Chat,
+  Message,
 } from '../models';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
@@ -20,6 +22,7 @@ import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
 import { safeRegExp } from '../utils/validators';
+import { getIO } from '../socket';
 
 export async function getProfile(userId: string) {
   const profile = await UniversityProfile.findOne({ userId }).lean();
@@ -176,16 +179,33 @@ export async function getStudents(
   query: {
     page?: number;
     limit?: number;
+    search?: string;
     skills?: string[];
     interests?: string[];
     hobbies?: string[];
     country?: string;
     city?: string;
+    schoolName?: string;
+    educationStatus?: string;
+    targetDegreeLevel?: string;
+    schoolCompleted?: boolean;
     languages?: string[];
+    languageLevels?: string[];
     certType?: string;
     certMinScore?: string;
+    documentTypes?: string[];
+    documentQuery?: string;
+    preferredCountries?: string[];
+    interestedFaculties?: string[];
     minBudget?: number;
     maxBudget?: number;
+    budgetCurrency?: string;
+    gpaMin?: number;
+    gpaMax?: number;
+    graduationYearMin?: number;
+    graduationYearMax?: number;
+    verifiedOnly?: boolean;
+    hasPortfolio?: boolean;
     useProfileFilters?: boolean;
   }
 ) {
@@ -198,9 +218,44 @@ export async function getStudents(
   const useProfileFilters = query.useProfileFilters !== false;
 
   const filter: Record<string, unknown> = {};
+  const andFilters: Record<string, unknown>[] = [];
 
   if (query.country?.trim()) filter.country = query.country.trim();
   if (query.city?.trim()) filter.city = safeRegExp(query.city.trim());
+  if (query.educationStatus?.trim()) filter.educationStatus = query.educationStatus.trim();
+  if (query.targetDegreeLevel?.trim()) filter.targetDegreeLevel = query.targetDegreeLevel.trim();
+  if (typeof query.schoolCompleted === 'boolean') filter.schoolCompleted = query.schoolCompleted;
+  if (query.budgetCurrency?.trim()) filter.budgetCurrency = query.budgetCurrency.trim();
+  if (query.verifiedOnly) filter.verifiedAt = { $ne: null };
+  if (query.hasPortfolio) andFilters.push({ 'portfolioWorks.0': { $exists: true } });
+
+  if (query.search?.trim()) {
+    const searchRegex = safeRegExp(query.search.trim());
+    const emailMatches = await User.find({ email: searchRegex }).select('_id').lean();
+    const emailUserIds = emailMatches.map((user) => (user as { _id: unknown })._id);
+    const searchOr: Record<string, unknown>[] = [
+      { firstName: searchRegex },
+      { lastName: searchRegex },
+      { city: searchRegex },
+      { country: searchRegex },
+      { schoolName: searchRegex },
+      { 'schoolsAttended.institutionName': searchRegex },
+    ];
+    if (emailUserIds.length > 0) {
+      searchOr.push({ userId: { $in: emailUserIds } });
+    }
+    andFilters.push({ $or: searchOr });
+  }
+
+  if (query.schoolName?.trim()) {
+    const schoolRegex = safeRegExp(query.schoolName.trim());
+    andFilters.push({
+      $or: [
+        { schoolName: schoolRegex },
+        { 'schoolsAttended.institutionName': schoolRegex },
+      ],
+    });
+  }
 
   if (useProfileFilters) {
     // Filter by university's targetStudentCountries if set
@@ -208,7 +263,7 @@ export async function getStudents(
       ? ((profile as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
       : [];
     if (targetCountries.length > 0) {
-      filter.country = { $in: targetCountries };
+      mergeInConstraint(filter, 'country', targetCountries);
     }
 
     // Filter by faculties: student interestedFaculties intersect university facultyCodes
@@ -216,7 +271,7 @@ export async function getStudents(
       ? ((profile as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean)
       : [];
     if (facultyCodes.length > 0) {
-      filter.interestedFaculties = { $in: facultyCodes };
+      mergeInConstraint(filter, 'interestedFaculties', facultyCodes);
     }
   }
 
@@ -227,8 +282,24 @@ export async function getStudents(
   if (interests.length > 0) filter.interests = { $in: interests };
   if (hobbies.length > 0) filter.hobbies = { $in: hobbies };
 
+  const preferredCountries = Array.isArray(query.preferredCountries) ? query.preferredCountries.filter(Boolean) : [];
+  if (preferredCountries.length > 0) filter.preferredCountries = { $in: preferredCountries };
+
+  const interestedFaculties = Array.isArray(query.interestedFaculties) ? query.interestedFaculties.filter(Boolean) : [];
+  if (interestedFaculties.length > 0) filter.interestedFaculties = { $in: interestedFaculties };
+
   const languages = Array.isArray(query.languages) ? query.languages.filter(Boolean) : [];
   if (languages.length > 0) filter['languages.language'] = { $in: languages };
+
+  const languageLevels = Array.isArray(query.languageLevels) ? query.languageLevels.filter(Boolean) : [];
+  if (languageLevels.length > 0) {
+    andFilters.push({
+      $or: [
+        { 'languages.level': { $in: languageLevels } },
+        { languageLevel: { $in: languageLevels } },
+      ],
+    });
+  }
 
   const minBudget = query.minBudget != null && Number.isFinite(Number(query.minBudget)) ? Number(query.minBudget) : undefined;
   const maxBudget = query.maxBudget != null && Number.isFinite(Number(query.maxBudget)) ? Number(query.maxBudget) : undefined;
@@ -240,25 +311,84 @@ export async function getStudents(
     filter.budgetAmount = { $lte: maxBudget };
   }
 
-  let certStudentIds: unknown[] | undefined;
-  if (query.certType?.trim()) {
-    const certFilter: Record<string, unknown> = {
-      type: 'language_certificate',
-      certificateType: query.certType.trim(),
-      status: 'approved',
-    };
-    const certDocs = await StudentDocument.find(certFilter).select('studentId score').lean();
-    const minNum = query.certMinScore != null && query.certMinScore !== '' ? Number(query.certMinScore) : NaN;
-    const ids = certDocs
-      .filter((d) => Number.isNaN(minNum) || (parseFloat((d as { score?: string }).score ?? '0') >= minNum))
-      .map((d) => (d as { studentId: unknown }).studentId);
-    certStudentIds = ids.length > 0 ? [...new Set(ids)] : [null];
-    filter._id = { $in: certStudentIds };
+  const gpaMin = query.gpaMin != null && Number.isFinite(Number(query.gpaMin)) ? Number(query.gpaMin) : undefined;
+  const gpaMax = query.gpaMax != null && Number.isFinite(Number(query.gpaMax)) ? Number(query.gpaMax) : undefined;
+  if (gpaMin != null && gpaMax != null) {
+    filter.gpa = { $gte: gpaMin, $lte: gpaMax };
+  } else if (gpaMin != null) {
+    filter.gpa = { $gte: gpaMin };
+  } else if (gpaMax != null) {
+    filter.gpa = { $lte: gpaMax };
+  }
+
+  const graduationYearMin =
+    query.graduationYearMin != null && Number.isFinite(Number(query.graduationYearMin))
+      ? Number(query.graduationYearMin)
+      : undefined;
+  const graduationYearMax =
+    query.graduationYearMax != null && Number.isFinite(Number(query.graduationYearMax))
+      ? Number(query.graduationYearMax)
+      : undefined;
+  if (graduationYearMin != null && graduationYearMax != null) {
+    filter.graduationYear = { $gte: graduationYearMin, $lte: graduationYearMax };
+  } else if (graduationYearMin != null) {
+    filter.graduationYear = { $gte: graduationYearMin };
+  } else if (graduationYearMax != null) {
+    filter.graduationYear = { $lte: graduationYearMax };
+  }
+
+  const documentTypes = Array.isArray(query.documentTypes) ? query.documentTypes.filter(Boolean) : [];
+  const hasDocumentFilters =
+    Boolean(query.certType?.trim()) ||
+    Boolean(query.documentQuery?.trim()) ||
+    documentTypes.length > 0 ||
+    Boolean(query.certMinScore?.trim());
+
+  if (hasDocumentFilters) {
+    const documentFilter: Record<string, unknown> = { status: 'approved' };
+    if (documentTypes.length > 0) {
+      documentFilter.type = { $in: documentTypes };
+    }
+
+    if (query.certType?.trim()) {
+      if (documentTypes.length > 0 && !documentTypes.includes('language_certificate')) {
+        mergeObjectIdConstraint(filter, []);
+      } else {
+        documentFilter.type = 'language_certificate';
+        documentFilter.certificateType = safeRegExp(query.certType.trim());
+      }
+    }
+
+    if (query.documentQuery?.trim()) {
+      const documentRegex = safeRegExp(query.documentQuery.trim());
+      documentFilter.$and = [
+        ...((documentFilter.$and as Record<string, unknown>[] | undefined) ?? []),
+        {
+          $or: [
+            { certificateType: documentRegex },
+            { name: documentRegex },
+            { type: documentRegex },
+          ],
+        },
+      ];
+    }
+
+    const documents = await StudentDocument.find(documentFilter).select('studentId score').lean();
+    const minScore = query.certMinScore != null && query.certMinScore !== '' ? Number(query.certMinScore) : NaN;
+    const matchedStudentIds = documents
+      .filter((document) => Number.isNaN(minScore) || parseFloat((document as { score?: string }).score ?? '0') >= minScore)
+      .map((document) => (document as { studentId: unknown }).studentId);
+
+    mergeObjectIdConstraint(filter, matchedStudentIds);
+  }
+
+  if (andFilters.length > 0) {
+    filter.$and = andFilters;
   }
 
   const [students, total, interestStudentIds] = await Promise.all([
     StudentProfile.find(filter)
-      .select('firstName lastName avatarUrl country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId')
+      .select('firstName lastName avatarUrl country city gpa gradeLevel languageLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId targetDegreeLevel educationStatus schoolCompleted verifiedAt portfolioCompletionPercent')
       .sort({ gpa: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -307,6 +437,55 @@ export async function getStudents(
     limit,
     totalPages: Math.ceil(total / limit),
   };
+}
+
+function mergeObjectIdConstraint(filter: Record<string, unknown>, ids: unknown[]) {
+  const normalizedIds = ids.length > 0 ? uniqueUnknownValues(ids) : [null];
+  const currentIds = readIdConstraint(filter._id);
+  if (currentIds.length === 0) {
+    filter._id = { $in: normalizedIds };
+    return;
+  }
+
+  const nextIds = currentIds.filter((currentId) =>
+    normalizedIds.some((id) => String(id) === String(currentId))
+  );
+  filter._id = { $in: nextIds.length > 0 ? uniqueUnknownValues(nextIds) : [null] };
+}
+
+function mergeInConstraint(filter: Record<string, unknown>, field: string, values: string[]) {
+  const normalizedValues = values.map(String);
+  const currentValues = readInConstraint(filter[field]);
+  if (currentValues.length === 0) {
+    filter[field] = { $in: normalizedValues };
+    return;
+  }
+
+  const nextValues = currentValues.filter((value) => normalizedValues.includes(String(value)));
+  filter[field] = { $in: nextValues.length > 0 ? uniqueUnknownValues(nextValues) : ['__no_match__'] };
+}
+
+function readIdConstraint(value: unknown) {
+  if (!value || typeof value !== 'object' || !('$in' in (value as Record<string, unknown>))) return [];
+  const ids = (value as { $in?: unknown[] }).$in;
+  return Array.isArray(ids) ? ids : [];
+}
+
+function readInConstraint(value: unknown) {
+  if (typeof value === 'string') return [value];
+  if (!value || typeof value !== 'object' || !('$in' in (value as Record<string, unknown>))) return [];
+  const ids = (value as { $in?: unknown[] }).$in;
+  return Array.isArray(ids) ? ids.map(String) : [];
+}
+
+function uniqueUnknownValues(values: unknown[]) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = String(value);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function getStudentProfileForUniversity(_userId: string, studentId: string) {
@@ -470,6 +649,7 @@ export async function updateInterestStatus(
 
   const interest = await Interest.findOne({ _id: interestId, universityId: profile._id });
   if (!interest) throw new AppError(404, 'Interest not found', ErrorCodes.NOT_FOUND);
+  const previousStatus = String((interest as { status?: string }).status ?? '');
 
   const updated = await Interest.findByIdAndUpdate(interestId, { status }, {
     new: true,
@@ -489,6 +669,46 @@ export async function updateInterestStatus(
         ? String((student.userId as { email?: string }).email ?? '').trim() || undefined
         : undefined;
     const studentName = student ? [student.firstName, student.lastName].filter(Boolean).join(' ') || studentEmail || 'Student' : 'Student';
+    const relatedChat =
+      status === 'rejected' && previousStatus !== 'rejected'
+        ? await Chat.findOne({ studentId: (interest as { studentId: unknown }).studentId, universityId: profile._id }).lean()
+        : null;
+
+    if (relatedChat) {
+      const systemText = `${profile.universityName} closed the chat after rejecting your application. You can still view the conversation, but you can no longer send messages.`;
+      const systemMessage = await Message.create({
+        chatId: (relatedChat as { _id: unknown })._id,
+        senderId: userId,
+        type: 'system',
+        message: systemText,
+        metadata: {
+          subtype: 'chat_blocked',
+          reason: 'rejected',
+          universityName: profile.universityName,
+        },
+      });
+
+      const io = getIO();
+      if (io) {
+        io.to(`chat:${String((relatedChat as { _id: unknown })._id)}`).emit('new_message', {
+          chatId: String((relatedChat as { _id: unknown })._id),
+          message: {
+            id: String((systemMessage as { _id: unknown })._id),
+            chatId: String((relatedChat as { _id: unknown })._id),
+            text: systemText,
+            type: 'system',
+            createdAt: (systemMessage as { createdAt?: Date }).createdAt ?? new Date(),
+            metadata: {
+              subtype: 'chat_blocked',
+              reason: 'rejected',
+              universityName: profile.universityName,
+            },
+            sender: { id: userId },
+          },
+        });
+      }
+    }
+
     if (studentUserId) {
       await notificationService.createNotification(studentUserId, {
         type: 'status_update',
@@ -496,7 +716,12 @@ export async function updateInterestStatus(
         body: `${profile.universityName} updated your application status to ${status.replace('_', ' ')}`,
         referenceType: 'interest',
         referenceId: String(interestId),
-        metadata: { interestId, status, universityName: profile.universityName },
+        metadata: {
+          interestId,
+          status,
+          universityName: profile.universityName,
+          ...(relatedChat ? { chatId: String((relatedChat as { _id: unknown })._id) } : {}),
+        },
       });
       const studentUser = await User.findById(studentUserId).select('email notificationPreferences').lean();
       const prefs = (studentUser as { notificationPreferences?: { emailApplicationUpdates?: boolean } })?.notificationPreferences;

@@ -75,6 +75,32 @@ export async function getStudentProfile(req: Request, res: Response, next: NextF
   }
 }
 
+export async function getStudentUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const query = (req.query && typeof req.query === 'object') ? req.query : {};
+    const rawUseProfile = query.useProfileFilters;
+    const useProfileFilters =
+      rawUseProfile === undefined
+        ? undefined
+        : rawUseProfile === '1' || rawUseProfile === 'true';
+
+    const data = await counsellorService.getStudentUniversities(req.user.id, req.params.studentUserId, {
+      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
+      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      country: typeof query.country === 'string' ? query.country : undefined,
+      city: typeof query.city === 'string' ? query.city : undefined,
+      useProfileFilters,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function listMyStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {

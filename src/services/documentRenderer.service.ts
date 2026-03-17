@@ -65,21 +65,30 @@ export const MERGE_TAGS = {
     '{{offer.degreeLevel}}',
     '{{offer.intake}}',
     '{{offer.startDate}}',
+    '{{offer.startDateLabel}}',
     '{{offer.tuitionFee}}',
     '{{offer.currency}}',
+    '{{offer.tuitionDisplay}}',
     '{{offer.conditions}}',
   ],
   Scholarship: [
     '{{scholarship.amount}}',
     '{{scholarship.percent}}',
     '{{scholarship.type}}',
+    '{{scholarship.summary}}',
   ],
   Dates: [
     '{{today}}',
     '{{deadline.acceptBy}}',
+    '{{deadline.acceptByLabel}}',
   ],
   System: [
     '{{document.id}}',
+    '{{document.issuedOn}}',
+    '{{document.issuedOnLabel}}',
+    '{{document.message}}',
+    '{{document.summary}}',
+    '{{document.smallPrint}}',
   ],
 } as const;
 
@@ -175,20 +184,30 @@ export function createSamplePayload(type: DocumentType): Record<string, unknown>
       degreeLevel: 'Bachelor',
       intake: 'Fall 2026',
       startDate: '2026-09-01',
+      startDateLabel: 'September 1, 2026',
       tuitionFee: '12000',
       currency: 'USD',
+      tuitionDisplay: '12,000 USD',
       conditions: 'Maintain GPA 3.0 and submit final transcript.',
     },
     scholarship: {
       amount: type === 'scholarship' ? '5000' : '0',
       percent: type === 'scholarship' ? '50' : '0',
       type: type === 'scholarship' ? 'Merit scholarship' : '',
+      summary: type === 'scholarship' ? '5000 50% Merit scholarship' : '',
     },
     deadline: {
       acceptBy: '2026-04-15',
+      acceptByLabel: 'April 15, 2026',
     },
     document: {
       id: 'preview-document',
+      type,
+      issuedOn: '2026-03-17',
+      issuedOnLabel: 'March 17, 2026',
+      message: 'We would be glad to welcome you to this intake.',
+      summary: 'Issued on March 17, 2026. Program: Computer Science. Start date: September 1, 2026. Tuition fee: 12,000 USD. Accept by: April 15, 2026.',
+      smallPrint: 'This summary is included to make the main terms, deadlines, fees, conditions, and scholarship details explicit.',
     },
   };
 }

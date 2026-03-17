@@ -46,23 +46,77 @@ export async function getStudentProfile(req: Request, res: Response, next: NextF
 export async function getStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const { page, limit, skills, interests, hobbies, country, city, languages, certType, certMinScore, minBudget, maxBudget, useProfileFilters } = req.query;
+    const {
+      page,
+      limit,
+      search,
+      skills,
+      interests,
+      hobbies,
+      country,
+      city,
+      schoolName,
+      educationStatus,
+      targetDegreeLevel,
+      schoolCompleted,
+      languages,
+      languageLevels,
+      certType,
+      certMinScore,
+      documentTypes,
+      documentQuery,
+      preferredCountries,
+      interestedFaculties,
+      minBudget,
+      maxBudget,
+      budgetCurrency,
+      gpaMin,
+      gpaMax,
+      graduationYearMin,
+      graduationYearMax,
+      verifiedOnly,
+      hasPortfolio,
+      useProfileFilters,
+    } = req.query;
     const useProfile = useProfileFilters === undefined || useProfileFilters === '1' || useProfileFilters === 'true';
     const toArray = (v: unknown): string[] =>
       v == null ? [] : typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : Array.isArray(v) ? v.map(String) : [];
+    const toBoolean = (v: unknown): boolean | undefined => {
+      if (v === undefined || v === null || v === '') return undefined;
+      if (v === '1' || v === 'true' || v === true) return true;
+      if (v === '0' || v === 'false' || v === false) return false;
+      return undefined;
+    };
     const data = await universityService.getStudents(req.user.id, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
+      search: typeof search === 'string' ? search : undefined,
       skills: toArray(skills),
       interests: toArray(interests),
       hobbies: toArray(hobbies),
       country: typeof country === 'string' ? country : undefined,
       city: typeof city === 'string' ? city : undefined,
+      schoolName: typeof schoolName === 'string' ? schoolName : undefined,
+      educationStatus: typeof educationStatus === 'string' ? educationStatus : undefined,
+      targetDegreeLevel: typeof targetDegreeLevel === 'string' ? targetDegreeLevel : undefined,
+      schoolCompleted: toBoolean(schoolCompleted),
       languages: toArray(languages),
+      languageLevels: toArray(languageLevels),
       certType: typeof certType === 'string' ? certType : undefined,
       certMinScore: typeof certMinScore === 'string' ? certMinScore : undefined,
+      documentTypes: toArray(documentTypes),
+      documentQuery: typeof documentQuery === 'string' ? documentQuery : undefined,
+      preferredCountries: toArray(preferredCountries),
+      interestedFaculties: toArray(interestedFaculties),
       minBudget: minBudget != null ? Number(minBudget) : undefined,
       maxBudget: maxBudget != null ? Number(maxBudget) : undefined,
+      budgetCurrency: typeof budgetCurrency === 'string' ? budgetCurrency : undefined,
+      gpaMin: gpaMin != null ? Number(gpaMin) : undefined,
+      gpaMax: gpaMax != null ? Number(gpaMax) : undefined,
+      graduationYearMin: graduationYearMin != null ? Number(graduationYearMin) : undefined,
+      graduationYearMax: graduationYearMax != null ? Number(graduationYearMax) : undefined,
+      verifiedOnly: toBoolean(verifiedOnly),
+      hasPortfolio: toBoolean(hasPortfolio),
       useProfileFilters: useProfile,
     });
     res.json(data);

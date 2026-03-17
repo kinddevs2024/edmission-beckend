@@ -275,6 +275,17 @@ export async function getStudentProfile(counsellorUserId: string, studentUserId:
   return getProfile(studentUserId);
 }
 
+/** List universities for a specific student linked to this counsellor. */
+export async function getStudentUniversities(
+  counsellorUserId: string,
+  studentUserId: string,
+  query: { page?: number; limit?: number; country?: string; city?: string; useProfileFilters?: boolean }
+) {
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const { getUniversities } = await import('./student.service');
+  return getUniversities(studentUserId, query);
+}
+
 /** Generate a new temporary password for a student who hasn't changed it yet. Returns the new password. */
 export async function generateTempPasswordForStudent(counsellorUserId: string, studentUserId: string): Promise<{ temporaryPassword: string }> {
   await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);

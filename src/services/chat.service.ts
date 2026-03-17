@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { User, StudentProfile, UniversityProfile, Chat, Message } from '../models';
+import { User, StudentProfile, UniversityProfile, Chat, Interest, Message } from '../models';
 import * as notificationService from './notification.service';
 import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
@@ -32,6 +32,50 @@ function formatChatMessage(message: Record<string, unknown> | null) {
     editedAt: message.editedAt,
     sender: senderId ? { id: senderId } : undefined,
   };
+}
+
+type ChatReadOnlyState = {
+  isReadOnly: boolean;
+  readOnlyReason?: 'rejected';
+};
+
+async function getChatReadOnlyStateForUser(
+  studentProfileId: string | null,
+  universityProfileId: string | null,
+  viewerUserId: string,
+  studentUserId: string | null
+): Promise<ChatReadOnlyState> {
+  if (!studentProfileId || !universityProfileId || !studentUserId || String(viewerUserId) !== String(studentUserId)) {
+    return { isReadOnly: false };
+  }
+
+  const interest = await Interest.findOne({
+    studentId: studentProfileId,
+    universityId: universityProfileId,
+  })
+    .select('status')
+    .lean();
+
+  if ((interest as { status?: string } | null)?.status === 'rejected') {
+    return {
+      isReadOnly: true,
+      readOnlyReason: 'rejected',
+    };
+  }
+
+  return { isReadOnly: false };
+}
+
+async function assertChatMutationsAllowed(
+  studentProfileId: string | null,
+  universityProfileId: string | null,
+  actorUserId: string,
+  studentUserId: string | null
+) {
+  const state = await getChatReadOnlyStateForUser(studentProfileId, universityProfileId, actorUserId, studentUserId);
+  if (state.isReadOnly) {
+    throw new AppError(403, 'This chat has been closed by the university', ErrorCodes.FORBIDDEN);
+  }
 }
 
 /** Fetch last message per chat in one query to avoid N+1. */
@@ -75,19 +119,39 @@ export async function getChats(userId: string) {
     const uniUsers = uniUserIds.length
       ? await User.find({ _id: { $in: uniUserIds } }).select('email').lean()
       : [];
+    const universityProfileIds = (chats as { universityId?: unknown }[])
+      .map((c) => toObjectIdString(c.universityId))
+      .filter((id): id is string => !!id);
+    const readOnlyInterests = universityProfileIds.length > 0
+      ? await Interest.find({
+        studentId: (studentProfile as { _id: unknown })._id,
+        universityId: { $in: universityProfileIds },
+        status: 'rejected',
+      })
+        .select('universityId')
+        .lean()
+      : [];
+    const readOnlyUniversityIds = new Set(
+      readOnlyInterests.map((interest) => String((interest as { universityId: unknown }).universityId))
+    );
     const uniUserById = new Map<string, { email?: string }>();
     for (const u of uniUsers as { _id: unknown; email?: string }[]) {
       uniUserById.set(String(u._id), { email: u.email });
     }
-    for (const c of chats as { _id: unknown; universityId?: { userId?: unknown }; lastMessage?: unknown; university?: unknown }[]) {
+    for (const c of chats as { _id: unknown; universityId?: { userId?: unknown }; lastMessage?: unknown; university?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
       (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
       const uni = c.universityId;
       if (uni && typeof uni === 'object') {
         const uid = (uni as { userId?: unknown }).userId;
         const extra = uid ? uniUserById.get(String(uid)) : undefined;
         (c as { university?: unknown }).university = { ...(uni as object), ...(extra ? { userEmail: extra.email } : {}) };
+        const universityProfileId = toObjectIdString(uni);
+        (c as { isReadOnly?: boolean }).isReadOnly = !!universityProfileId && readOnlyUniversityIds.has(universityProfileId);
+        (c as { readOnlyReason?: string }).readOnlyReason = (c as { isReadOnly?: boolean }).isReadOnly ? 'rejected' : undefined;
       } else {
         (c as { university?: unknown }).university = uni as unknown;
+        (c as { isReadOnly?: boolean }).isReadOnly = false;
+        (c as { readOnlyReason?: string }).readOnlyReason = undefined;
       }
     }
   } else if (universityProfile) {
@@ -106,7 +170,7 @@ export async function getChats(userId: string) {
     for (const u of studentUsers as { _id: unknown; email?: string }[]) {
       studentUserById.set(String(u._id), { email: u.email });
     }
-    for (const c of chats as { _id: unknown; studentId?: { userId?: unknown }; lastMessage?: unknown; student?: unknown }[]) {
+    for (const c of chats as { _id: unknown; studentId?: { userId?: unknown }; lastMessage?: unknown; student?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
       (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
       const stu = c.studentId;
       if (stu && typeof stu === 'object') {
@@ -116,6 +180,8 @@ export async function getChats(userId: string) {
       } else {
         (c as { student?: unknown }).student = stu as unknown;
       }
+      (c as { isReadOnly?: boolean }).isReadOnly = false;
+      (c as { readOnlyReason?: string }).readOnlyReason = undefined;
     }
   } else {
     chats = [];
@@ -218,15 +284,21 @@ export async function getOrCreateChat(studentId: string, universityId: unknown) 
   if (!student || !university) throw new AppError(404, 'Chat party not found', ErrorCodes.NOT_FOUND);
 
   let chat = await Chat.findOne({ studentId, universityId: uid });
+  let created = false;
   if (!chat) {
     chat = await Chat.create({ studentId, universityId: uid });
+    created = true;
   }
+
+  await syncInterestStatusForChat(studentId, uid);
 
   return {
     chat: chat.toObject ? chat.toObject() : chat,
     chatId: (chat as { _id: unknown })._id,
     studentUserId: String((student as { userId: unknown }).userId),
     universityUserId: String((university as { userId: unknown }).userId),
+    universityName: String((university as { universityName?: string }).universityName ?? 'This university'),
+    created,
   };
 }
 
@@ -242,7 +314,39 @@ export async function getOrCreateChatForUser(
   if (body.studentId && role === 'university') {
     const university = await UniversityProfile.findOne({ userId }).lean();
     if (!university) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
-    return getOrCreateChat(body.studentId, String((university as { _id: unknown })._id));
+    const result = await getOrCreateChat(body.studentId, String((university as { _id: unknown })._id));
+    const hasMessages = await Message.exists({ chatId: result.chatId });
+
+    if (!hasMessages) {
+      const universityName = String((university as { universityName?: string }).universityName ?? 'The university');
+      const systemText = `${universityName} opened the chat. You can now communicate with this university here.`;
+
+      await Message.create({
+        chatId: result.chatId,
+        senderId: userId,
+        type: 'system',
+        message: systemText,
+        metadata: {
+          subtype: 'chat_opened',
+          universityName,
+        },
+      });
+
+      await notificationService.createNotification(result.studentUserId, {
+        type: 'message',
+        title: 'Chat opened',
+        body: `${universityName} opened the chat and you can now communicate with them.`,
+        referenceType: 'chat',
+        referenceId: String(result.chatId),
+        metadata: {
+          chatId: String(result.chatId),
+          subtype: 'chat_opened',
+          universityName,
+        },
+      });
+    }
+
+    return result;
   }
   if (body.universityId && role === 'student') {
     const student = await StudentProfile.findOne({ userId }).lean();
@@ -265,11 +369,14 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     universityId?: { userId?: unknown };
     _id: unknown;
   };
+  const studentProfileId = toObjectIdString(chatObj.studentId);
+  const universityProfileId = toObjectIdString(chatObj.universityId);
   const studentUserId = chatObj.studentId && typeof chatObj.studentId === 'object' ? String(chatObj.studentId.userId) : null;
   const universityUserId = chatObj.universityId && typeof chatObj.universityId === 'object' ? String((chatObj.universityId as { userId?: unknown }).userId) : null;
   if (![studentUserId, universityUserId].filter(Boolean).includes(userId)) {
     throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
   }
+  const readOnlyState = await getChatReadOnlyStateForUser(studentProfileId, universityProfileId, userId, studentUserId);
 
   const lastMsg = await Message.findOne({ chatId, ...buildMessageVisibilityFilter(userId) })
     .sort({ createdAt: -1 })
@@ -284,6 +391,8 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     lastMessage,
     university: chatObj.universityId,
     student: chatObj.studentId,
+    isReadOnly: readOnlyState.isReadOnly,
+    readOnlyReason: readOnlyState.readOnlyReason,
   };
 }
 
@@ -330,8 +439,14 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
   const participantIds = [studentU, universityU].filter(Boolean);
   // Чат уже выбран из списка текущего пользователя; дополнительно не блокируем по неконсистентным связям.
 
+  await assertChatMutationsAllowed(studentIdStr, universityIdStr, senderId, studentU);
+
   const recipientId = studentU === senderId ? universityU : studentU;
   const msgBody = type === 'emotion' ? (message || (metadata?.emotion != null ? String(metadata.emotion) : '')) : (opts.text ?? message);
+
+  if (studentIdStr && universityIdStr) {
+    await syncInterestStatusForChat(studentIdStr, universityIdStr);
+  }
 
   const msg = await Message.create({
     chatId,
@@ -377,11 +492,37 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
   };
 }
 
+async function syncInterestStatusForChat(studentId: string, universityId: string) {
+  await Interest.findOneAndUpdate(
+    {
+      studentId,
+      universityId,
+      status: 'interested',
+    },
+    { $set: { status: 'chat_opened' } }
+  );
+}
+
 export async function updateMessage(chatId: string, messageId: string, userId: string, text: string) {
   const trimmedText = text.trim();
   if (!trimmedText) {
     throw new AppError(400, 'Message text is required', ErrorCodes.VALIDATION);
   }
+
+  const chat = await Chat.findById(chatId)
+    .populate('studentId', 'userId')
+    .populate('universityId', 'userId')
+    .lean();
+  if (!chat) {
+    throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  }
+
+  const chatObj = chat as Record<string, unknown>;
+  const studentProfileId = toObjectIdString(chatObj.studentId);
+  const universityProfileId = toObjectIdString(chatObj.universityId);
+  const studentRef = chatObj.studentId as { userId?: unknown } | undefined;
+  const studentUserId = studentRef && typeof studentRef === 'object' ? String(studentRef.userId ?? '') : null;
+  await assertChatMutationsAllowed(studentProfileId, universityProfileId, userId, studentUserId);
 
   const existing = await Message.findOne({ _id: messageId, chatId }).lean();
   if (!existing) {
@@ -431,6 +572,9 @@ export async function deleteMessage(chatId: string, messageId: string, userId: s
   }
 
   const chatObj = chat as { studentId?: { userId?: unknown }; universityId?: { userId?: unknown } };
+  const studentProfileId = toObjectIdString(chatObj.studentId);
+  const universityProfileId = toObjectIdString(chatObj.universityId);
+  const studentUserId = chatObj.studentId && typeof chatObj.studentId === 'object' ? String(chatObj.studentId.userId ?? '') : null;
   const participantIds = [
     chatObj.studentId && typeof chatObj.studentId === 'object' ? String(chatObj.studentId.userId ?? '') : null,
     chatObj.universityId && typeof chatObj.universityId === 'object' ? String(chatObj.universityId.userId ?? '') : null,
@@ -438,6 +582,8 @@ export async function deleteMessage(chatId: string, messageId: string, userId: s
   if (!participantIds.includes(userId)) {
     throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
   }
+
+  await assertChatMutationsAllowed(studentProfileId, universityProfileId, userId, studentUserId);
 
   if (scope === 'everyone') {
     if (String(messageObj.senderId) !== userId) {

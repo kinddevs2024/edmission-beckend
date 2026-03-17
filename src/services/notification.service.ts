@@ -63,7 +63,9 @@ export async function createNotification(userId: string, params: CreateNotificat
       title: params.title,
       body: params.body,
       link: link ?? undefined,
+      referenceType: params.referenceType,
       referenceId: params.referenceId,
+      metadata: params.metadata,
       createdAt: (plain as { createdAt?: Date }).createdAt,
     });
   }
