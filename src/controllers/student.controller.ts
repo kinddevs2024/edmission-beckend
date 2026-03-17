@@ -165,12 +165,7 @@ export async function getCompare(req: Request, res: Response, next: NextFunction
 export async function addDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const { type, fileUrl } = req.body;
-    if (!type || !fileUrl) {
-      res.status(400).json({ message: 'type and fileUrl required' });
-      return;
-    }
-    const data = await studentDocumentService.addDocument(req.user.id, { type, fileUrl });
+    const data = await studentDocumentService.addDocument(req.user.id, req.body);
     res.status(201).json(data);
   } catch (e) {
     next(e);
@@ -182,6 +177,26 @@ export async function getMyDocuments(req: Request, res: Response, next: NextFunc
     if (!req.user) return next();
     const data = await studentDocumentService.getMyDocuments(req.user.id);
     res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await studentDocumentService.updateDocument(req.user.id, req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    await studentDocumentService.deleteDocument(req.user.id, req.params.id);
+    res.status(204).send();
   } catch (e) {
     next(e);
   }

@@ -84,11 +84,56 @@ const fileUrlSchema = z.string().min(1).refine(
   { message: 'Invalid url' }
 );
 
+const pageFormatSchema = z.enum(['A4_PORTRAIT', 'A4_LANDSCAPE', 'LETTER', 'CUSTOM']);
+
 export const documentSchema = z.object({
   body: z.object({
     type: z.string().min(1),
-    fileUrl: fileUrlSchema,
+    source: z.enum(['upload', 'editor']).optional(),
+    name: z.string().max(200).optional(),
+    certificateType: z.string().max(100).optional(),
+    score: z.string().max(100).optional(),
+    fileUrl: fileUrlSchema.optional(),
+    previewImageUrl: fileUrlSchema.optional(),
+    canvasJson: z.string().min(1).optional(),
+    pageFormat: pageFormatSchema.optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    editorVersion: z.string().max(20).optional(),
+  }).superRefine((body, ctx) => {
+    const source = body.source ?? (body.canvasJson ? 'editor' : 'upload');
+    if (source === 'upload' && !body.fileUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['fileUrl'],
+        message: 'fileUrl is required for uploaded documents',
+      });
+    }
+    if (source === 'editor' && !body.canvasJson) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['canvasJson'],
+        message: 'canvasJson is required for editor documents',
+      });
+    }
   }),
+});
+
+export const updateDocumentSchema = z.object({
+  body: z.object({
+    type: z.string().min(1).optional(),
+    source: z.enum(['upload', 'editor']).optional(),
+    name: z.string().max(200).optional(),
+    certificateType: z.string().max(100).optional(),
+    score: z.string().max(100).optional(),
+    fileUrl: fileUrlSchema.optional(),
+    previewImageUrl: fileUrlSchema.optional(),
+    canvasJson: z.string().min(1).optional(),
+    pageFormat: pageFormatSchema.optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    editorVersion: z.string().max(20).optional(),
+  }).strict(),
 });
 
 export const compareQuerySchema = z.object({

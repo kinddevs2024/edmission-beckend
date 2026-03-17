@@ -28,6 +28,8 @@ router.get('/recommendations', studentController.getRecommendations);
 router.get('/compare', studentController.getCompare);
 router.get('/documents', studentController.getMyDocuments);
 router.post('/documents', validate(studentValidator.documentSchema.shape.body, 'body'), studentController.addDocument);
+router.patch('/documents/:id', validateObjectId('id'), validate(studentValidator.updateDocumentSchema.shape.body, 'body'), studentController.updateDocument);
+router.delete('/documents/:id', validateObjectId('id'), studentController.deleteDocument);
 router.get('/schools', studentController.listSchools);
 router.post('/schools/:counsellorUserId/request', validateObjectId('counsellorUserId'), studentController.requestToJoinSchool);
 router.get('/school-invitations', studentController.listSchoolInvitations);

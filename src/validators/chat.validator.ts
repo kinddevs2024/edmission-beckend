@@ -12,12 +12,29 @@ export const chatIdParamSchema = z.object({
   chatId: objectIdZod,
 });
 
+export const messageIdParamSchema = z.object({
+  chatId: objectIdZod,
+  messageId: objectIdZod,
+});
+
 export const sendMessageSchema = z.object({
   body: z.object({
     text: z.string().optional(),
     type: z.enum(['text', 'voice', 'emotion']).optional(),
     attachmentUrl: z.string().url().optional(),
     metadata: z.record(z.unknown()).optional(),
+  }),
+});
+
+export const updateMessageSchema = z.object({
+  body: z.object({
+    text: z.string().trim().min(1),
+  }),
+});
+
+export const deleteMessageSchema = z.object({
+  body: z.object({
+    scope: z.enum(['me', 'everyone']).default('me'),
   }),
 });
 

@@ -82,6 +82,15 @@ function buildNotificationLink(
       return referenceId ? `/chat/${referenceId}` : null;
     case 'offer':
       return '/student/offers';
+    case 'document':
+      return referenceId ? `/student/received-documents/${referenceId}` : '/student/received-documents';
+    case 'document_viewed':
+    case 'document_accepted':
+    case 'document_declined':
+    case 'document_postponed':
+    case 'document_expired':
+    case 'document_revoked':
+      return referenceId ? `/university/documents?documentId=${referenceId}` : '/university/documents';
     case 'offer_accepted':
     case 'offer_declined':
     case 'offer_expired':

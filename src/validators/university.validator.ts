@@ -1,6 +1,23 @@
 import { z } from 'zod';
 import { objectIdZod } from '../utils/validators';
 
+const uploadedImageUrlSchema = z.string().min(1).refine(
+  (value) => {
+    const normalized = value.trim();
+    if (!normalized) return false;
+    if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+      try {
+        new URL(normalized);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return normalized.startsWith('/');
+  },
+  { message: 'Invalid url' }
+);
+
 export const updateInterestSchema = z.object({
   body: z.object({
     status: z.enum(['under_review', 'chat_opened', 'offer_sent', 'rejected', 'accepted']),
@@ -82,7 +99,7 @@ export const updateProfileSchema = z.object({
     country: z.string().max(100).optional(),
     city: z.string().max(100).optional(),
     description: z.string().max(5000).optional(),
-    logoUrl: z.string().url().optional(),
+    logoUrl: uploadedImageUrlSchema.optional(),
     onboardingCompleted: z.boolean().optional(),
     facultyCodes: z.array(z.string()).max(50).optional(),
     facultyItems: z.record(z.array(z.string())).optional(),

@@ -11,6 +11,9 @@ const messageSchema = new mongoose.Schema(
     attachmentUrl: { type: String },
     metadata: mongoose.Schema.Types.Mixed,
     isRead: { type: Boolean, default: false },
+    editedAt: { type: Date },
+    deletedForEveryoneAt: { type: Date },
+    deletedForUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   },
   { timestamps: true }
 );

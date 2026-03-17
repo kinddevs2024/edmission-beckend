@@ -1,14 +1,44 @@
+import mongoose from 'mongoose';
 import { User, StudentProfile, UniversityProfile, Chat, Message } from '../models';
 import * as notificationService from './notification.service';
 import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
 
+function buildMessageVisibilityFilter(viewerUserId?: string): Record<string, unknown> {
+  const filter: Record<string, unknown> = {
+    deletedForEveryoneAt: null,
+  };
+
+  if (viewerUserId && mongoose.Types.ObjectId.isValid(viewerUserId)) {
+    filter.deletedForUserIds = { $ne: new mongoose.Types.ObjectId(viewerUserId) };
+  }
+
+  return filter;
+}
+
+function formatChatMessage(message: Record<string, unknown> | null) {
+  if (!message) return null;
+  const sender = message.senderId as { _id?: unknown; id?: unknown } | null | undefined;
+  const senderId = sender ? String(sender._id ?? sender.id ?? '') : undefined;
+
+  return {
+    ...message,
+    id: String(message._id),
+    text: String(message.message ?? message.text ?? ''),
+    type: String(message.type ?? 'text'),
+    attachmentUrl: message.attachmentUrl,
+    metadata: message.metadata,
+    editedAt: message.editedAt,
+    sender: senderId ? { id: senderId } : undefined,
+  };
+}
+
 /** Fetch last message per chat in one query to avoid N+1. */
-async function getLastMessagesByChatIds(chatIds: unknown[]): Promise<Map<string, unknown[]>> {
+async function getLastMessagesByChatIds(chatIds: unknown[], viewerUserId?: string): Promise<Map<string, unknown[]>> {
   if (chatIds.length === 0) return new Map();
   const pipeline = [
-    { $match: { chatId: { $in: chatIds } } },
+    { $match: { chatId: { $in: chatIds }, ...buildMessageVisibilityFilter(viewerUserId) } },
     { $sort: { createdAt: -1 as 1 | -1 } },
     { $group: { _id: '$chatId', doc: { $first: '$$ROOT' } } },
     { $lookup: { from: 'users', localField: 'doc.senderId', foreignField: '_id', as: 'sender', pipeline: [{ $project: { id: '$_id', email: 1 } }] } },
@@ -38,7 +68,7 @@ export async function getChats(userId: string) {
       .populate('universityId', 'universityName logoUrl userId')
       .lean();
     const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
-    const lastByChat = await getLastMessagesByChatIds(chatIds);
+    const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
     const uniUserIds = (chats as { universityId?: { userId?: unknown } }[])
       .map((c) => (c.universityId && typeof c.universityId === 'object' ? (c.universityId as { userId?: unknown }).userId : null))
       .filter((id): id is unknown => !!id);
@@ -65,7 +95,7 @@ export async function getChats(userId: string) {
       .populate('studentId', 'firstName lastName avatarUrl userId')
       .lean();
     const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
-    const lastByChat = await getLastMessagesByChatIds(chatIds);
+    const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
     const studentUserIds = (chats as { studentId?: { userId?: unknown } }[])
       .map((c) => (c.studentId && typeof c.studentId === 'object' ? (c.studentId as { userId?: unknown }).userId : null))
       .filter((id): id is unknown => !!id);
@@ -120,22 +150,25 @@ export async function getMessages(chatId: string, userId: string, query: { page?
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
+  const visibilityFilter = {
+    chatId,
+    ...buildMessageVisibilityFilter(userId),
+  };
 
   const [messages, total] = await Promise.all([
-    Message.find({ chatId })
+    Message.find(visibilityFilter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .populate('senderId', 'id email')
       .lean(),
-    Message.countDocuments({ chatId }),
+    Message.countDocuments(visibilityFilter),
   ]);
 
-  const data = messages.reverse().map((m) => ({
-    ...m,
-    id: String((m as { _id: unknown })._id),
-    sender: (m as { senderId?: unknown }).senderId,
-  }));
+  const data = messages
+    .reverse()
+    .map((m) => formatChatMessage({ ...(m as Record<string, unknown>), senderId: (m as { senderId?: unknown }).senderId }))
+    .filter(Boolean);
 
   return {
     data,
@@ -166,7 +199,14 @@ export async function markRead(chatId: string, userId: string) {
   ].filter(Boolean);
   // Same as in getMessages: don't hard-fail if relations are inconsistent.
 
-  await Message.updateMany({ chatId, senderId: { $ne: userId } }, { isRead: true });
+  await Message.updateMany(
+    {
+      chatId,
+      senderId: { $ne: userId },
+      ...buildMessageVisibilityFilter(userId),
+    },
+    { isRead: true }
+  );
   return { success: true };
 }
 
@@ -231,8 +271,12 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
   }
 
-  const lastMsg = await Message.findOne({ chatId }).sort({ createdAt: -1 }).limit(1).populate('senderId', 'id email').lean();
-  const lastMessage = lastMsg ? [lastMsg] : [];
+  const lastMsg = await Message.findOne({ chatId, ...buildMessageVisibilityFilter(userId) })
+    .sort({ createdAt: -1 })
+    .limit(1)
+    .populate('senderId', 'id email')
+    .lean();
+  const lastMessage = lastMsg ? [formatChatMessage(lastMsg as Record<string, unknown>)] : [];
 
   return {
     ...chat,
@@ -327,22 +371,94 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
       .catch(() => {});
   }
 
-  const sender = msgPop ? (msgPop as { senderId?: { _id?: unknown; id?: unknown } }).senderId : null;
-  const senderIdStr = sender != null ? String((sender as { _id?: unknown })._id ?? (sender as { id?: unknown }).id ?? '') : undefined;
-  const plain = msgPop as Record<string, unknown> | null;
   return {
-    message: plain
-      ? {
-          ...plain,
-          id: String(plain._id),
-          text: (plain.message as string) ?? (plain.text as string) ?? '',
-          type: plain.type ?? 'text',
-          attachmentUrl: plain.attachmentUrl,
-          metadata: plain.metadata,
-          sender: senderIdStr ? { id: senderIdStr } : undefined,
-        }
-      : msg,
+    message: formatChatMessage(msgPop as Record<string, unknown> | null) ?? msg,
     recipientId,
+  };
+}
+
+export async function updateMessage(chatId: string, messageId: string, userId: string, text: string) {
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    throw new AppError(400, 'Message text is required', ErrorCodes.VALIDATION);
+  }
+
+  const existing = await Message.findOne({ _id: messageId, chatId }).lean();
+  if (!existing) {
+    throw new AppError(404, 'Message not found', ErrorCodes.NOT_FOUND);
+  }
+
+  const messageObj = existing as Record<string, unknown>;
+  if (String(messageObj.senderId) !== userId) {
+    throw new AppError(403, 'You can edit only your own messages', ErrorCodes.FORBIDDEN);
+  }
+  if (messageObj.type !== 'text') {
+    throw new AppError(400, 'Only text messages can be edited', ErrorCodes.VALIDATION);
+  }
+  if (messageObj.deletedForEveryoneAt) {
+    throw new AppError(409, 'Message already deleted', ErrorCodes.CONFLICT);
+  }
+
+  const updated = await Message.findOneAndUpdate(
+    { _id: messageId, chatId },
+    {
+      message: trimmedText,
+      editedAt: new Date(),
+    },
+    { new: true }
+  )
+    .populate('senderId', 'id email')
+    .lean();
+
+  return {
+    message: formatChatMessage(updated as Record<string, unknown> | null),
+  };
+}
+
+export async function deleteMessage(chatId: string, messageId: string, userId: string, scope: 'me' | 'everyone') {
+  const existing = await Message.findOne({ _id: messageId, chatId }).lean();
+  if (!existing) {
+    throw new AppError(404, 'Message not found', ErrorCodes.NOT_FOUND);
+  }
+
+  const messageObj = existing as Record<string, unknown>;
+  const chat = await Chat.findById(chatId)
+    .populate('studentId', 'userId')
+    .populate('universityId', 'userId')
+    .lean();
+  if (!chat) {
+    throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  }
+
+  const chatObj = chat as { studentId?: { userId?: unknown }; universityId?: { userId?: unknown } };
+  const participantIds = [
+    chatObj.studentId && typeof chatObj.studentId === 'object' ? String(chatObj.studentId.userId ?? '') : null,
+    chatObj.universityId && typeof chatObj.universityId === 'object' ? String(chatObj.universityId.userId ?? '') : null,
+  ].filter(Boolean);
+  if (!participantIds.includes(userId)) {
+    throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
+  }
+
+  if (scope === 'everyone') {
+    if (String(messageObj.senderId) !== userId) {
+      throw new AppError(403, 'You can delete for everyone only your own messages', ErrorCodes.FORBIDDEN);
+    }
+
+    await Message.updateOne(
+      { _id: messageId, chatId, deletedForEveryoneAt: null },
+      { deletedForEveryoneAt: new Date() }
+    );
+  } else {
+    await Message.updateOne(
+      { _id: messageId, chatId },
+      { $addToSet: { deletedForUserIds: new mongoose.Types.ObjectId(userId) } }
+    );
+  }
+
+  return {
+    success: true,
+    messageId,
+    scope,
   };
 }
 
@@ -407,18 +523,8 @@ export async function acceptStudent(chatId: string, userId: string, params: Acce
   });
 
   const sysMsgPop = await Message.findById(sysMsg._id).populate('senderId', 'id email').lean();
-  const plain = sysMsgPop as Record<string, unknown> | null;
   return {
-    message: plain
-      ? {
-          ...plain,
-          id: String(plain._id),
-          text: (plain.message as string) ?? '',
-          type: 'system',
-          metadata: plain.metadata,
-          sender: { id: userId },
-        }
-      : sysMsg,
+    message: formatChatMessage(sysMsgPop as Record<string, unknown> | null) ?? sysMsg,
     chat: { id: String(chatId), acceptedAt: new Date(), acceptancePositionType: params.positionType, acceptancePositionLabel: params.positionLabel },
   };
 }

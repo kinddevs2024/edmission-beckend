@@ -4,6 +4,7 @@ import { connectDatabase } from './config/database';
 import app from './app';
 import { initSocket } from './socket';
 import { startRecommendationWorker } from './workers/recommendation.worker';
+import { startLifecycleWorker } from './workers/lifecycle.worker';
 import { logger } from './utils/logger';
 import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
@@ -14,6 +15,7 @@ initSocket(httpServer);
 
 if (config.nodeEnv !== 'test') {
   startRecommendationWorker();
+  startLifecycleWorker();
 }
 
 async function start() {

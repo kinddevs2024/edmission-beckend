@@ -123,7 +123,11 @@ export async function getDashboard(userId: string) {
     Recommendation.find({ universityId: profile._id })
       .sort({ matchScore: -1 })
       .limit(5)
-      .populate('studentId', 'firstName lastName gpa country')
+      .populate({
+        path: 'studentId',
+        select: 'firstName lastName gpa country userId',
+        populate: { path: 'userId', select: 'email' },
+      })
       .lean(),
   ]);
 
@@ -144,7 +148,26 @@ export async function getDashboard(userId: string) {
     acceptedCount,
     acceptanceRate: totalInterests > 0 ? Math.round((acceptedCount / totalInterests) * 100) : 0,
     verified: (profile as { verified?: boolean }).verified ?? false,
-    topRecommendations: recs.map((r) => ({ ...r, id: String((r as { _id: unknown })._id), student: (r as { studentId?: unknown }).studentId, matchScore: (r as { matchScore?: number }).matchScore })),
+    topRecommendations: recs.map((r) => {
+      const rawStudent = (r as { studentId?: { userId?: { email?: string } } }).studentId;
+      const student =
+        rawStudent && typeof rawStudent === 'object'
+          ? {
+              ...rawStudent,
+              userEmail:
+                rawStudent.userId && typeof rawStudent.userId === 'object'
+                  ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
+                  : undefined,
+            }
+          : undefined;
+
+      return {
+        ...r,
+        id: String((r as { _id: unknown })._id),
+        student,
+        matchScore: (r as { matchScore?: number }).matchScore,
+      };
+    }),
   };
 }
 
@@ -235,7 +258,7 @@ export async function getStudents(
 
   const [students, total, interestStudentIds] = await Promise.all([
     StudentProfile.find(filter)
-      .select('firstName lastName avatarUrl country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency')
+      .select('firstName lastName avatarUrl country city gpa gradeLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId')
       .sort({ gpa: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -244,13 +267,35 @@ export async function getStudents(
     Interest.find({ universityId: profile._id }).select('studentId').lean(),
   ]);
 
+  const userIds = students
+    .map((student) => {
+      const userId = (student as { userId?: unknown }).userId;
+      return userId ? String(userId) : '';
+    })
+    .filter(Boolean);
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select('_id email').lean()
+    : [];
+  const emailByUserId = new Map(
+    users.map((user) => [
+      String((user as { _id: unknown })._id),
+      String((user as { email?: string }).email ?? '').trim() || undefined,
+    ])
+  );
+
   const inPipelineSet = new Set(interestStudentIds.map((i) => String((i as { studentId: unknown }).studentId)));
 
   const data = students.map((s) => {
     const id = String((s as { _id: unknown })._id);
+    const userId = (s as { userId?: unknown }).userId;
+    const studentEmail = userId ? emailByUserId.get(String(userId)) : undefined;
+    const { userId: _studentUserId, ...studentData } = s as Record<string, unknown>;
     return {
       id,
-      student: s,
+      student: {
+        ...studentData,
+        userEmail: studentEmail,
+      },
       inPipeline: inPipelineSet.has(id),
     };
   });
@@ -302,17 +347,26 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   }
 
   const studentProfileId = (student as { _id: unknown })._id;
+  const studentUserId = (student as { userId?: unknown }).userId;
   const documents = await StudentDocument.find({ studentId: studentProfileId, status: 'approved' })
-    .select('type name certificateType score fileUrl')
+    .select('type source name certificateType score fileUrl previewImageUrl canvasJson pageFormat width height editorVersion')
     .lean();
+  const studentUser = studentUserId ? await User.findById(studentUserId).select('email').lean() : null;
 
   const docList = documents.map((d) => ({
     id: String((d as { _id: unknown })._id),
     type: (d as { type: string }).type,
+    source: (d as { source?: string }).source ?? 'upload',
     name: (d as { name?: string }).name,
     certificateType: (d as { certificateType?: string }).certificateType,
     score: (d as { score?: string }).score,
-    fileUrl: (d as { fileUrl: string }).fileUrl,
+    fileUrl: (d as { fileUrl?: string }).fileUrl,
+    previewImageUrl: (d as { previewImageUrl?: string }).previewImageUrl,
+    canvasJson: (d as { canvasJson?: string }).canvasJson,
+    pageFormat: (d as { pageFormat?: string }).pageFormat,
+    width: (d as { width?: number }).width,
+    height: (d as { height?: number }).height,
+    editorVersion: (d as { editorVersion?: string }).editorVersion,
   }));
 
   const s = student as Record<string, unknown>;
@@ -331,6 +385,7 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   return {
     ...out,
     id: String((out as { _id: unknown })._id),
+    email: studentUser && typeof studentUser === 'object' ? String((studentUser as { email?: string }).email ?? '').trim() || undefined : undefined,
     documents: docList,
     readiness,
   };
@@ -358,7 +413,11 @@ export async function getPipeline(
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
 
   let list = await Interest.find({ universityId: profile._id })
-    .populate('studentId')
+    .populate({
+      path: 'studentId',
+      select: 'firstName lastName country city avatarUrl userId',
+      populate: { path: 'userId', select: 'email' },
+    })
     .sort({ updatedAt: -1 })
     .lean();
 
@@ -380,7 +439,25 @@ export async function getPipeline(
     });
   }
 
-  return list.map((i) => ({ ...i, id: String((i as { _id: unknown })._id), student: (i as { studentId?: unknown }).studentId }));
+  return list.map((i) => {
+    const rawStudent = (i as { studentId?: { userId?: { email?: string } } }).studentId;
+    const student =
+      rawStudent && typeof rawStudent === 'object'
+        ? {
+            ...rawStudent,
+            userEmail:
+              rawStudent.userId && typeof rawStudent.userId === 'object'
+                ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
+                : undefined,
+          }
+        : undefined;
+
+    return {
+      ...i,
+      id: String((i as { _id: unknown })._id),
+      student,
+    };
+  });
 }
 
 export async function updateInterestStatus(
@@ -396,13 +473,22 @@ export async function updateInterestStatus(
 
   const updated = await Interest.findByIdAndUpdate(interestId, { status }, {
     new: true,
-    populate: { path: 'studentId', select: 'userId firstName lastName' },
+    populate: { path: 'studentId', select: 'userId firstName lastName', populate: { path: 'userId', select: 'email' } },
     lean: true,
   });
   if (updated) {
-    const student = (updated as { studentId?: { userId?: unknown; firstName?: string; lastName?: string } }).studentId;
-    const studentUserId = student && typeof student.userId !== 'undefined' ? String(student.userId) : null;
-    const studentName = student ? [student.firstName, student.lastName].filter(Boolean).join(' ') || 'Student' : 'Student';
+    const student = (updated as { studentId?: { userId?: unknown | { email?: string }; firstName?: string; lastName?: string } }).studentId;
+    const studentUserId =
+      student && typeof student.userId !== 'undefined'
+        ? typeof student.userId === 'object' && student.userId !== null
+          ? String((student.userId as { _id?: unknown })._id ?? '')
+          : String(student.userId)
+        : null;
+    const studentEmail =
+      student?.userId && typeof student.userId === 'object'
+        ? String((student.userId as { email?: string }).email ?? '').trim() || undefined
+        : undefined;
+    const studentName = student ? [student.firstName, student.lastName].filter(Boolean).join(' ') || studentEmail || 'Student' : 'Student';
     if (studentUserId) {
       await notificationService.createNotification(studentUserId, {
         type: 'status_update',

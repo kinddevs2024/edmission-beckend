@@ -23,7 +23,8 @@ export function registerChatHandlers(io: Server): void {
     socket.on('send_message', async (payload: { chatId: string; message?: string; type?: string; attachmentUrl?: string; metadata?: Record<string, unknown> }) => {
       const { chatId, message, type, attachmentUrl, metadata } = payload || {};
       if (!chatId) return;
-      const params = type && type !== 'text' ? { type: type as 'voice' | 'emotion', text: message, attachmentUrl, metadata } : (message ?? '').trim();
+      const shouldUseObjectPayload = (type && type !== 'text') || attachmentUrl || metadata;
+      const params = shouldUseObjectPayload ? { type: type as 'voice' | 'emotion', text: message, attachmentUrl, metadata } : (message ?? '').trim();
       if (!params) return;
       if (typeof params === 'string' && !params) return;
       try {

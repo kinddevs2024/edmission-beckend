@@ -29,3 +29,7 @@ export { StudentProfileView } from './StudentProfileView';
 export { SystemSettings } from './SystemSettings';
 export { LandingCertificate } from './LandingCertificate';
 export { OfferCertificateTemplate } from './OfferCertificateTemplate';
+export { DocumentTemplate } from './DocumentTemplate';
+export { DocumentTemplateAsset } from './DocumentTemplateAsset';
+export { StudentIssuedDocument } from './StudentIssuedDocument';
+export { StudentDocumentEvent } from './StudentDocumentEvent';

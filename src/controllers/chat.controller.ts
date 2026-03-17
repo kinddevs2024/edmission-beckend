@@ -52,8 +52,14 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
   try {
     if (!req.user) return next();
     const body = (req.body || {}) as { text?: string; type?: string; attachmentUrl?: string; metadata?: Record<string, unknown> };
+    const shouldUseObjectPayload =
+      body.type === 'voice' ||
+      body.type === 'emotion' ||
+      body.type === 'system' ||
+      Boolean(body.attachmentUrl) ||
+      Boolean(body.metadata);
     const params =
-      body.type === 'voice' || body.type === 'emotion' || body.type === 'system'
+      shouldUseObjectPayload
         ? { type: body.type as 'voice' | 'emotion' | 'system', text: body.text, attachmentUrl: body.attachmentUrl, metadata: body.metadata }
         : (body.text ?? '').trim();
     const result = await chatService.saveMessage(req.params.chatId, req.user.id, params);
@@ -70,6 +76,47 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     const io = getIO();
     if (io) io.to(`chat:${req.params.chatId}`).emit('new_message', { chatId: req.params.chatId, message: payload });
     res.status(201).json(payload);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const result = await chatService.updateMessage(req.params.chatId, req.params.messageId, req.user.id, req.body.text);
+    const io = getIO();
+    if (io) {
+      io.to(`chat:${req.params.chatId}`).emit('message_updated', {
+        chatId: req.params.chatId,
+        message: result.message,
+      });
+    }
+    res.json(result.message);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const scope = req.body?.scope === 'everyone' ? 'everyone' : 'me';
+    const result = await chatService.deleteMessage(req.params.chatId, req.params.messageId, req.user.id, scope);
+    const io = getIO();
+    if (io) {
+      const payload = {
+        chatId: req.params.chatId,
+        messageId: req.params.messageId,
+        scope,
+      };
+      if (scope === 'everyone') {
+        io.to(`chat:${req.params.chatId}`).emit('message_deleted', payload);
+      } else {
+        io.to(`user:${req.user.id}`).emit('message_deleted', payload);
+      }
+    }
+    res.json(result);
   } catch (e) {
     next(e);
   }

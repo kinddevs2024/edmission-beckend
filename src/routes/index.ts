@@ -16,6 +16,7 @@ import optionsRoutes from './options.routes';
 import paymentRoutes from './payment.routes';
 import publicRoutes from './public.routes';
 import searchRoutes from './search.routes';
+import documentsRoutes from './documents.routes';
 
 const router = Router();
 
@@ -46,5 +47,6 @@ router.use('/options', optionsRoutes);
 router.use('/payment', paymentRoutes);
 router.use('/public', publicRoutes);
 router.use('/search', searchRoutes);
+router.use('/documents', documentsRoutes);
 
 export default router;

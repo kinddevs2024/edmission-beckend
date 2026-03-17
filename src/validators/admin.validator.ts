@@ -1,6 +1,24 @@
 import { z } from 'zod';
 import { objectIdZod } from '../utils/validators';
 
+/** Accepts full URLs (http/https) or relative paths (/api/uploads/...) from file uploads */
+const absoluteOrRelativeUrlSchema = z.string().min(1).refine(
+  (value) => {
+    const normalized = value.trim();
+    if (!normalized) return false;
+    if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+      try {
+        new URL(normalized);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return normalized.startsWith('/');
+  },
+  { message: 'Invalid url' }
+);
+
 const passwordSchema = z
   .string()
   .min(8, 'Password must be at least 8 characters')
@@ -124,7 +142,7 @@ export const createCatalogUniversitySchema = z.object({
     country: z.string().max(100).optional(),
     city: z.string().max(100).optional(),
     description: z.string().max(5000).optional(),
-    logoUrl: z.string().url().optional(),
+    logoUrl: absoluteOrRelativeUrlSchema.optional(),
     facultyCodes: z.array(z.string()).max(50).optional(),
     facultyItems: z.record(z.array(z.string())).optional(),
     targetStudentCountries: z.array(z.string()).max(50).optional(),
@@ -144,7 +162,7 @@ export const updateCatalogUniversitySchema = z.object({
     country: z.string().max(100).optional(),
     city: z.string().max(100).optional(),
     description: z.string().max(5000).optional(),
-    logoUrl: z.string().url().optional(),
+    logoUrl: absoluteOrRelativeUrlSchema.optional(),
     facultyCodes: z.array(z.string()).max(50).optional(),
     facultyItems: z.record(z.array(z.string())).optional(),
     targetStudentCountries: z.array(z.string()).max(50).optional(),
@@ -225,15 +243,19 @@ export const updateSettingsSchema = z.object({
   }).strict(),
 });
 
-/** Accepts full URLs (http/https) or relative paths (/api/uploads/...) from file uploads */
 const imageUrlSchema = z.string().min(1).refine(
-  (v) => {
-    const s = v.trim()
-    if (!s) return false
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      try { new URL(s); return true } catch { return false }
+  (value) => {
+    const normalized = value.trim();
+    if (!normalized) return false;
+    if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+      try {
+        new URL(normalized);
+        return true;
+      } catch {
+        return false;
+      }
     }
-    return s.startsWith('/')
+    return normalized.startsWith('/');
   },
   { message: 'Invalid url' }
 );
