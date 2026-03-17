@@ -36,13 +36,24 @@ export async function ensureDefaultAdmin(): Promise<void> {
   });
 }
 
-function toPlainUser(doc: { _id: unknown; email: string; role: string; name?: string; mustChangePassword?: boolean }) {
+function toPlainUser(doc: {
+  _id: unknown
+  email: string
+  role: string
+  name?: string
+  mustChangePassword?: boolean
+  onboardingTutorialSeen?: { student?: boolean; university?: boolean } | null
+}) {
   return {
     id: String(doc._id),
     email: doc.email,
     role: doc.role as Role,
     name: doc.name ?? '',
     mustChangePassword: Boolean(doc.mustChangePassword),
+    onboardingTutorialSeen: {
+      student: doc.onboardingTutorialSeen?.student ?? false,
+      university: doc.onboardingTutorialSeen?.university ?? false,
+    },
   };
 }
 
