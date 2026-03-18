@@ -18,3 +18,12 @@ export async function getStats(_req: Request, res: Response, next: NextFunction)
     next(e);
   }
 }
+
+export async function getTrustedUniversityLogos(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const logos = await publicService.getTrustedUniversityLogos();
+    res.json(logos);
+  } catch (e) {
+    next(e);
+  }
+}
