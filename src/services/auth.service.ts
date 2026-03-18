@@ -41,6 +41,8 @@ function toPlainUser(doc: {
   email: string
   role: string
   name?: string
+  phone?: string
+  socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string } | null
   mustChangePassword?: boolean
   onboardingTutorialSeen?: { student?: boolean; university?: boolean } | null
 }) {
@@ -49,6 +51,14 @@ function toPlainUser(doc: {
     email: doc.email,
     role: doc.role as Role,
     name: doc.name ?? '',
+    phone: doc.phone ?? '',
+    socialLinks: {
+      telegram: doc.socialLinks?.telegram ?? '',
+      instagram: doc.socialLinks?.instagram ?? '',
+      linkedin: doc.socialLinks?.linkedin ?? '',
+      facebook: doc.socialLinks?.facebook ?? '',
+      whatsapp: doc.socialLinks?.whatsapp ?? '',
+    },
     mustChangePassword: Boolean(doc.mustChangePassword),
     onboardingTutorialSeen: {
       student: doc.onboardingTutorialSeen?.student ?? false,
@@ -256,7 +266,7 @@ export async function logout(userId: string, refreshToken?: string) {
 
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
-    .select('email name role emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword onboardingTutorialSeen')
+    .select('email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword onboardingTutorialSeen')
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
@@ -266,7 +276,7 @@ export async function getMe(userId: string) {
     UniversityProfile.findOne({ userId }).lean(),
     subscriptionService.getSubscriptionSummary(userId),
   ]);
-  const u = user as { _id: unknown; email: string; name?: string; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean; mustChangePassword?: boolean; onboardingTutorialSeen?: { student?: boolean; university?: boolean } };
+  const u = user as { _id: unknown; email: string; name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean; mustChangePassword?: boolean; onboardingTutorialSeen?: { student?: boolean; university?: boolean } };
   const avatar = studentProfile && (studentProfile as { avatarUrl?: string }).avatarUrl
     ? String((studentProfile as { avatarUrl: string }).avatarUrl).trim() || undefined
     : undefined;
@@ -274,6 +284,14 @@ export async function getMe(userId: string) {
     id: String(u._id),
     email: u.email,
     name: u.name ?? '',
+    phone: u.phone ?? '',
+    socialLinks: {
+      telegram: u.socialLinks?.telegram ?? '',
+      instagram: u.socialLinks?.instagram ?? '',
+      linkedin: u.socialLinks?.linkedin ?? '',
+      facebook: u.socialLinks?.facebook ?? '',
+      whatsapp: u.socialLinks?.whatsapp ?? '',
+    },
     role: u.role,
     avatar: avatar ?? undefined,
     emailVerified: u.emailVerified,
@@ -289,9 +307,19 @@ export async function getMe(userId: string) {
   };
 }
 
-export async function updateMe(userId: string, data: { name?: string; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } }) {
+export async function updateMe(userId: string, data: { name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } }) {
   const update: Record<string, unknown> = {};
   if (data.name !== undefined) update.name = String(data.name);
+  if (data.phone !== undefined) update.phone = String(data.phone).trim();
+  if (data.socialLinks !== undefined) {
+    update.socialLinks = {
+      telegram: String(data.socialLinks.telegram ?? '').trim(),
+      instagram: String(data.socialLinks.instagram ?? '').trim(),
+      linkedin: String(data.socialLinks.linkedin ?? '').trim(),
+      facebook: String(data.socialLinks.facebook ?? '').trim(),
+      whatsapp: String(data.socialLinks.whatsapp ?? '').trim(),
+    };
+  }
   if (data.notificationPreferences !== undefined) update.notificationPreferences = data.notificationPreferences;
   if (data.onboardingTutorialSeen !== undefined) {
     const prev = await User.findById(userId).select('onboardingTutorialSeen').lean();

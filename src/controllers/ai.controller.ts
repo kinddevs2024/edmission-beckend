@@ -2,6 +2,26 @@ import { Request, Response, NextFunction } from 'express';
 import * as aiProvider from '../ai/provider';
 import * as aiService from '../services/ai.service';
 
+const AI_SESSION_LIMIT = 10;
+const aiSessionUsage = new Map<string, { count: number; updatedAt: number }>();
+
+function enforceSessionLimit(userId: string, sessionId?: string) {
+  if (!sessionId) return null;
+  const now = Date.now();
+  for (const [key, value] of aiSessionUsage.entries()) {
+    if (now - value.updatedAt > 12 * 60 * 60 * 1000) {
+      aiSessionUsage.delete(key);
+    }
+  }
+  const key = `${userId}:${sessionId}`;
+  const current = aiSessionUsage.get(key) ?? { count: 0, updatedAt: now };
+  if (current.count >= AI_SESSION_LIMIT) {
+    return `Question limit reached (${AI_SESSION_LIMIT}). Refresh the page to reset it.`;
+  }
+  aiSessionUsage.set(key, { count: current.count + 1, updatedAt: now });
+  return null;
+}
+
 export async function status(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const ok = await aiProvider.healthCheck();
@@ -14,7 +34,7 @@ export async function status(_req: Request, res: Response, next: NextFunction): 
 export async function chat(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = req.body as { message?: string; history?: { role: string; content: string }[]; selectedText?: string; stream?: boolean };
+    const body = req.body as { message?: string; history?: { role: string; content: string }[]; selectedText?: string; sessionId?: string; stream?: boolean };
     const message = typeof body.message === 'string' ? body.message : '';
     if (!message.trim()) {
       res.status(400).json({ message: 'Message is required' });
@@ -25,6 +45,11 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
           .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
           .map((m) => ({ role: m.role as 'user' | 'assistant', content: String(m.content) }))
       : undefined;
+    const sessionLimitError = enforceSessionLimit(req.user.id, typeof body.sessionId === 'string' ? body.sessionId : undefined);
+    if (sessionLimitError) {
+      res.status(429).json({ message: sessionLimitError });
+      return;
+    }
     const stream = Boolean(body.stream);
 
     if (stream) {

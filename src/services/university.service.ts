@@ -530,7 +530,7 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   const documents = await StudentDocument.find({ studentId: studentProfileId, status: 'approved' })
     .select('type source name certificateType score fileUrl previewImageUrl canvasJson pageFormat width height editorVersion')
     .lean();
-  const studentUser = studentUserId ? await User.findById(studentUserId).select('email').lean() : null;
+  const studentUser = studentUserId ? await User.findById(studentUserId).select('email phone socialLinks').lean() : null;
 
   const docList = documents.map((d) => ({
     id: String((d as { _id: unknown })._id),
@@ -565,6 +565,16 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     ...out,
     id: String((out as { _id: unknown })._id),
     email: studentUser && typeof studentUser === 'object' ? String((studentUser as { email?: string }).email ?? '').trim() || undefined : undefined,
+    phone: studentUser && typeof studentUser === 'object' ? String((studentUser as { phone?: string }).phone ?? '').trim() || undefined : undefined,
+    socialLinks: studentUser && typeof studentUser === 'object'
+      ? {
+          telegram: String((studentUser as { socialLinks?: { telegram?: string } }).socialLinks?.telegram ?? '').trim() || undefined,
+          instagram: String((studentUser as { socialLinks?: { instagram?: string } }).socialLinks?.instagram ?? '').trim() || undefined,
+          linkedin: String((studentUser as { socialLinks?: { linkedin?: string } }).socialLinks?.linkedin ?? '').trim() || undefined,
+          facebook: String((studentUser as { socialLinks?: { facebook?: string } }).socialLinks?.facebook ?? '').trim() || undefined,
+          whatsapp: String((studentUser as { socialLinks?: { whatsapp?: string } }).socialLinks?.whatsapp ?? '').trim() || undefined,
+        }
+      : undefined,
     documents: docList,
     readiness,
   };

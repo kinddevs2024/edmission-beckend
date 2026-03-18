@@ -108,7 +108,18 @@ export async function patchMe(
           ...(body.onboardingTutorialSeen.university === true && { university: true }),
         }
       : undefined;
-    const patch: { name?: string; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } } = { name, notificationPreferences };
+    const phone = typeof body.phone === 'string' ? body.phone.trim() : undefined;
+    const socialLinks = body.socialLinks && typeof body.socialLinks === 'object'
+      ? {
+          telegram: typeof body.socialLinks.telegram === 'string' ? body.socialLinks.telegram.trim() : undefined,
+          instagram: typeof body.socialLinks.instagram === 'string' ? body.socialLinks.instagram.trim() : undefined,
+          linkedin: typeof body.socialLinks.linkedin === 'string' ? body.socialLinks.linkedin.trim() : undefined,
+          facebook: typeof body.socialLinks.facebook === 'string' ? body.socialLinks.facebook.trim() : undefined,
+          whatsapp: typeof body.socialLinks.whatsapp === 'string' ? body.socialLinks.whatsapp.trim() : undefined,
+        }
+      : undefined;
+    const patch: { name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } } = { name, phone, notificationPreferences };
+    if (socialLinks !== undefined) patch.socialLinks = socialLinks;
     if (onboardingTutorialSeen !== undefined && Object.keys(onboardingTutorialSeen).length > 0) {
       patch.onboardingTutorialSeen = onboardingTutorialSeen;
     }
