@@ -5,12 +5,13 @@ export async function getNotifications(req: Request, res: Response, next: NextFu
   try {
     if (!req.user) return next();
     const { page, limit, type, unread } = req.query;
+    const locale = req.user.language ?? req.locale ?? 'en';
     const data = await notificationService.getNotifications(req.user.id, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       type: type ? String(type) : undefined,
       unread: unread === 'true' ? true : unread === 'false' ? false : undefined,
-    });
+    }, locale);
     res.json(data);
   } catch (e) {
     next(e);
@@ -20,7 +21,8 @@ export async function getNotifications(req: Request, res: Response, next: NextFu
 export async function markRead(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const data = await notificationService.markRead(req.user.id, req.params.id);
+    const locale = req.user.language ?? req.locale ?? 'en';
+    const data = await notificationService.markRead(req.user.id, req.params.id, locale);
     res.json(data);
   } catch (e) {
     next(e);

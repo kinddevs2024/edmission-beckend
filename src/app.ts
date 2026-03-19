@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
 import { errorHandler } from './middlewares/errorHandler.middleware';
+import { apiLocaleMiddleware } from './middlewares/apiLocale.middleware';
 import routes from './routes';
 import { swaggerSpec } from './swagger';
 import { globalApiRateLimiter } from './middlewares/rateLimit.middleware';
@@ -31,6 +32,7 @@ app.use(helmet({
 }));
 app.use(cors({ origin: config.cors.origin, credentials: true }));
 app.use(cookieParser());
+app.use(apiLocaleMiddleware);
 app.use('/api', globalApiRateLimiter);
 app.use(express.json({
   verify: (req: express.Request, _res, buf: Buffer) => {

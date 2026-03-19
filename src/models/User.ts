@@ -1,10 +1,12 @@
 import mongoose from 'mongoose';
 
 const ROLES = ['student', 'university', 'admin', 'school_counsellor'] as const;
+const LANGUAGES = ['en', 'ru', 'uz'] as const;
 
 const userSchema = new mongoose.Schema(
   {
     role: { type: String, required: true, enum: ROLES },
+    language: { type: String, enum: LANGUAGES, default: 'en' },
     email: { type: String, required: true, unique: true },
     name: { type: String, default: '' },
     phone: { type: String, default: '' },

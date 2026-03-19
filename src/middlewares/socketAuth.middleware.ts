@@ -1,4 +1,6 @@
 import { Socket } from 'socket.io';
+import { User } from '../models';
+import { resolveApiLocale } from '../i18n/apiMessages';
 import { verifyAccessToken } from '../utils/jwt';
 import type { ExtendedSocket } from '../socket/types';
 
@@ -20,11 +22,22 @@ export function socketAuthMiddleware(
 
   try {
     const payload = verifyAccessToken(token as string);
+    const handshakeLanguage =
+      socket.handshake.auth?.language ||
+      socket.handshake.query?.language ||
+      socket.handshake.headers['x-user-language'] ||
+      socket.handshake.headers['accept-language'];
+    const locale = resolveApiLocale(Array.isArray(handshakeLanguage) ? handshakeLanguage[0] : handshakeLanguage);
     (socket as ExtendedSocket).user = {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
+      language: locale,
     };
+    User.updateOne(
+      { _id: payload.sub, language: { $ne: locale } },
+      { $set: { language: locale } }
+    ).catch(() => {});
     next();
   } catch {
     next(new Error('Invalid or expired token'));

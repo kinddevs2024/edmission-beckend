@@ -1,6 +1,8 @@
-import { Notification } from '../models';
+import { Notification, User } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { getIO } from '../socket';
+import { type ApiLocale } from '../i18n/apiMessages';
+import { translateRuntimeText } from '../i18n/runtimeMessages';
 
 export type CreateNotificationParams = {
   type: string;
@@ -11,9 +13,29 @@ export type CreateNotificationParams = {
   metadata?: Record<string, unknown>;
 };
 
+type NotificationRecord = {
+  _id?: unknown;
+  id?: string;
+  title?: string | null;
+  body?: string | null;
+  [key: string]: unknown;
+};
+
+function localizeNotificationRecord<T extends NotificationRecord>(notification: T, locale: ApiLocale): T {
+  const next = { ...notification };
+  if (typeof next.title === 'string') {
+    next.title = translateRuntimeText(next.title, locale);
+  }
+  if (typeof next.body === 'string') {
+    next.body = translateRuntimeText(next.body, locale);
+  }
+  return next;
+}
+
 export async function getNotifications(
   userId: string,
-  query: { page?: number; limit?: number; type?: string; unread?: boolean }
+  query: { page?: number; limit?: number; type?: string; unread?: boolean },
+  locale: ApiLocale = 'en'
 ) {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
@@ -33,7 +55,7 @@ export async function getNotifications(
   ]);
 
   return {
-    data: data.map((n) => ({ ...n, id: String((n as { _id: unknown })._id) })),
+    data: data.map((n) => localizeNotificationRecord({ ...n, id: String((n as { _id: unknown })._id) }, locale)),
     total,
     page,
     limit,
@@ -54,10 +76,10 @@ export async function createNotification(userId: string, params: CreateNotificat
   const plain = doc.toObject ? doc.toObject() : (doc as unknown as Record<string, unknown>);
   const id = String(plain._id);
   const link = buildNotificationLink(params.type, params.referenceId, params.referenceType, params.metadata);
-
-  const io = getIO();
-  if (io) {
-    io.to(`user:${userId}`).emit('notification', {
+  const recipient = await User.findById(userId).select('language').lean();
+  const locale = ((recipient as { language?: ApiLocale } | null)?.language ?? 'en') as ApiLocale;
+  const localizedPayload = localizeNotificationRecord(
+    {
       id,
       type: params.type,
       title: params.title,
@@ -67,7 +89,13 @@ export async function createNotification(userId: string, params: CreateNotificat
       referenceId: params.referenceId,
       metadata: params.metadata,
       createdAt: (plain as { createdAt?: Date }).createdAt,
-    });
+    },
+    locale
+  );
+
+  const io = getIO();
+  if (io) {
+    io.to(`user:${userId}`).emit('notification', localizedPayload);
   }
 
   return { ...plain, id };
@@ -114,11 +142,13 @@ function buildNotificationLink(
   }
 }
 
-export async function markRead(userId: string, notificationId: string) {
+export async function markRead(userId: string, notificationId: string, locale: ApiLocale = 'en') {
   const n = await Notification.findOne({ _id: notificationId, userId });
   if (!n) throw new AppError(404, 'Notification not found', ErrorCodes.NOT_FOUND);
   const updated = await Notification.findByIdAndUpdate(notificationId, { readAt: new Date() }, { new: true }).lean();
-  return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+  return updated
+    ? localizeNotificationRecord({ ...updated, id: String((updated as { _id: unknown })._id) }, locale)
+    : null;
 }
 
 export async function markAllRead(userId: string) {

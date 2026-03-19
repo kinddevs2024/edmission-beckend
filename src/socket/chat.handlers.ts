@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import * as chatService from '../services/chat.service';
 import type { ExtendedSocket } from './types';
+import { translateRuntimeText } from '../i18n/runtimeMessages';
 
 export function registerChatHandlers(io: Server): void {
   io.on('connection', (socket: ExtendedSocket) => {
@@ -28,20 +29,17 @@ export function registerChatHandlers(io: Server): void {
       if (!params) return;
       if (typeof params === 'string' && !params) return;
       try {
-        const { message: msg, recipientId } = await chatService.saveMessage(
+        const { message: msg } = await chatService.saveMessage(
           chatId,
           socket.user!.id,
           typeof params === 'string' ? params : params
         );
         const payloadOut = msg as Record<string, unknown>;
         io.to(`chat:${chatId}`).emit('new_message', { chatId, message: { ...payloadOut, id: payloadOut.id ?? payloadOut._id, text: payloadOut.message ?? payloadOut.text } });
-        io.to(`user:${recipientId}`).emit('notification', {
-          type: 'message',
-          title: 'New message',
-          referenceId: chatId,
-        });
       } catch (e) {
-        socket.emit('error', { message: 'Failed to send message' });
+        socket.emit('error', {
+          message: translateRuntimeText('Failed to send message', socket.user?.language ?? 'en'),
+        });
       }
     });
 
