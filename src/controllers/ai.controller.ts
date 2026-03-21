@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as aiProvider from '../ai/provider';
 import * as aiService from '../services/ai.service';
+import { translateApiText } from '../i18n/apiMessages';
 
 const AI_SESSION_LIMIT = 10;
 const aiSessionUsage = new Map<string, { count: number; updatedAt: number }>();
@@ -47,13 +48,13 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
       : undefined;
     const sessionLimitError = enforceSessionLimit(req.user.id, typeof body.sessionId === 'string' ? body.sessionId : undefined);
     if (sessionLimitError) {
-      res.status(429).json({ message: sessionLimitError });
+      res.status(429).json({ message: translateApiText(sessionLimitError, req.locale ?? 'en').text });
       return;
     }
     const stream = Boolean(body.stream);
 
     if (stream) {
-      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
@@ -77,7 +78,8 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
         if (flush) flush();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        res.write(`data: ${JSON.stringify({ t: 'error', d: msg })}\n\n`);
+        const localized = translateApiText(msg, req.locale ?? 'en').text;
+        res.write(`data: ${JSON.stringify({ t: 'error', d: localized })}\n\n`);
       } finally {
         res.end();
       }

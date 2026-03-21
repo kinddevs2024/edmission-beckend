@@ -879,6 +879,33 @@ function splitList(s: unknown): string[] {
     .slice(0, 50);
 }
 
+function parseFacultyItems(raw: unknown): Record<string, string[]> | undefined {
+  if (raw == null || raw === '') return undefined;
+  // Format: category:item1|item2; category2:item3|item4
+  const entries = String(raw)
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!entries.length) return undefined;
+
+  const result: Record<string, string[]> = {};
+  for (const entry of entries) {
+    const separator = entry.indexOf(':');
+    if (separator <= 0) continue;
+    const key = entry.slice(0, separator).trim();
+    const values = entry
+      .slice(separator + 1)
+      .split('|')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+    if (key && values.length > 0) {
+      result[key] = values;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 /** Parse universities Excel buffer (Universities + Programs + Scholarships sheets). Returns array of bodies for createCatalogUniversity. */
 export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[] {
   const XLSX = require('xlsx');
@@ -906,7 +933,9 @@ export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[
         durationYears: parseNumFromText(row['Years'] ?? row['durationYears']),
         tuitionFee: parseNumFromText(row['Tuition'] ?? row['tuitionFee'] ?? row['Tuition']),
         language: String(row['Language'] ?? row['language'] ?? '').trim() || undefined,
-        entryRequirements: String(row['Entry requirements'] ?? row['entryRequirements'] ?? '').trim() || undefined,
+        entryRequirements: String(
+          row['Entry requirements'] ?? row['entryRequirements'] ?? row['Notes'] ?? row['notes'] ?? ''
+        ).trim() || undefined,
       });
       programsByUni.set(uniName, list);
     }
@@ -941,6 +970,7 @@ export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[
     const facultiesRaw = row['Faculties'] ?? row['faculties'];
     const targetRaw = row['Target student countries'] ?? row['targetStudentCountries'];
     const facultyCodes = splitList(facultiesRaw);
+    const facultyItems = parseFacultyItems(row['Faculty items'] ?? row['facultyItems']);
     const targetStudentCountries = splitList(targetRaw);
 
     const body: Record<string, unknown> = {
@@ -955,6 +985,7 @@ export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[
       establishedYear: establishedYear != null ? establishedYear : undefined,
       studentCount: studentCount != null ? studentCount : undefined,
       facultyCodes: facultyCodes.length ? facultyCodes : undefined,
+      facultyItems,
       targetStudentCountries: targetStudentCountries.length ? targetStudentCountries : undefined,
       programs: (programsByUni.get(universityName) || []).slice(0, 50),
       scholarships: (scholarshipsByUni.get(universityName) || []).slice(0, 30).map((s) => ({
@@ -1004,13 +1035,11 @@ export function getUniversitiesExcelTemplateBuffer(): Buffer {
     'Year founded',
     'Number of students',
     'Faculties',
+    'Faculty items',
     'Target student countries',
-    'Source URL',
-    'Source site',
-    'Extraction notes',
   ];
-  const progHeaders = ['University name', 'Program name', 'Degree', 'Field', 'Years', 'Tuition', 'Language', 'Source URL', 'Notes'];
-  const schHeaders = ['University name', 'Scholarship name', 'Coverage %', 'Max slots', 'Deadline', 'Eligibility', 'Source URL', 'Notes'];
+  const progHeaders = ['University name', 'Program name', 'Degree', 'Field', 'Years', 'Tuition', 'Language', 'Entry requirements', 'Notes'];
+  const schHeaders = ['University name', 'Scholarship name', 'Coverage %', 'Max slots', 'Deadline', 'Eligibility', 'Notes'];
 
   const uniData = [
     uniHeaders,
@@ -1026,14 +1055,12 @@ export function getUniversitiesExcelTemplateBuffer(): Buffer {
       '1990',
       '10000',
       'Engineering; Science; Arts',
+      'Engineering:Computer Science|Mechanical Engineering; Science:Biology|Physics',
       'Uzbekistan; Kazakhstan; Turkey',
-      '',
-      '',
-      '',
     ],
   ];
-  const progData = [progHeaders, ['Example University', 'Bachelor in Computer Science', 'Bachelor', 'Computer Science', '4', '5000', 'English', '', '']];
-  const schData = [schHeaders, ['Example University', 'Merit Scholarship', '50', '10', '2025-06-30', 'GPA 3.5+', '', '']];
+  const progData = [progHeaders, ['Example University', 'Bachelor in Computer Science', 'Bachelor', 'Computer Science', '4', '5000', 'English', 'IELTS 6.0, GPA 3.0+', '']];
+  const schData = [schHeaders, ['Example University', 'Merit Scholarship', '50', '10', '2025-06-30', 'GPA 3.5+', '']];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(uniData), 'Universities');

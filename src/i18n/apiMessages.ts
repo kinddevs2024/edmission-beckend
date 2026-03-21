@@ -24,6 +24,7 @@ const fieldLabels: Record<string, LocalizedText> = {
   code: { en: 'code', ru: 'код', uz: 'kod' },
   text: { en: 'text', ru: 'текст', uz: 'matn' },
   message: { en: 'message', ru: 'сообщение', uz: 'xabar' },
+  'message text': { en: 'message text', ru: 'текст сообщения', uz: 'xabar matni' },
   status: { en: 'status', ru: 'статус', uz: 'status' },
   file: { en: 'file', ru: 'файл', uz: 'fayl' },
   subject: { en: 'subject', ru: 'тема', uz: 'mavzu' },
@@ -146,6 +147,36 @@ const exactMessages: Record<string, LocalizedText> = {
     en: 'Message is required',
     ru: 'Сообщение обязательно',
     uz: 'Xabar kiritilishi shart',
+  },
+  'Message text is required': {
+    en: 'Message text is required',
+    ru: 'Текст сообщения обязателен',
+    uz: 'Xabar matni kiritilishi shart',
+  },
+  'Message text is required for text messages': {
+    en: 'Message text is required for text messages',
+    ru: 'Для текстовых сообщений обязателен текст сообщения',
+    uz: 'Matnli xabarlar uchun xabar matni majburiy',
+  },
+  'Question limit reached (10). Refresh the page to reset it.': {
+    en: 'Question limit reached (10). Refresh the page to reset it.',
+    ru: 'Лимит вопросов достигнут (10). Обновите страницу, чтобы сбросить счётчик.',
+    uz: 'Savollar limiti tugadi (10). Hisoblagichni tiklash uchun sahifani yangilang.',
+  },
+  'Password must contain at least one uppercase letter': {
+    en: 'Password must contain at least one uppercase letter',
+    ru: 'Пароль должен содержать хотя бы одну заглавную букву',
+    uz: 'Parol kamida bitta katta harfni o‘z ichiga olishi kerak',
+  },
+  'Password must contain at least one lowercase letter': {
+    en: 'Password must contain at least one lowercase letter',
+    ru: 'Пароль должен содержать хотя бы одну строчную букву',
+    uz: 'Parol kamida bitta kichik harfni o‘z ichiga olishi kerak',
+  },
+  'Password must contain at least one number': {
+    en: 'Password must contain at least one number',
+    ru: 'Пароль должен содержать хотя бы одну цифру',
+    uz: 'Parol kamida bitta raqamni o‘z ichiga olishi kerak',
   },
   'Status is required': {
     en: 'Status is required',
@@ -765,15 +796,56 @@ function translateLabel(
   return dictionary[normalized]?.[locale] ?? normalized;
 }
 
+function normalizeLanguageToken(value: string): string {
+  return value.trim().toLowerCase().split('-')[0];
+}
+
+function parseAcceptLanguage(header: string): string[] {
+  return header
+    .split(',')
+    .map((entry) => {
+      const [rawLang, ...rest] = entry.trim().split(';');
+      const qPart = rest.find((part) => part.trim().startsWith('q='));
+      const q = qPart ? Number(qPart.trim().slice(2)) : 1;
+      return {
+        lang: normalizeLanguageToken(rawLang),
+        q: Number.isFinite(q) ? q : 0,
+      };
+    })
+    .filter((entry) => entry.lang.length > 0)
+    .sort((a, b) => b.q - a.q)
+    .map((entry) => entry.lang);
+}
+
+function tryFixMojibake(input: string): string {
+  // Typical UTF-8 text accidentally decoded as Latin-1 (e.g. "РџРѕ...")
+  if (!/(Р.|Ð.|Ñ.)/.test(input)) return input;
+  try {
+    const repaired = Buffer.from(input, 'latin1').toString('utf8').trim();
+    return repaired && !/(�)/.test(repaired) ? repaired : input;
+  } catch {
+    return input;
+  }
+}
+
 export function resolveApiLocale(value: unknown): ApiLocale {
   const input = String(value ?? '').toLowerCase();
+  if (!input) return 'en';
+
+  const preferred = parseAcceptLanguage(input);
+  for (const lang of preferred) {
+    if (lang === 'ru') return 'ru';
+    if (lang === 'uz') return 'uz';
+    if (lang === 'en') return 'en';
+  }
+
   if (input.includes('ru')) return 'ru';
   if (input.includes('uz')) return 'uz';
   return 'en';
 }
 
 export function translateApiText(message: string, locale: ApiLocale): TranslationResult {
-  const normalized = String(message ?? '').trim();
+  const normalized = tryFixMojibake(String(message ?? '').trim());
   if (!normalized) return { text: normalized };
 
   const exact = exactMessages[normalized];
@@ -792,30 +864,24 @@ export function translateApiText(message: string, locale: ApiLocale): Translatio
 }
 
 export function localizeApiBody<T>(body: T, locale: ApiLocale): T {
-  if (!body || typeof body !== 'object') return body;
+  const visit = (value: unknown, shouldTranslate = false): unknown => {
+    if (typeof value === 'string') {
+      return shouldTranslate ? translateApiText(value, locale).text : value;
+    }
+    if (Array.isArray(value)) return value.map((item) => visit(item, shouldTranslate));
+    if (!value || typeof value !== 'object') return value;
 
-  if (Array.isArray(body)) {
-    return [...body] as T;
-  }
-
-  const nextBody: Record<string, unknown> = { ...(body as Record<string, unknown>) };
-
-  if (typeof nextBody.message === 'string') {
-    nextBody.message = translateApiText(nextBody.message, locale).text;
-  }
-  if (typeof nextBody.error === 'string') {
-    nextBody.error = translateApiText(nextBody.error, locale).text;
-  }
-  if (Array.isArray(nextBody.errors)) {
-    nextBody.errors = nextBody.errors.map((item: unknown) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
-      const entry: Record<string, unknown> = { ...item };
-      if (typeof entry.message === 'string') {
-        entry.message = translateApiText(entry.message, locale).text;
+    const next: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+    for (const [key, nested] of Object.entries(next)) {
+      const translateCurrent = shouldTranslate || key === 'message' || key === 'error' || key === 'title' || key === 'body';
+      if (key === 'errors' && Array.isArray(nested)) {
+        next[key] = nested.map((entry) => visit(entry, true));
+      } else {
+        next[key] = visit(nested, translateCurrent);
       }
-      return entry;
-    });
-  }
+    }
+    return next;
+  };
 
-  return nextBody as T;
+  return visit(body) as T;
 }
