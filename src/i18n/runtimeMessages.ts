@@ -254,6 +254,19 @@ const regexMessages: Array<{ pattern: RegExp; handler: RegexHandler }> = [
     },
   },
   {
+    pattern: /^Your request for (.+) has been approved\. You can now sign in and complete your profile\.$/,
+    handler: (match, locale) => {
+      const universityName = match[1];
+      if (locale === 'ru') {
+        return `Ваша заявка для ${universityName} одобрена. Теперь вы можете войти и завершить профиль.`;
+      }
+      if (locale === 'uz') {
+        return `${universityName} uchun so'rovingiz tasdiqlandi. Endi tizimga kirib profilingizni to'ldirishingiz mumkin.`;
+      }
+      return `Your request for ${universityName} has been approved. You can now sign in and complete your profile.`;
+    },
+  },
+  {
     pattern: /^A student requested to join (.+)$/,
     handler: (match, locale) => {
       const schoolName = match[1];
