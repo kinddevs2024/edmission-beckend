@@ -27,6 +27,7 @@ export { Ticket } from './Ticket';
 export { StudentDocument } from './StudentDocument';
 export { AIConversation } from './AIConversation';
 export { StudentProfileView } from './StudentProfileView';
+export { SiteVisit } from './SiteVisit';
 export { SystemSettings } from './SystemSettings';
 export { LandingCertificate } from './LandingCertificate';
 export { OfferCertificateTemplate } from './OfferCertificateTemplate';

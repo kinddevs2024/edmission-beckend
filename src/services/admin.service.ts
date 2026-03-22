@@ -26,6 +26,7 @@ import {
   StudentDocument,
   Investor,
   LandingCertificate,
+  SiteVisit,
 } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
@@ -40,6 +41,17 @@ import { v4 as uuidv4 } from 'uuid';
 
 const BCRYPT_ROUNDS = 12;
 const INVITE_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
+
+function parseDateOnlyInput(value: string | undefined, endOfDay: boolean = false): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const iso = endOfDay ? `${value}T23:59:59.999Z` : `${value}T00:00:00.000Z`;
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toDateOnlyString(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
 
 export async function getDashboard() {
   const [users, universities, offers, pendingVerification, subStats] = await Promise.all([
@@ -109,6 +121,39 @@ export async function getUniversityInterestAnalytics(limit: number = 20) {
   }));
   const merged = [...profileItems, ...catalogItems].sort((a, b) => b.interestCount - a.interestCount).slice(0, cap);
   return merged;
+}
+
+export async function getAnalyticsOverview(query: { from?: string; to?: string }) {
+  const today = new Date();
+  const todayKey = toDateOnlyString(today);
+  const from = parseDateOnlyInput(query.from ?? todayKey, false);
+  const to = parseDateOnlyInput(query.to ?? todayKey, true);
+
+  if (!from || !to) {
+    throw new AppError(400, 'Invalid date range', ErrorCodes.VALIDATION);
+  }
+  if (from.getTime() > to.getTime()) {
+    throw new AppError(400, '"from" must be before or equal to "to"', ErrorCodes.VALIDATION);
+  }
+
+  const visitRange = { visitedOn: { $gte: from, $lte: to } };
+  const registrationRange = { createdAt: { $gte: from, $lte: to } };
+
+  const [visitorIds, universityUserIds, studentUserIds, registrations] = await Promise.all([
+    SiteVisit.distinct('visitorId', visitRange),
+    SiteVisit.distinct('userId', { ...visitRange, role: 'university', userId: { $ne: null } }),
+    SiteVisit.distinct('userId', { ...visitRange, role: 'student', userId: { $ne: null } }),
+    User.countDocuments(registrationRange),
+  ]);
+
+  return {
+    from: toDateOnlyString(from),
+    to: toDateOnlyString(to),
+    totalVisitors: visitorIds.length,
+    universityVisitors: universityUserIds.length,
+    studentVisitors: studentUserIds.length,
+    registrations,
+  };
 }
 
 export async function getUsers(query: { page?: number; limit?: number; role?: string }) {

@@ -23,6 +23,19 @@ export async function getUniversityInterestAnalytics(req: Request, res: Response
   }
 }
 
+export async function getAnalyticsOverview(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { from, to } = req.query;
+    const data = await adminService.getAnalyticsOverview({
+      from: from as string | undefined,
+      to: to as string | undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, role } = req.query;

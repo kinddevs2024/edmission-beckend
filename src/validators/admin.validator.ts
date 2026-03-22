@@ -266,6 +266,11 @@ export const logsQuerySchema = z.object({
   userId: z.string().max(100).optional(),
 });
 
+export const analyticsOverviewQuerySchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
 export const subscriptionsQuerySchema = z.object({
   page: z.coerce.number().min(1).max(500).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),

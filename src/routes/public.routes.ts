@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as publicController from '../controllers/public.controller';
+import { optionalAuthMiddleware } from '../middlewares/auth.middleware';
 import { requireDb } from '../middlewares/requireDb.middleware';
 
 const router = Router();
@@ -14,5 +15,8 @@ router.get('/trusted-university-logos', publicController.getTrustedUniversityLog
 
 /** Public landing certificates (university + student) - no auth required */
 router.get('/landing-certificates', publicController.getLandingCertificates);
+
+/** Public lightweight site visit tracking. */
+router.post('/analytics/visit', optionalAuthMiddleware, publicController.trackSiteVisit);
 
 export default router;
