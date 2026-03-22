@@ -487,6 +487,30 @@ export async function downloadUniversitiesTemplate(req: Request, res: Response, 
   }
 }
 
+export async function downloadAllUniversitiesExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const buffer = await adminService.getUniversitiesExcelExportBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="universities_export.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function previewUniversitiesExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.file?.buffer) {
+      res.status(400).json({ message: 'No file uploaded. Use form field "file" with an .xlsx file.' });
+      return;
+    }
+    const result = await adminService.previewUniversitiesExcelImport(req.file.buffer);
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function uploadUniversitiesExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.file?.buffer) {

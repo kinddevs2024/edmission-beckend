@@ -40,6 +40,13 @@ router.patch('/users/:id/university-profile', requireAdminOnly, validateObjectId
 router.get('/universities/verification', adminController.getVerificationQueue);
 router.post('/universities/:id/verify', requireAdminOnly, validateObjectId('id'), validate(adminValidator.verifyUniversitySchema.shape.body, 'body'), adminController.verifyUniversity);
 router.get('/universities/template', adminController.downloadUniversitiesTemplate);
+router.get('/universities/export', adminController.downloadAllUniversitiesExcel);
+router.post('/universities/import/preview', requireAdminOnly, (req, res, next) => {
+  uploadExcel.single('file')(req, res, (err) => {
+    if (err) return next(err);
+    next();
+  });
+}, adminController.previewUniversitiesExcel);
 router.post('/universities/import', requireAdminOnly, (req, res, next) => {
   uploadExcel.single('file')(req, res, (err) => {
     if (err) return next(err);

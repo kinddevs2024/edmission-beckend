@@ -43,6 +43,25 @@ const universityCatalogSchema = new mongoose.Schema(
         eligibility: String,
       },
     ],
+    /** Embedded custom faculties managed from admin Excel/import flows */
+    customFaculties: [
+      {
+        name: String,
+        description: String,
+        items: [String],
+        order: Number,
+      },
+    ],
+    /** Embedded university document metadata for catalog/import flows */
+    documents: [
+      {
+        documentType: String,
+        fileUrl: String,
+        status: String,
+        reviewedBy: String,
+        reviewedAt: Date,
+      },
+    ],
   },
   { timestamps: true }
 );

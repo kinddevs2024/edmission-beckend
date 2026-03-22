@@ -153,6 +153,21 @@ const scholarshipCatalogSchema = z.object({
   eligibility: z.string().optional(),
 });
 
+const customFacultyCatalogSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  items: z.array(z.string()).max(100).optional(),
+  order: z.number().optional(),
+});
+
+const universityDocumentCatalogSchema = z.object({
+  documentType: z.string(),
+  fileUrl: absoluteOrRelativeUrlSchema,
+  status: z.string().optional(),
+  reviewedBy: z.string().optional(),
+  reviewedAt: z.string().optional(),
+});
+
 export const createCatalogUniversitySchema = z.object({
   body: z.object({
     universityName: z.string().min(1).max(200),
@@ -168,6 +183,8 @@ export const createCatalogUniversitySchema = z.object({
     targetStudentCountries: z.array(z.string()).max(50).optional(),
     programs: z.array(programSchema).max(50).optional(),
     scholarships: z.array(scholarshipCatalogSchema).max(30).optional(),
+    customFaculties: z.array(customFacultyCatalogSchema).max(100).optional(),
+    documents: z.array(universityDocumentCatalogSchema).max(100).optional(),
     minLanguageLevel: z.string().max(50).optional(),
     tuitionPrice: z.number().min(0).optional(),
   }).strict(),
@@ -188,6 +205,8 @@ export const updateCatalogUniversitySchema = z.object({
     targetStudentCountries: z.array(z.string()).max(50).optional(),
     programs: z.array(programSchema).max(50).optional(),
     scholarships: z.array(scholarshipCatalogSchema).max(30).optional(),
+    customFaculties: z.array(customFacultyCatalogSchema).max(100).optional(),
+    documents: z.array(universityDocumentCatalogSchema).max(100).optional(),
     minLanguageLevel: z.string().max(50).optional(),
     tuitionPrice: z.number().min(0).optional(),
   }).strict(),

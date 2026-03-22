@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import mongoose from 'mongoose';
 import {
   User,
   StudentProfile,
@@ -20,6 +21,7 @@ import {
   Ticket,
   Recommendation,
   Faculty,
+  GlobalFaculty,
   Program,
   StudentDocument,
   Investor,
@@ -553,6 +555,195 @@ export async function reviewDocument(docId: string, adminUserId: string, decisio
 
 // ——— University catalog (for registration flow) ———
 
+type CatalogProgramPayload = {
+  name: string;
+  degreeLevel?: string;
+  field?: string;
+  durationYears?: number;
+  tuitionFee?: number;
+  language?: string;
+  entryRequirements?: string;
+};
+
+type CatalogScholarshipPayload = {
+  name: string;
+  coveragePercent: number;
+  maxSlots: number;
+  deadline?: string;
+  eligibility?: string;
+};
+
+type CatalogCustomFacultyPayload = {
+  name: string;
+  description?: string;
+  items?: string[];
+  order?: number;
+};
+
+type CatalogDocumentPayload = {
+  documentType: string;
+  fileUrl: string;
+  status?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+};
+
+type CatalogUniversityPayload = {
+  universityName: string;
+  tagline?: string;
+  establishedYear?: number;
+  studentCount?: number;
+  country?: string;
+  city?: string;
+  description?: string;
+  logoUrl?: string;
+  facultyCodes?: string[];
+  facultyItems?: Record<string, string[]>;
+  targetStudentCountries?: string[];
+  minLanguageLevel?: string;
+  tuitionPrice?: number;
+  programs?: CatalogProgramPayload[];
+  scholarships?: CatalogScholarshipPayload[];
+  customFaculties?: CatalogCustomFacultyPayload[];
+  documents?: CatalogDocumentPayload[];
+};
+
+function trimString(value: unknown, maxLength?: number): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = String(value).trim();
+  if (!trimmed) return undefined;
+  return maxLength != null ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+function normalizeNumber(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeStringArray(value: unknown, maxItems: number = 50): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.map((item) => String(item).trim()).filter(Boolean).slice(0, maxItems);
+  return items.length ? items : undefined;
+}
+
+function normalizeFacultyItemsValue(value: unknown): Record<string, string[]> | undefined {
+  if (typeof value !== 'object' || value == null || Array.isArray(value)) return undefined;
+  const result: Record<string, string[]> = {};
+  for (const [key, rawItems] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    const normalizedItems = normalizeStringArray(rawItems, 50);
+    if (normalizedKey && normalizedItems?.length) {
+      result[normalizedKey] = normalizedItems;
+    }
+  }
+  return Object.keys(result).length ? result : undefined;
+}
+
+function normalizeProgramsValue(value: unknown): CatalogProgramPayload[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const programs: CatalogProgramPayload[] = [];
+  for (const raw of value.slice(0, 50)) {
+      const item = raw as Record<string, unknown>;
+      const name = trimString(item.name) ?? '';
+      if (!name) continue;
+      programs.push({
+        name,
+        degreeLevel: trimString(item.degreeLevel),
+        field: trimString(item.field),
+        durationYears: normalizeNumber(item.durationYears),
+        tuitionFee: normalizeNumber(item.tuitionFee),
+        language: trimString(item.language),
+        entryRequirements: trimString(item.entryRequirements),
+      });
+  }
+  return programs.length ? programs : undefined;
+}
+
+function normalizeScholarshipsValue(value: unknown): CatalogScholarshipPayload[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const scholarships: CatalogScholarshipPayload[] = [];
+  for (const raw of value.slice(0, 30)) {
+      const item = raw as Record<string, unknown>;
+      const name = trimString(item.name) ?? '';
+      if (!name) continue;
+      const coveragePercent = normalizeNumber(item.coveragePercent) ?? 0;
+      const maxSlots = normalizeNumber(item.maxSlots) ?? 0;
+      scholarships.push({
+        name,
+        coveragePercent,
+        maxSlots,
+        deadline: trimString(item.deadline),
+        eligibility: trimString(item.eligibility),
+      });
+  }
+  return scholarships.length ? scholarships : undefined;
+}
+
+function normalizeCustomFacultiesValue(value: unknown): CatalogCustomFacultyPayload[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const faculties: CatalogCustomFacultyPayload[] = [];
+  value.slice(0, 100).forEach((raw, index) => {
+      const item = raw as Record<string, unknown>;
+      const name = trimString(item.name) ?? '';
+      if (!name) return;
+      faculties.push({
+        name,
+        description: trimString(item.description) ?? '',
+        items: normalizeStringArray(item.items, 100) ?? [],
+        order: normalizeNumber(item.order) ?? index,
+      });
+    });
+  return faculties.length ? faculties : undefined;
+}
+
+function normalizeDocumentsValue(value: unknown): CatalogDocumentPayload[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const documents: CatalogDocumentPayload[] = [];
+  for (const raw of value.slice(0, 100)) {
+      const item = raw as Record<string, unknown>;
+      const documentType = trimString(item.documentType) ?? '';
+      const fileUrl = trimString(item.fileUrl) ?? '';
+      if (!documentType || !fileUrl) continue;
+      const reviewedAt = trimString(item.reviewedAt);
+      documents.push({
+        documentType,
+        fileUrl,
+        status: trimString(item.status),
+        reviewedBy: trimString(item.reviewedBy),
+        reviewedAt,
+      });
+  }
+  return documents.length ? documents : undefined;
+}
+
+function buildCatalogUniversityPayload(body: Record<string, unknown>): CatalogUniversityPayload {
+  const universityName = trimString(body.universityName) ?? '';
+  if (!universityName) {
+    throw new AppError(400, 'University name is required', ErrorCodes.VALIDATION);
+  }
+
+  return {
+    universityName,
+    tagline: trimString(body.tagline),
+    establishedYear: normalizeNumber(body.establishedYear),
+    studentCount: normalizeNumber(body.studentCount),
+    country: trimString(body.country),
+    city: trimString(body.city),
+    description: trimString(body.description),
+    logoUrl: trimString(body.logoUrl),
+    facultyCodes: normalizeStringArray(body.facultyCodes, 50),
+    facultyItems: normalizeFacultyItemsValue(body.facultyItems),
+    targetStudentCountries: normalizeStringArray(body.targetStudentCountries, 50),
+    minLanguageLevel: trimString(body.minLanguageLevel, 50),
+    tuitionPrice: normalizeNumber(body.tuitionPrice),
+    programs: normalizeProgramsValue(body.programs),
+    scholarships: normalizeScholarshipsValue(body.scholarships),
+    customFaculties: normalizeCustomFacultiesValue(body.customFaculties),
+    documents: normalizeDocumentsValue(body.documents),
+  };
+}
+
 export async function getCatalogUniversities(query: { page?: number; limit?: number; search?: string }) {
   const page = Math.max(1, query.page ?? 1);
   const limit = Math.min(100, Math.max(1, query.limit ?? 20));
@@ -580,37 +771,17 @@ export async function getCatalogUniversities(query: { page?: number; limit?: num
 }
 
 export async function createCatalogUniversity(body: Record<string, unknown>) {
+  const payload = buildCatalogUniversityPayload(body);
   const doc = await UniversityCatalog.create({
-    universityName: typeof body.universityName === 'string' ? body.universityName : '',
-    tagline: typeof body.tagline === 'string' ? body.tagline : undefined,
-    establishedYear: typeof body.establishedYear === 'number' ? body.establishedYear : undefined,
-    studentCount: typeof body.studentCount === 'number' ? body.studentCount : undefined,
-    country: typeof body.country === 'string' ? body.country : undefined,
-    city: typeof body.city === 'string' ? body.city : undefined,
-    description: typeof body.description === 'string' ? body.description : undefined,
-    logoUrl: typeof body.logoUrl === 'string' ? body.logoUrl : undefined,
-    facultyCodes: Array.isArray(body.facultyCodes) ? body.facultyCodes.map(String).filter(Boolean).slice(0, 50) : undefined,
-    facultyItems: typeof body.facultyItems === 'object' && body.facultyItems !== null && !Array.isArray(body.facultyItems)
-      ? (body.facultyItems as Record<string, string[]>) : undefined,
-    targetStudentCountries: Array.isArray(body.targetStudentCountries) ? body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) : undefined,
-    minLanguageLevel: typeof body.minLanguageLevel === 'string' ? (body.minLanguageLevel.trim() || undefined) : undefined,
-    tuitionPrice: typeof body.tuitionPrice === 'number' ? body.tuitionPrice : (body.tuitionPrice != null && body.tuitionPrice !== '' ? Number(body.tuitionPrice) : undefined),
-    programs: Array.isArray(body.programs) ? body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
-      name: p.name != null ? String(p.name) : '',
-      degreeLevel: p.degreeLevel != null ? String(p.degreeLevel) : '',
-      field: p.field != null ? String(p.field) : '',
-      durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
-      tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
-      language: p.language != null ? String(p.language) : undefined,
-      entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
-    })) : undefined,
-    scholarships: Array.isArray(body.scholarships) ? body.scholarships.slice(0, 30).map((s: Record<string, unknown>) => ({
-      name: s.name != null ? String(s.name) : '',
-      coveragePercent: s.coveragePercent != null ? Number(s.coveragePercent) : 0,
-      maxSlots: s.maxSlots != null ? Number(s.maxSlots) : 0,
-      deadline: s.deadline ? new Date(s.deadline as string) : undefined,
-      eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
-    })) : undefined,
+    ...payload,
+    scholarships: payload.scholarships?.map((s) => ({
+      ...s,
+      deadline: s.deadline ? new Date(s.deadline) : undefined,
+    })),
+    documents: payload.documents?.map((docItem) => ({
+      ...docItem,
+      reviewedAt: docItem.reviewedAt ? new Date(docItem.reviewedAt) : undefined,
+    })),
   });
   return { ...doc.toObject(), id: String(doc._id) };
 }
@@ -622,46 +793,25 @@ export async function getCatalogUniversityById(id: string) {
 }
 
 export async function updateCatalogUniversity(id: string, body: Record<string, unknown>) {
+  const existing = await UniversityCatalog.findById(id).lean();
+  if (!existing) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
+  const payload = buildCatalogUniversityPayload({
+    ...existing,
+    ...body,
+    universityName: body.universityName ?? existing.universityName,
+  });
   const doc = await UniversityCatalog.findByIdAndUpdate(
     id,
     {
-      ...(typeof body.universityName === 'string' && { universityName: body.universityName }),
-      ...(typeof body.tagline === 'string' && { tagline: body.tagline }),
-      ...(typeof body.establishedYear === 'number' && { establishedYear: body.establishedYear }),
-      ...(typeof body.studentCount === 'number' && { studentCount: body.studentCount }),
-      ...(typeof body.country === 'string' && { country: body.country }),
-      ...(typeof body.city === 'string' && { city: body.city }),
-      ...(typeof body.description === 'string' && { description: body.description }),
-      ...(typeof body.logoUrl === 'string' && { logoUrl: body.logoUrl }),
-      ...(Array.isArray(body.facultyCodes) && { facultyCodes: body.facultyCodes.map(String).filter(Boolean).slice(0, 50) }),
-      ...(body.facultyItems !== undefined && {
-        facultyItems: typeof body.facultyItems === 'object' && body.facultyItems !== null && !Array.isArray(body.facultyItems)
-          ? body.facultyItems as Record<string, string[]>
-          : undefined,
-      }),
-      ...(Array.isArray(body.targetStudentCountries) && { targetStudentCountries: body.targetStudentCountries.map(String).filter(Boolean).slice(0, 50) }),
-      ...(typeof body.minLanguageLevel === 'string' && { minLanguageLevel: body.minLanguageLevel.trim() || undefined }),
-      ...(body.tuitionPrice !== undefined && { tuitionPrice: body.tuitionPrice != null && body.tuitionPrice !== '' ? Number(body.tuitionPrice) : undefined }),
-      ...(Array.isArray(body.programs) && {
-        programs: body.programs.slice(0, 50).map((p: Record<string, unknown>) => ({
-          name: p.name != null ? String(p.name) : '',
-          degreeLevel: p.degreeLevel != null ? String(p.degreeLevel) : '',
-          field: p.field != null ? String(p.field) : '',
-          durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
-          tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
-          language: p.language != null ? String(p.language) : undefined,
-          entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
-        })),
-      }),
-      ...(Array.isArray(body.scholarships) && {
-        scholarships: body.scholarships.slice(0, 30).map((s: Record<string, unknown>) => ({
-          name: s.name != null ? String(s.name) : '',
-          coveragePercent: s.coveragePercent != null ? Number(s.coveragePercent) : 0,
-          maxSlots: s.maxSlots != null ? Number(s.maxSlots) : 0,
-          deadline: s.deadline ? new Date(s.deadline as string) : undefined,
-          eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
-        })),
-      }),
+      ...payload,
+      scholarships: payload.scholarships?.map((s) => ({
+        ...s,
+        deadline: s.deadline ? new Date(s.deadline) : undefined,
+      })),
+      documents: payload.documents?.map((docItem) => ({
+        ...docItem,
+        reviewedAt: docItem.reviewedAt ? new Date(docItem.reviewedAt) : undefined,
+      })),
     },
     { new: true }
   ).lean();
@@ -707,7 +857,26 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
   if ((request as { status: string }).status === 'rejected') {
     return { approved: false, alreadyProcessed: true };
   }
-  const catalog = request.universityCatalogId as unknown as { _id: unknown; universityName: string; tagline?: string; establishedYear?: number; studentCount?: number; country?: string; city?: string; description?: string; logoUrl?: string; facultyCodes?: string[]; facultyItems?: Record<string, string[]>; targetStudentCountries?: string[]; programs?: Array<Record<string, unknown>>; scholarships?: Array<Record<string, unknown>> };
+  const catalog = request.universityCatalogId as unknown as {
+    _id: unknown;
+    universityName: string;
+    tagline?: string;
+    establishedYear?: number;
+    studentCount?: number;
+    country?: string;
+    city?: string;
+    description?: string;
+    logoUrl?: string;
+    facultyCodes?: string[];
+    facultyItems?: Record<string, string[]>;
+    targetStudentCountries?: string[];
+    minLanguageLevel?: string;
+    tuitionPrice?: number;
+    programs?: Array<Record<string, unknown>>;
+    scholarships?: Array<Record<string, unknown>>;
+    customFaculties?: Array<Record<string, unknown>>;
+    documents?: Array<Record<string, unknown>>;
+  };
   if (!catalog) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
   const userId = (request as { userId: unknown }).userId;
 
@@ -726,6 +895,8 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
     facultyCodes: catalog.facultyCodes ?? [],
     facultyItems: catalog.facultyItems ?? undefined,
     targetStudentCountries: catalog.targetStudentCountries ?? [],
+    minLanguageLevel: catalog.minLanguageLevel,
+    tuitionPrice: catalog.tuitionPrice,
   });
 
   const programs = catalog.programs ?? [];
@@ -753,6 +924,30 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
       remainingSlots: maxSlots,
       deadline: s.deadline ? new Date(s.deadline as string) : undefined,
       eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
+    });
+  }
+
+  const customFaculties = catalog.customFaculties ?? [];
+  for (const faculty of customFaculties) {
+    await Faculty.create({
+      universityId: profile._id,
+      name: faculty.name ?? '',
+      description: faculty.description != null ? String(faculty.description) : '',
+      items: Array.isArray(faculty.items) ? faculty.items.map((item) => String(item)).filter(Boolean) : [],
+      order: faculty.order != null ? Number(faculty.order) : 0,
+    });
+  }
+
+  const documents = catalog.documents ?? [];
+  for (const document of documents) {
+    if (!document.documentType || !document.fileUrl) continue;
+    await UniversityDocument.create({
+      universityId: profile._id,
+      documentType: String(document.documentType),
+      fileUrl: String(document.fileUrl),
+      status: document.status != null ? String(document.status) : undefined,
+      reviewedBy: document.reviewedBy != null ? String(document.reviewedBy) : undefined,
+      reviewedAt: document.reviewedAt ? new Date(document.reviewedAt as string) : undefined,
     });
   }
 
@@ -906,8 +1101,363 @@ function parseFacultyItems(raw: unknown): Record<string, string[]> | undefined {
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-/** Parse universities Excel buffer (Universities + Programs + Scholarships sheets). Returns array of bodies for createCatalogUniversity. */
-export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[] {
+function formatFacultyItems(value: Record<string, string[]> | undefined): string {
+  if (!value) return '';
+  return Object.entries(value)
+    .map(([key, items]) => `${key}:${items.join('|')}`)
+    .join('; ');
+}
+
+const STATIC_FACULTY_LABELS: Record<string, string> = {
+  business_management_economics: 'Business, Management and Economics',
+  engineering_technology: 'Engineering and Technology',
+  computer_science_digital_technologies: 'Computer Science and Digital Technologies',
+  natural_sciences: 'Natural Sciences',
+  health_medical_sciences: 'Health and Medical Sciences',
+  social_sciences_humanities: 'Social Sciences and Humanities',
+  creative_arts_media_design: 'Creative Arts, Media and Design',
+  education: 'Education',
+  environment_agriculture_sustainability: 'Environment, Agriculture and Sustainability',
+  hospitality_tourism_service: 'Hospitality, Tourism and Service',
+  law_legal_studies: 'Law and Legal Studies',
+};
+
+function getStaticFacultyItems(code: string): string[] {
+  const staticMap: Record<string, string[]> = {
+    business_management_economics: ['Accounting', 'Banking and Finance', 'Business Administration', 'Business Analytics', 'Economics', 'Finance', 'Global Business', 'Human Resource Management', 'International Business', 'Logistics and Supply Chain Management', 'Management', 'Marketing', 'Project Management'],
+    engineering_technology: ['Aerospace Engineering', 'Biomedical Engineering', 'Chemical Engineering', 'Civil Engineering', 'Computer Engineering', 'Electrical Engineering', 'Mechanical Engineering', 'Software Engineering'],
+    computer_science_digital_technologies: ['Artificial Intelligence', 'Computer Science', 'Cybersecurity', 'Data Analytics', 'Data Science', 'Information Systems', 'Information Technology'],
+    natural_sciences: ['Biochemistry', 'Biology', 'Chemistry', 'Genetics', 'Mathematics', 'Physics', 'Statistics'],
+    health_medical_sciences: ['Health Sciences', 'Nursing', 'Pharmacy'],
+    social_sciences_humanities: ['International Relations', 'Philosophy', 'Political Science', 'Psychology', 'Sociology'],
+    creative_arts_media_design: ['Architecture', 'Digital Media', 'Game Design', 'Graphic Design', 'Journalism', 'Media Studies'],
+    education: ['Education', 'Primary Education', 'Pre-school education', 'Education technology'],
+    environment_agriculture_sustainability: ['Agriculture', 'Environmental Science', 'Urban Planning'],
+    hospitality_tourism_service: ['Hospitality Management', 'Tourism Management', 'Food Science'],
+    law_legal_studies: ['Law', 'Forensic Science'],
+  };
+  return staticMap[code] ?? [];
+}
+
+type CatalogFacultySelectionPayload = {
+  type?: 'catalog' | 'custom';
+  code: string;
+  name: string;
+  items?: string[];
+  description?: string;
+  order?: number;
+};
+
+function normalizeIsoDate(value: unknown): string | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString().slice(0, 10);
+}
+
+type ParsedUniversityExcelRow = {
+  row: number;
+  sourceId?: string;
+  universityName: string;
+  body: CatalogUniversityPayload;
+};
+
+type ParsedUniversitiesExcelResult = {
+  rows: ParsedUniversityExcelRow[];
+  errors: Array<{ row: number; name: string; message: string }>;
+};
+
+async function getFacultyCatalogMap(): Promise<Map<string, { name: string; items: string[] }>> {
+  const map = new Map<string, { name: string; items: string[] }>();
+  Object.entries(STATIC_FACULTY_LABELS).forEach(([code, name]) => {
+    map.set(code, { name, items: getStaticFacultyItems(code) });
+  });
+  const globals = await GlobalFaculty.find().lean();
+  globals.forEach((faculty) => {
+    map.set(String(faculty.code ?? ''), {
+      name: String(faculty.name ?? faculty.code ?? ''),
+      items: Array.isArray(faculty.items) ? faculty.items.map((item) => String(item)) : [],
+    });
+  });
+  return map;
+}
+
+type EffectiveCatalogUniversityData = {
+  id: string;
+  linkedProfileId?: string;
+  body: CatalogUniversityPayload;
+};
+
+type UniversitiesExcelPreviewItem = {
+  row: number;
+  sourceId?: string;
+  existingId?: string;
+  universityName: string;
+  linkedProfileId?: string;
+  action: 'create' | 'update';
+  incoming: CatalogUniversityPayload;
+  current?: CatalogUniversityPayload;
+  changes: Array<{ field: string; before: string; after: string }>;
+  sections: {
+    programsChanged: boolean;
+    scholarshipsChanged: boolean;
+    customFacultiesChanged: boolean;
+    documentsChanged: boolean;
+  };
+};
+
+function getUniversityRowName(row: Record<string, unknown>): string {
+  return String(row['University name'] ?? row['universityName'] ?? '').trim();
+}
+
+function getUniversityRowId(row: Record<string, unknown>): string | undefined {
+  const id = trimString(row['University ID'] ?? row['universityId'] ?? row['ID'] ?? row['id']);
+  return id || undefined;
+}
+
+function makeUniversityJoinKey(id: string | undefined, name: string | undefined): string | undefined {
+  if (id) return `id:${id}`;
+  if (name) return `name:${name.trim().toLowerCase()}`;
+  return undefined;
+}
+
+function pushToRowMap<T>(map: Map<string, T[]>, key: string | undefined, value: T) {
+  if (!key) return;
+  const list = map.get(key) ?? [];
+  list.push(value);
+  map.set(key, list);
+}
+
+function getMappedRows<T>(map: Map<string, T[]>, id: string | undefined, name: string): T[] {
+  const byId = id ? map.get(`id:${id}`) ?? [] : [];
+  const byName = map.get(`name:${name.trim().toLowerCase()}`) ?? [];
+  if (!byId.length) return byName;
+  if (!byName.length) return byId;
+  return [...byId, ...byName];
+}
+
+function sortForCompare(payload: CatalogUniversityPayload): Record<string, unknown> {
+  const facultyItems = payload.facultyItems
+    ? Object.fromEntries(Object.entries(payload.facultyItems).sort(([a], [b]) => a.localeCompare(b)))
+    : undefined;
+
+  return {
+    universityName: payload.universityName,
+    tagline: payload.tagline ?? '',
+    establishedYear: payload.establishedYear ?? null,
+    studentCount: payload.studentCount ?? null,
+    country: payload.country ?? '',
+    city: payload.city ?? '',
+    description: payload.description ?? '',
+    logoUrl: payload.logoUrl ?? '',
+    facultyCodes: [...(payload.facultyCodes ?? [])].sort(),
+    facultyItems,
+    targetStudentCountries: [...(payload.targetStudentCountries ?? [])].sort(),
+    minLanguageLevel: payload.minLanguageLevel ?? '',
+    tuitionPrice: payload.tuitionPrice ?? null,
+    programs: [...(payload.programs ?? [])].sort((a, b) =>
+      `${a.name}|${a.degreeLevel ?? ''}|${a.field ?? ''}`.localeCompare(`${b.name}|${b.degreeLevel ?? ''}|${b.field ?? ''}`)
+    ),
+    scholarships: [...(payload.scholarships ?? [])].sort((a, b) =>
+      `${a.name}|${a.deadline ?? ''}`.localeCompare(`${b.name}|${b.deadline ?? ''}`)
+    ),
+    customFaculties: [...(payload.customFaculties ?? [])].sort((a, b) =>
+      `${a.order ?? 0}|${a.name}`.localeCompare(`${b.order ?? 0}|${b.name}`)
+    ),
+    documents: [...(payload.documents ?? [])].sort((a, b) =>
+      `${a.documentType}|${a.fileUrl}`.localeCompare(`${b.documentType}|${b.fileUrl}`)
+    ),
+  };
+}
+
+function stringifyCompareValue(value: unknown): string {
+  if (value == null) return '';
+  if (Array.isArray(value) || typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function makePreviewChanges(current: CatalogUniversityPayload, incoming: CatalogUniversityPayload) {
+  const labels: Record<string, string> = {
+    universityName: 'University name',
+    country: 'Country',
+    city: 'City',
+    tagline: 'Slogan',
+    logoUrl: 'Logo URL',
+    description: 'Description',
+    minLanguageLevel: 'Minimum requirements',
+    tuitionPrice: 'Minimum tuition (annual)',
+    establishedYear: 'Year founded',
+    studentCount: 'Number of students',
+    facultyCodes: 'Faculties',
+    facultyItems: 'Faculty items',
+    targetStudentCountries: 'Target student countries',
+  };
+
+  const currentComparable = sortForCompare(current);
+  const incomingComparable = sortForCompare(incoming);
+  return Object.keys(labels)
+    .map((field) => {
+      const before = stringifyCompareValue(currentComparable[field]);
+      const after = stringifyCompareValue(incomingComparable[field]);
+      if (before === after) return null;
+      return { field: labels[field], before, after };
+    })
+    .filter((item): item is { field: string; before: string; after: string } => item != null);
+}
+
+async function getEffectiveCatalogUniversityData(catalogRaw: Record<string, unknown>): Promise<EffectiveCatalogUniversityData> {
+  const catalogId = String(catalogRaw._id ?? catalogRaw.id ?? '');
+  const linkedProfileId = toObjectIdString((catalogRaw as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+  const baseBody = buildCatalogUniversityPayload({
+    ...catalogRaw,
+    universityName: catalogRaw.universityName,
+    scholarships: Array.isArray(catalogRaw.scholarships)
+      ? (catalogRaw.scholarships as Array<Record<string, unknown>>).map((item) => ({
+          ...item,
+          deadline: normalizeIsoDate(item.deadline),
+        }))
+      : [],
+    documents: Array.isArray(catalogRaw.documents)
+      ? (catalogRaw.documents as Array<Record<string, unknown>>).map((item) => ({
+          ...item,
+          reviewedAt: normalizeIsoDate(item.reviewedAt),
+        }))
+      : [],
+  });
+
+  if (!linkedProfileId) {
+    return { id: catalogId, body: baseBody };
+  }
+
+  const [profile, programs, scholarships, faculties, documents] = await Promise.all([
+    UniversityProfile.findById(linkedProfileId).lean(),
+    Program.find({ universityId: linkedProfileId }).sort({ name: 1 }).lean(),
+    Scholarship.find({ universityId: linkedProfileId }).sort({ name: 1 }).lean(),
+    Faculty.find({ universityId: linkedProfileId }).sort({ order: 1, name: 1 }).lean(),
+    UniversityDocument.find({ universityId: linkedProfileId }).sort({ documentType: 1, createdAt: 1 }).lean(),
+  ]);
+
+  if (!profile) {
+    return { id: catalogId, linkedProfileId, body: baseBody };
+  }
+
+  const effectiveBody = buildCatalogUniversityPayload({
+    ...baseBody,
+    ...profile,
+    universityName: profile.universityName ?? baseBody.universityName,
+    programs: programs.map((item) => ({
+      name: item.name,
+      degreeLevel: item.degreeLevel,
+      field: item.field,
+      durationYears: item.durationYears,
+      tuitionFee: item.tuitionFee,
+      language: item.language,
+      entryRequirements: item.entryRequirements,
+    })),
+    scholarships: scholarships.map((item) => ({
+      name: item.name,
+      coveragePercent: item.coveragePercent,
+      maxSlots: item.maxSlots,
+      deadline: normalizeIsoDate(item.deadline),
+      eligibility: item.eligibility,
+    })),
+    customFaculties: faculties.map((item) => ({
+      name: item.name,
+      description: item.description,
+      items: item.items,
+      order: item.order,
+    })),
+    documents: documents.map((item) => ({
+      documentType: item.documentType,
+      fileUrl: item.fileUrl,
+      status: item.status,
+      reviewedBy: item.reviewedBy,
+      reviewedAt: normalizeIsoDate(item.reviewedAt),
+    })),
+  });
+
+  return { id: catalogId, linkedProfileId, body: effectiveBody };
+}
+
+async function syncLinkedUniversityProfile(profileId: string, payload: CatalogUniversityPayload): Promise<void> {
+  await UniversityProfile.findByIdAndUpdate(profileId, {
+    universityName: payload.universityName,
+    tagline: payload.tagline,
+    establishedYear: payload.establishedYear,
+    studentCount: payload.studentCount,
+    country: payload.country,
+    city: payload.city,
+    description: payload.description,
+    logoUrl: payload.logoUrl,
+    facultyCodes: payload.facultyCodes ?? [],
+    facultyItems: payload.facultyItems,
+    targetStudentCountries: payload.targetStudentCountries ?? [],
+    minLanguageLevel: payload.minLanguageLevel,
+    tuitionPrice: payload.tuitionPrice,
+  });
+
+  await Program.deleteMany({ universityId: profileId });
+  if (payload.programs?.length) {
+    await Program.insertMany(
+      payload.programs.map((item) => ({
+        universityId: profileId,
+        name: item.name,
+        degreeLevel: item.degreeLevel ?? '',
+        field: item.field ?? '',
+        durationYears: item.durationYears,
+        tuitionFee: item.tuitionFee,
+        language: item.language,
+        entryRequirements: item.entryRequirements,
+      }))
+    );
+  }
+
+  await Scholarship.deleteMany({ universityId: profileId });
+  if (payload.scholarships?.length) {
+    await Scholarship.insertMany(
+      payload.scholarships.map((item) => ({
+        universityId: profileId,
+        name: item.name,
+        coveragePercent: item.coveragePercent,
+        maxSlots: item.maxSlots,
+        remainingSlots: item.maxSlots,
+        deadline: item.deadline ? new Date(item.deadline) : undefined,
+        eligibility: item.eligibility,
+      }))
+    );
+  }
+
+  await Faculty.deleteMany({ universityId: profileId });
+  if (payload.customFaculties?.length) {
+    await Faculty.insertMany(
+      payload.customFaculties.map((item, index) => ({
+        universityId: profileId,
+        name: item.name,
+        description: item.description ?? '',
+        items: item.items ?? [],
+        order: item.order ?? index,
+      }))
+    );
+  }
+
+  await UniversityDocument.deleteMany({ universityId: profileId });
+  if (payload.documents?.length) {
+    await UniversityDocument.insertMany(
+      payload.documents.map((item) => ({
+        universityId: profileId,
+        documentType: item.documentType,
+        fileUrl: item.fileUrl,
+        status: item.status,
+        reviewedBy: item.reviewedBy,
+        reviewedAt: item.reviewedAt ? new Date(item.reviewedAt) : undefined,
+      }))
+    );
+  }
+}
+
+export function parseUniversitiesExcel(buffer: Buffer): ParsedUniversitiesExcelResult {
   const XLSX = require('xlsx');
   const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false });
   const sheetNames = wb.SheetNames || [];
@@ -915,17 +1465,23 @@ export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[
   const universitiesSheet = sheetNames.find((n: string) => /universit/i.test(n)) || sheetNames[0];
   const programsSheet = sheetNames.find((n: string) => /program/i.test(n));
   const scholarshipsSheet = sheetNames.find((n: string) => /scholarship/i.test(n));
+  const facultiesSheet = sheetNames.find((n: string) => /^facult/i.test(n));
+  const customFacultiesSheet = sheetNames.find((n: string) => /custom.*facult|facult.*custom/i.test(n));
+  const documentsSheet = sheetNames.find((n: string) => /document/i.test(n));
 
   const uniRows = XLSX.utils.sheet_to_json(wb.Sheets[universitiesSheet] || {}) as Record<string, unknown>[];
-  if (!uniRows.length) return [];
+  if (!uniRows.length) return { rows: [], errors: [] };
 
-  const programsByUni = new Map<string, Array<{ name: string; degreeLevel?: string; field?: string; durationYears?: number; tuitionFee?: number; language?: string; entryRequirements?: string }>>();
+  const errors: Array<{ row: number; name: string; message: string }> = [];
+
+  const programsByUni = new Map<string, CatalogProgramPayload[]>();
   if (programsSheet && wb.Sheets[programsSheet]) {
     const progRows = XLSX.utils.sheet_to_json(wb.Sheets[programsSheet]) as Record<string, unknown>[];
     for (const row of progRows) {
-      const uniName = String(row['University name'] ?? row['universityName'] ?? '').trim();
-      if (!uniName) continue;
-      const list = programsByUni.get(uniName) || [];
+      const uniName = getUniversityRowName(row);
+      const joinKey = makeUniversityJoinKey(getUniversityRowId(row), uniName);
+      if (!joinKey) continue;
+      const list = programsByUni.get(joinKey) || [];
       list.push({
         name: String(row['Program name'] ?? row['programName'] ?? '').trim() || 'Program',
         degreeLevel: String(row['Degree'] ?? row['degreeLevel'] ?? '').trim() || undefined,
@@ -937,43 +1493,116 @@ export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[
           row['Entry requirements'] ?? row['entryRequirements'] ?? row['Notes'] ?? row['notes'] ?? ''
         ).trim() || undefined,
       });
-      programsByUni.set(uniName, list);
+      programsByUni.set(joinKey, list);
     }
   }
 
-  const scholarshipsByUni = new Map<string, Array<{ name: string; coveragePercent: number; maxSlots: number; deadline?: Date; eligibility?: string }>>();
+  const scholarshipsByUni = new Map<string, CatalogScholarshipPayload[]>();
   if (scholarshipsSheet && wb.Sheets[scholarshipsSheet]) {
     const schRows = XLSX.utils.sheet_to_json(wb.Sheets[scholarshipsSheet]) as Record<string, unknown>[];
     for (const row of schRows) {
-      const uniName = String(row['University name'] ?? row['universityName'] ?? '').trim();
-      if (!uniName) continue;
-      const list = scholarshipsByUni.get(uniName) || [];
+      const uniName = getUniversityRowName(row);
+      const joinKey = makeUniversityJoinKey(getUniversityRowId(row), uniName);
+      if (!joinKey) continue;
+      const list = scholarshipsByUni.get(joinKey) || [];
       list.push({
         name: String(row['Scholarship name'] ?? row['scholarshipName'] ?? '').trim() || 'Scholarship',
         coveragePercent: parseNumFromText(row['Coverage %'] ?? row['coveragePercent']) ?? 0,
         maxSlots: parseNumFromText(row['Max slots'] ?? row['maxSlots']) ?? 0,
-        deadline: parseDateFromText(row['Deadline'] ?? row['deadline']),
+        deadline: normalizeIsoDate(parseDateFromText(row['Deadline'] ?? row['deadline'])),
         eligibility: String(row['Eligibility'] ?? row['eligibility'] ?? '').trim() || undefined,
       });
-      scholarshipsByUni.set(uniName, list);
+      scholarshipsByUni.set(joinKey, list);
     }
   }
 
-  const result: Record<string, unknown>[] = [];
-  for (const row of uniRows) {
-    const universityName = String(row['University name'] ?? row['universityName'] ?? '').trim();
-    if (!universityName) continue;
+  const facultiesByUni = new Map<string, CatalogFacultySelectionPayload[]>();
+  if (facultiesSheet && wb.Sheets[facultiesSheet]) {
+    const facultyRows = XLSX.utils.sheet_to_json(wb.Sheets[facultiesSheet]) as Record<string, unknown>[];
+    for (const row of facultyRows) {
+      const uniName = getUniversityRowName(row);
+      const joinKey = makeUniversityJoinKey(getUniversityRowId(row), uniName);
+      if (!joinKey) continue;
+      const typeRaw = trimString(row['Faculty type'] ?? row['facultyType'] ?? row['Type'] ?? row['type'])?.toLowerCase();
+      const type = typeRaw === 'custom' ? 'custom' : 'catalog';
+      const code = trimString(row['Faculty code'] ?? row['facultyCode'] ?? row['Code'] ?? row['code']) ?? '';
+      const name = trimString(row['Faculty name'] ?? row['facultyName'] ?? row['Name'] ?? row['name']) ?? code;
+      if (type === 'catalog' && !code) continue;
+      if (type === 'custom' && !name) continue;
+      const list = facultiesByUni.get(joinKey) || [];
+      list.push({
+        type,
+        code,
+        name,
+        items: splitList(row['Selected items'] ?? row['selectedItems'] ?? row['Items'] ?? row['items']),
+        description: trimString(row['Description'] ?? row['description']) ?? '',
+        order: parseNumFromText(row['Order'] ?? row['order']) ?? list.length,
+      });
+      facultiesByUni.set(joinKey, list);
+    }
+  }
 
-    const tuitionPrice = parseNumFromText(row['Minimum tuition (annual)'] ?? row['tuitionPrice']);
-    const establishedYear = parseNumFromText(row['Year founded'] ?? row['establishedYear']);
-    const studentCount = parseNumFromText(row['Number of students'] ?? row['studentCount']);
-    const facultiesRaw = row['Faculties'] ?? row['faculties'];
-    const targetRaw = row['Target student countries'] ?? row['targetStudentCountries'];
-    const facultyCodes = splitList(facultiesRaw);
-    const facultyItems = parseFacultyItems(row['Faculty items'] ?? row['facultyItems']);
-    const targetStudentCountries = splitList(targetRaw);
+  const customFacultiesByUni = new Map<string, CatalogCustomFacultyPayload[]>();
+  if (customFacultiesSheet && wb.Sheets[customFacultiesSheet]) {
+    const facultyRows = XLSX.utils.sheet_to_json(wb.Sheets[customFacultiesSheet]) as Record<string, unknown>[];
+    for (const row of facultyRows) {
+      const uniName = getUniversityRowName(row);
+      const joinKey = makeUniversityJoinKey(getUniversityRowId(row), uniName);
+      if (!joinKey) continue;
+      const list = customFacultiesByUni.get(joinKey) || [];
+      list.push({
+        name: String(row['Faculty name'] ?? row['facultyName'] ?? '').trim() || 'Faculty',
+        description: String(row['Description'] ?? row['description'] ?? '').trim() || '',
+        items: splitList(row['Items'] ?? row['items']) ?? [],
+        order: parseNumFromText(row['Order'] ?? row['order']) ?? list.length,
+      });
+      customFacultiesByUni.set(joinKey, list);
+    }
+  }
 
-    const body: Record<string, unknown> = {
+  const documentsByUni = new Map<string, CatalogDocumentPayload[]>();
+  if (documentsSheet && wb.Sheets[documentsSheet]) {
+    const documentRows = XLSX.utils.sheet_to_json(wb.Sheets[documentsSheet]) as Record<string, unknown>[];
+    for (const row of documentRows) {
+      const uniName = getUniversityRowName(row);
+      const joinKey = makeUniversityJoinKey(getUniversityRowId(row), uniName);
+      if (!joinKey) continue;
+      const documentType = trimString(row['Document type'] ?? row['documentType']) ?? '';
+      const fileUrl = trimString(row['File URL'] ?? row['fileUrl']) ?? '';
+      if (!documentType || !fileUrl) continue;
+      const list = documentsByUni.get(joinKey) || [];
+      list.push({
+        documentType,
+        fileUrl,
+        status: trimString(row['Status'] ?? row['status']),
+        reviewedBy: trimString(row['Reviewed by'] ?? row['reviewedBy']),
+        reviewedAt: normalizeIsoDate(row['Reviewed at'] ?? row['reviewedAt']),
+      });
+      documentsByUni.set(joinKey, list);
+    }
+  }
+
+  const rows: ParsedUniversityExcelRow[] = [];
+  for (let index = 0; index < uniRows.length; index++) {
+    const row = uniRows[index];
+    const rowNumber = index + 2;
+    const universityName = getUniversityRowName(row);
+    if (!universityName) {
+      errors.push({ row: rowNumber, name: '', message: 'University name is required.' });
+      continue;
+    }
+
+    const sourceId = trimString(row['ID'] ?? row['id']);
+    const facultySelections = getMappedRows(facultiesByUni, sourceId, universityName);
+    const normalFacultySelections = facultySelections.filter((faculty) => faculty.type !== 'custom');
+    const customFacultySelections = facultySelections.filter((faculty) => faculty.type === 'custom');
+    const facultyCodesFromSheet = normalFacultySelections.map((faculty) => faculty.code).filter(Boolean);
+    const facultyItemsFromSheet = Object.fromEntries(
+      normalFacultySelections
+        .filter((faculty) => (faculty.items ?? []).length > 0)
+        .map((faculty) => [faculty.code, (faculty.items ?? []).slice(0, 50)])
+    );
+    const body: CatalogUniversityPayload = {
       universityName,
       country: String(row['Country'] ?? row['country'] ?? '').trim() || undefined,
       city: String(row['City'] ?? row['city'] ?? '').trim() || undefined,
@@ -981,49 +1610,141 @@ export function parseUniversitiesExcel(buffer: Buffer): Record<string, unknown>[
       logoUrl: String(row['Logo URL'] ?? row['logoUrl'] ?? '').trim() || undefined,
       description: String(row['Description'] ?? row['description'] ?? '').trim() || undefined,
       minLanguageLevel: String(row['Minimum requirements'] ?? row['minLanguageLevel'] ?? '').trim() || undefined,
-      tuitionPrice: tuitionPrice != null ? tuitionPrice : undefined,
-      establishedYear: establishedYear != null ? establishedYear : undefined,
-      studentCount: studentCount != null ? studentCount : undefined,
-      facultyCodes: facultyCodes.length ? facultyCodes : undefined,
-      facultyItems,
-      targetStudentCountries: targetStudentCountries.length ? targetStudentCountries : undefined,
-      programs: (programsByUni.get(universityName) || []).slice(0, 50),
-      scholarships: (scholarshipsByUni.get(universityName) || []).slice(0, 30).map((s) => ({
-        name: s.name,
-        coveragePercent: s.coveragePercent,
-        maxSlots: s.maxSlots,
-        deadline: s.deadline ? (s.deadline instanceof Date ? s.deadline.toISOString().slice(0, 10) : String(s.deadline)) : undefined,
-        eligibility: s.eligibility,
-      })),
+      tuitionPrice: parseNumFromText(row['Minimum tuition (annual)'] ?? row['tuitionPrice']),
+      establishedYear: parseNumFromText(row['Year founded'] ?? row['establishedYear']),
+      studentCount: parseNumFromText(row['Number of students'] ?? row['studentCount']),
+      facultyCodes: facultyCodesFromSheet.length ? facultyCodesFromSheet : splitList(row['Faculties'] ?? row['faculties']),
+      facultyItems:
+        Object.keys(facultyItemsFromSheet).length > 0
+          ? facultyItemsFromSheet
+          : parseFacultyItems(row['Faculty items'] ?? row['facultyItems']),
+      targetStudentCountries: splitList(row['Target student countries'] ?? row['targetStudentCountries']),
+      programs: getMappedRows(programsByUni, sourceId, universityName).slice(0, 50),
+      scholarships: getMappedRows(scholarshipsByUni, sourceId, universityName).slice(0, 30),
+      customFaculties: (
+        customFacultySelections.length
+          ? customFacultySelections.map((faculty, index) => ({
+              name: faculty.name,
+              description: faculty.description ?? '',
+              items: (faculty.items ?? []).slice(0, 100),
+              order: faculty.order ?? index,
+            }))
+          : getMappedRows(customFacultiesByUni, sourceId, universityName)
+      ).slice(0, 100),
+      documents: getMappedRows(documentsByUni, sourceId, universityName).slice(0, 100),
     };
-    result.push(body);
+
+    rows.push({ row: rowNumber, sourceId: sourceId || undefined, universityName, body });
   }
-  return result;
+  return { rows, errors };
 }
 
-/** Import universities from Excel buffer: parse and create each. Returns created count and errors. */
-export async function importUniversitiesFromExcel(buffer: Buffer): Promise<{ created: number; errors: Array<{ row: number; name: string; message: string }> }> {
-  const rows = parseUniversitiesExcel(buffer);
-  const errors: Array<{ row: number; name: string; message: string }> = [];
+export async function previewUniversitiesExcelImport(buffer: Buffer): Promise<{
+  items: UniversitiesExcelPreviewItem[];
+  errors: Array<{ row: number; name: string; message: string }>;
+  summary: { total: number; creates: number; updates: number; errors: number };
+}> {
+  const parsed = parseUniversitiesExcel(buffer);
+  const items: UniversitiesExcelPreviewItem[] = [];
+  const errors = [...parsed.errors];
+
+  for (const row of parsed.rows) {
+    if (row.sourceId && !mongoose.Types.ObjectId.isValid(row.sourceId)) {
+      errors.push({ row: row.row, name: row.universityName, message: 'Invalid university ID.' });
+      continue;
+    }
+
+    let current: EffectiveCatalogUniversityData | undefined;
+    if (row.sourceId) {
+      const existing = await UniversityCatalog.findById(row.sourceId).lean();
+      if (!existing) {
+        errors.push({ row: row.row, name: row.universityName, message: `University with ID ${row.sourceId} was not found.` });
+        continue;
+      }
+      current = await getEffectiveCatalogUniversityData(existing as unknown as Record<string, unknown>);
+    }
+
+    const currentComparable = current ? sortForCompare(current.body) : undefined;
+    const incomingComparable = sortForCompare(row.body);
+
+    items.push({
+      row: row.row,
+      sourceId: row.sourceId,
+      existingId: current?.id,
+      universityName: row.universityName,
+      linkedProfileId: current?.linkedProfileId,
+      action: current ? 'update' : 'create',
+      incoming: row.body,
+      current: current?.body,
+      changes: current ? makePreviewChanges(current.body, row.body) : [],
+      sections: {
+        programsChanged: stringifyCompareValue(currentComparable?.programs) !== stringifyCompareValue(incomingComparable.programs),
+        scholarshipsChanged: stringifyCompareValue(currentComparable?.scholarships) !== stringifyCompareValue(incomingComparable.scholarships),
+        customFacultiesChanged:
+          stringifyCompareValue(currentComparable?.customFaculties) !== stringifyCompareValue(incomingComparable.customFaculties),
+        documentsChanged: stringifyCompareValue(currentComparable?.documents) !== stringifyCompareValue(incomingComparable.documents),
+      },
+    });
+  }
+
+  return {
+    items,
+    errors,
+    summary: {
+      total: items.length,
+      creates: items.filter((item) => item.action === 'create').length,
+      updates: items.filter((item) => item.action === 'update').length,
+      errors: errors.length,
+    },
+  };
+}
+
+export async function importUniversitiesFromExcel(buffer: Buffer): Promise<{
+  created: number;
+  updated: number;
+  errors: Array<{ row: number; name: string; message: string }>;
+}> {
+  const parsed = parseUniversitiesExcel(buffer);
+  const errors: Array<{ row: number; name: string; message: string }> = [...parsed.errors];
   let created = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const body = rows[i];
-    const name = String(body.universityName ?? '').trim();
+  let updated = 0;
+
+  for (const row of parsed.rows) {
     try {
-      await createCatalogUniversity(body);
-      created++;
+      if (row.sourceId) {
+        if (!mongoose.Types.ObjectId.isValid(row.sourceId)) {
+          throw new Error('Invalid university ID.');
+        }
+        const existing = await UniversityCatalog.findById(row.sourceId).lean();
+        if (!existing) {
+          throw new Error(`University with ID ${row.sourceId} was not found.`);
+        }
+        const updatedCatalog = await updateCatalogUniversity(row.sourceId, row.body as unknown as Record<string, unknown>);
+        const linkedProfileId = toObjectIdString((updatedCatalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+        if (linkedProfileId) {
+          await syncLinkedUniversityProfile(linkedProfileId, row.body);
+        }
+        updated++;
+      } else {
+        const createdCatalog = await createCatalogUniversity(row.body as unknown as Record<string, unknown>);
+        const linkedProfileId = toObjectIdString((createdCatalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+        if (linkedProfileId) {
+          await syncLinkedUniversityProfile(linkedProfileId, row.body);
+        }
+        created++;
+      }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      errors.push({ row: i + 2, name, message });
+      errors.push({ row: row.row, name: row.universityName, message });
     }
   }
-  return { created, errors };
+  return { created, updated, errors };
 }
 
-/** Generate Excel template buffer (Universities, Programs, Scholarships sheets with headers + one example row). */
 export function getUniversitiesExcelTemplateBuffer(): Buffer {
   const XLSX = require('xlsx');
   const uniHeaders = [
+    'ID',
     'University name',
     'Country',
     'City',
@@ -1038,12 +1759,15 @@ export function getUniversitiesExcelTemplateBuffer(): Buffer {
     'Faculty items',
     'Target student countries',
   ];
-  const progHeaders = ['University name', 'Program name', 'Degree', 'Field', 'Years', 'Tuition', 'Language', 'Entry requirements', 'Notes'];
-  const schHeaders = ['University name', 'Scholarship name', 'Coverage %', 'Max slots', 'Deadline', 'Eligibility', 'Notes'];
+  const facultyHeaders = ['University ID', 'University name', 'Faculty type', 'Faculty code', 'Faculty name', 'Description', 'Selected items', 'Order'];
+  const progHeaders = ['University ID', 'University name', 'Program name', 'Degree', 'Field', 'Years', 'Tuition', 'Language', 'Entry requirements', 'Notes'];
+  const schHeaders = ['University ID', 'University name', 'Scholarship name', 'Coverage %', 'Max slots', 'Deadline', 'Eligibility', 'Notes'];
+  const documentHeaders = ['University ID', 'University name', 'Document type', 'File URL', 'Status', 'Reviewed by', 'Reviewed at'];
 
   const uniData = [
     uniHeaders,
     [
+      '',
       'Example University',
       'Country',
       'City',
@@ -1059,12 +1783,151 @@ export function getUniversitiesExcelTemplateBuffer(): Buffer {
       'Uzbekistan; Kazakhstan; Turkey',
     ],
   ];
-  const progData = [progHeaders, ['Example University', 'Bachelor in Computer Science', 'Bachelor', 'Computer Science', '4', '5000', 'English', 'IELTS 6.0, GPA 3.0+', '']];
-  const schData = [schHeaders, ['Example University', 'Merit Scholarship', '50', '10', '2025-06-30', 'GPA 3.5+', '']];
+  const facultyData = [
+    facultyHeaders,
+    ['', 'Example University', 'catalog', 'engineering_technology', 'Engineering and Technology', '', 'Computer Engineering; Mechanical Engineering', ''],
+    ['', 'Example University', 'custom', '', 'Faculty of Engineering', 'Optional custom description', 'Computer Science; Mechanical Engineering', '0'],
+  ];
+  const progData = [progHeaders, ['', 'Example University', 'Bachelor in Computer Science', 'Bachelor', 'Computer Science', '4', '5000', 'English', 'IELTS 6.0, GPA 3.0+', '']];
+  const schData = [schHeaders, ['', 'Example University', 'Merit Scholarship', '50', '10', '2025-06-30', 'GPA 3.5+', '']];
+  const documentData = [documentHeaders, ['', 'Example University', 'license', 'https://example.com/license.pdf', 'approved', 'admin@example.com', '2025-06-30']];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(uniData), 'Universities');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(facultyData), 'Faculties');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(progData), 'Programs');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(schData), 'Scholarships');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(documentData), 'University Documents');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+export async function getUniversitiesExcelExportBuffer(): Promise<Buffer> {
+  const XLSX = require('xlsx');
+  const catalogs = await UniversityCatalog.find().sort({ universityName: 1 }).lean();
+  const facultyCatalogMap = await getFacultyCatalogMap();
+  const effectiveItems = await Promise.all(
+    catalogs.map((catalog) => getEffectiveCatalogUniversityData(catalog as unknown as Record<string, unknown>))
+  );
+
+  const universitiesSheet = [
+    [
+      'ID',
+      'University name',
+      'Country',
+      'City',
+      'Slogan',
+      'Logo URL',
+      'Description',
+      'Minimum requirements',
+      'Minimum tuition (annual)',
+      'Year founded',
+      'Number of students',
+      'Faculties',
+      'Faculty items',
+      'Target student countries',
+    ],
+    ...effectiveItems.map((item) => [
+      item.id,
+      item.body.universityName,
+      item.body.country ?? '',
+      item.body.city ?? '',
+      item.body.tagline ?? '',
+      item.body.logoUrl ?? '',
+      item.body.description ?? '',
+      item.body.minLanguageLevel ?? '',
+      item.body.tuitionPrice ?? '',
+      item.body.establishedYear ?? '',
+      item.body.studentCount ?? '',
+      (item.body.facultyCodes ?? []).join('; '),
+      formatFacultyItems(item.body.facultyItems),
+      (item.body.targetStudentCountries ?? []).join('; '),
+    ]),
+  ];
+
+  const programsSheet = [
+    ['University ID', 'University name', 'Program name', 'Degree', 'Field', 'Years', 'Tuition', 'Language', 'Entry requirements', 'Notes'],
+    ...effectiveItems.flatMap((item) =>
+      (item.body.programs ?? []).map((program) => [
+        item.id,
+        item.body.universityName,
+        program.name,
+        program.degreeLevel ?? '',
+        program.field ?? '',
+        program.durationYears ?? '',
+        program.tuitionFee ?? '',
+        program.language ?? '',
+        program.entryRequirements ?? '',
+        '',
+      ])
+    ),
+  ];
+
+  const scholarshipsSheet = [
+    ['University ID', 'University name', 'Scholarship name', 'Coverage %', 'Max slots', 'Deadline', 'Eligibility', 'Notes'],
+    ...effectiveItems.flatMap((item) =>
+      (item.body.scholarships ?? []).map((scholarship) => [
+        item.id,
+        item.body.universityName,
+        scholarship.name,
+        scholarship.coveragePercent,
+        scholarship.maxSlots,
+        scholarship.deadline ?? '',
+        scholarship.eligibility ?? '',
+        '',
+      ])
+    ),
+  ];
+
+  const facultiesSheet = [
+    ['University ID', 'University name', 'Faculty type', 'Faculty code', 'Faculty name', 'Description', 'Selected items', 'Order'],
+    ...effectiveItems.flatMap((item) => [
+      ...(item.body.facultyCodes ?? []).map((code) => {
+        const faculty = facultyCatalogMap.get(code);
+        const selectedItems = item.body.facultyItems?.[code] ?? faculty?.items ?? [];
+        return [
+          item.id,
+          item.body.universityName,
+          'catalog',
+          code,
+          faculty?.name ?? STATIC_FACULTY_LABELS[code] ?? code,
+          '',
+          selectedItems.join('; '),
+          '',
+        ];
+      }),
+      ...(item.body.customFaculties ?? []).map((faculty) => [
+        item.id,
+        item.body.universityName,
+        'custom',
+        '',
+        faculty.name,
+        faculty.description ?? '',
+        (faculty.items ?? []).join('; '),
+        faculty.order ?? 0,
+      ]),
+    ]),
+  ];
+
+  const documentsSheet = [
+    ['University ID', 'University name', 'Document type', 'File URL', 'Status', 'Reviewed by', 'Reviewed at'],
+    ...effectiveItems.flatMap((item) =>
+      (item.body.documents ?? []).map((document) => [
+        item.id,
+        item.body.universityName,
+        document.documentType,
+        document.fileUrl,
+        document.status ?? '',
+        document.reviewedBy ?? '',
+        document.reviewedAt ?? '',
+      ])
+    ),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(universitiesSheet), 'Universities');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(facultiesSheet), 'Faculties');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(programsSheet), 'Programs');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(scholarshipsSheet), 'Scholarships');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(documentsSheet), 'University Documents');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
