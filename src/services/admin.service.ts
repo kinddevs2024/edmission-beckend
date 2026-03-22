@@ -1188,6 +1188,28 @@ type EffectiveCatalogUniversityData = {
   body: CatalogUniversityPayload;
 };
 
+async function findCatalogUniversityForImport(row: ParsedUniversityExcelRow) {
+  if (row.sourceId && mongoose.Types.ObjectId.isValid(row.sourceId)) {
+    const byId = await UniversityCatalog.findById(row.sourceId).lean();
+    if (byId) {
+      return { catalog: byId as Record<string, unknown>, matchedBy: 'id' as const };
+    }
+  }
+
+  const normalizedName = row.universityName.trim();
+  if (!normalizedName) {
+    return { catalog: undefined, matchedBy: undefined };
+  }
+
+  const exactNameRegex = new RegExp(`^${safeRegExp(normalizedName).source}$`, 'i');
+  const byName = await UniversityCatalog.findOne({ universityName: exactNameRegex }).lean();
+  if (byName) {
+    return { catalog: byName as Record<string, unknown>, matchedBy: 'name' as const };
+  }
+
+  return { catalog: undefined, matchedBy: undefined };
+}
+
 type UniversitiesExcelPreviewItem = {
   row: number;
   sourceId?: string;
@@ -1649,19 +1671,10 @@ export async function previewUniversitiesExcelImport(buffer: Buffer): Promise<{
   const errors = [...parsed.errors];
 
   for (const row of parsed.rows) {
-    if (row.sourceId && !mongoose.Types.ObjectId.isValid(row.sourceId)) {
-      errors.push({ row: row.row, name: row.universityName, message: 'Invalid university ID.' });
-      continue;
-    }
-
     let current: EffectiveCatalogUniversityData | undefined;
-    if (row.sourceId) {
-      const existing = await UniversityCatalog.findById(row.sourceId).lean();
-      if (!existing) {
-        errors.push({ row: row.row, name: row.universityName, message: `University with ID ${row.sourceId} was not found.` });
-        continue;
-      }
-      current = await getEffectiveCatalogUniversityData(existing as unknown as Record<string, unknown>);
+    const { catalog: existing } = await findCatalogUniversityForImport(row);
+    if (existing) {
+      current = await getEffectiveCatalogUniversityData(existing);
     }
 
     const currentComparable = current ? sortForCompare(current.body) : undefined;
@@ -1711,15 +1724,10 @@ export async function importUniversitiesFromExcel(buffer: Buffer): Promise<{
 
   for (const row of parsed.rows) {
     try {
-      if (row.sourceId) {
-        if (!mongoose.Types.ObjectId.isValid(row.sourceId)) {
-          throw new Error('Invalid university ID.');
-        }
-        const existing = await UniversityCatalog.findById(row.sourceId).lean();
-        if (!existing) {
-          throw new Error(`University with ID ${row.sourceId} was not found.`);
-        }
-        const updatedCatalog = await updateCatalogUniversity(row.sourceId, row.body as unknown as Record<string, unknown>);
+      const { catalog: existing } = await findCatalogUniversityForImport(row);
+      if (existing) {
+        const existingId = String((existing as { _id: unknown })._id);
+        const updatedCatalog = await updateCatalogUniversity(existingId, row.body as unknown as Record<string, unknown>);
         const linkedProfileId = toObjectIdString((updatedCatalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
         if (linkedProfileId) {
           await syncLinkedUniversityProfile(linkedProfileId, row.body);

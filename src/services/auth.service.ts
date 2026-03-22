@@ -243,8 +243,10 @@ export async function refresh(refreshToken: string) {
     role: user.role as Role,
   });
 
+  const fullUser = await getMe(String(user._id));
+
   return {
-    user: toPlainUser(user),
+    user: fullUser,
     accessToken,
   };
 }
