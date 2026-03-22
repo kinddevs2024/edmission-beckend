@@ -51,6 +51,10 @@ router.post('/universities', requireAdminOnly, validate(adminValidator.createCat
 router.get('/universities/:id', validateObjectId('id'), adminController.getCatalogUniversity);
 router.patch('/universities/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateCatalogUniversitySchema.shape.body, 'body'), adminController.updateCatalogUniversity);
 router.delete('/universities/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteCatalogUniversity);
+router.get('/global-faculties', adminController.getGlobalFaculties);
+router.post('/global-faculties', requireAdminOnly, validate(adminValidator.createGlobalFacultySchema.shape.body, 'body'), adminController.createGlobalFaculty);
+router.patch('/global-faculties/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateGlobalFacultySchema.shape.body, 'body'), adminController.updateGlobalFaculty);
+router.delete('/global-faculties/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteGlobalFaculty);
 router.get('/university-requests', adminController.getUniversityVerificationRequests);
 router.post('/university-requests/:id/approve', requireAdminOnly, validateObjectId('id'), adminController.approveUniversityRequest);
 router.post('/university-requests/:id/reject', requireAdminOnly, validateObjectId('id'), adminController.rejectUniversityRequest);

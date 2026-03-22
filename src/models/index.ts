@@ -11,6 +11,7 @@ export { Investor } from './Investor';
 export { UniversityVerificationRequest } from './UniversityVerificationRequest';
 export { Program } from './Program';
 export { Faculty } from './Faculty';
+export { GlobalFaculty } from './GlobalFaculty';
 export { Scholarship } from './Scholarship';
 export { Interest } from './Interest';
 export { CatalogInterest } from './CatalogInterest';

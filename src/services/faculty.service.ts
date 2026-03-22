@@ -7,6 +7,11 @@ async function getUniversityIdByUserId(userId: string): Promise<string> {
   return String(profile._id);
 }
 
+function normalizeItems(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => String(item ?? '').trim()).filter(Boolean).slice(0, 100);
+}
+
 export async function getFaculties(userId: string) {
   const universityId = await getUniversityIdByUserId(userId);
   const list = await Faculty.find({ universityId })
@@ -32,18 +37,18 @@ export async function getFacultyById(userId: string, facultyId: string) {
 
 export async function createFaculty(
   userId: string,
-  data: { name: string; description: string; order?: number }
+  data: { name: string; description?: string; items?: string[]; order?: number }
 ) {
   const universityId = await getUniversityIdByUserId(userId);
   const name = String(data.name || '').trim();
   const description = String(data.description ?? '').trim();
   if (!name) throw new AppError(400, 'Faculty name is required', ErrorCodes.VALIDATION);
-  if (!description) throw new AppError(400, 'Faculty description is required', ErrorCodes.VALIDATION);
 
   const created = await Faculty.create({
     universityId,
     name,
     description,
+    items: normalizeItems(data.items),
     order: data.order != null ? Number(data.order) : 0,
   });
   return {
@@ -56,7 +61,7 @@ export async function createFaculty(
 export async function updateFaculty(
   userId: string,
   facultyId: string,
-  data: { name?: string; description?: string; order?: number }
+  data: { name?: string; description?: string; items?: string[]; order?: number }
 ) {
   const universityId = await getUniversityIdByUserId(userId);
   const faculty = await Faculty.findOne({ _id: facultyId, universityId });
@@ -69,6 +74,9 @@ export async function updateFaculty(
   }
   if (data.description !== undefined) {
     faculty.description = String(data.description).trim();
+  }
+  if (data.items !== undefined) {
+    faculty.set('items', normalizeItems(data.items));
   }
   if (data.order !== undefined) faculty.order = Number(data.order);
   await faculty.save();

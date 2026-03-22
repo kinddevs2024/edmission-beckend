@@ -39,6 +39,7 @@ router.post('/offer-templates', validate(universityValidator.createOfferTemplate
 router.patch('/offer-templates/:id', validateObjectId('id'), validate(universityValidator.updateOfferTemplateSchema.shape.body, 'body'), universityController.updateOfferTemplate);
 router.delete('/offer-templates/:id', validateObjectId('id'), universityController.deleteOfferTemplate);
 
+router.get('/global-faculties', universityController.getGlobalFaculties);
 router.get('/faculties', universityController.getFaculties);
 router.post('/faculties', universityController.createFaculty);
 router.get('/faculties/:id', validateObjectId('id'), universityController.getFacultyById);

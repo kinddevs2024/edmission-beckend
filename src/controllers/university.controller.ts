@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as universityService from '../services/university.service';
 import * as facultyService from '../services/faculty.service';
+import * as globalFacultyService from '../services/globalFaculty.service';
 
 export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -312,10 +313,11 @@ export async function getFacultyById(req: Request, res: Response, next: NextFunc
 export async function createFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = req.body as { name?: string; description?: string; order?: number };
+    const body = req.body as { name?: string; description?: string; items?: string[]; order?: number };
     const data = await facultyService.createFaculty(req.user.id, {
       name: body.name ?? '',
       description: body.description ?? '',
+      items: body.items,
       order: body.order,
     });
     res.status(201).json(data);
@@ -351,6 +353,15 @@ export async function getCatalog(req: Request, res: Response, next: NextFunction
       search: typeof search === 'string' ? search : undefined,
       country: typeof country === 'string' ? country : undefined,
     });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getGlobalFaculties(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await globalFacultyService.listGlobalFaculties();
     res.json(data);
   } catch (e) {
     next(e);

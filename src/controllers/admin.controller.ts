@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { Request, Response, NextFunction } from 'express';
 import * as adminService from '../services/admin.service';
+import * as globalFacultyService from '../services/globalFaculty.service';
 import * as settingsService from '../services/settings.service';
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -424,6 +425,42 @@ export async function getCatalogUniversities(req: Request, res: Response, next: 
       limit: limit ? Number(limit) : undefined,
       search: search as string,
     });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getGlobalFaculties(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await globalFacultyService.listGlobalFaculties();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createGlobalFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await globalFacultyService.createGlobalFaculty(req.body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateGlobalFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await globalFacultyService.updateGlobalFaculty(req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteGlobalFaculty(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await globalFacultyService.deleteGlobalFaculty(req.params.id);
     res.json(data);
   } catch (e) {
     next(e);

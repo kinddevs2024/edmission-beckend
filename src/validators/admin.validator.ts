@@ -112,6 +112,26 @@ export const createInvestorSchema = z.object({
   }),
 });
 
+const globalFacultyBodySchema = z.object({
+  name: z.string().min(1).max(200),
+  items: z.array(z.string().max(200)).max(100).optional(),
+  order: z.number().optional(),
+}).strict();
+
+const updateGlobalFacultyBodySchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  items: z.array(z.string().max(200)).max(100).optional(),
+  order: z.number().optional(),
+}).strict();
+
+export const createGlobalFacultySchema = z.object({
+  body: globalFacultyBodySchema,
+});
+
+export const updateGlobalFacultySchema = z.object({
+  body: updateGlobalFacultyBodySchema,
+});
+
 export const idParamSchema = z.object({ id: objectIdZod });
 export const userIdParamSchema = z.object({ userId: objectIdZod });
 
