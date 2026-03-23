@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import {
   User,
   StudentProfile,
+  CounsellorProfile,
   UniversityProfile,
   UniversityCatalog,
   UniversityVerificationRequest,
@@ -162,11 +163,101 @@ export async function getUsers(query: { page?: number; limit?: number; role?: st
   const skip = (page - 1) * limit;
   const where = query.role ? { role: query.role } : {};
   const [list, total] = await Promise.all([
-    User.find(where).skip(skip).limit(limit).select('email role emailVerified suspended createdAt').lean(),
+    User.find(where).skip(skip).limit(limit).select('email name role emailVerified suspended createdAt').lean(),
     User.countDocuments(where),
   ]);
+  const data = list.map((u) => {
+    const doc = u as {
+      _id: unknown
+      email?: string
+      name?: string
+      role?: string
+      emailVerified?: boolean
+      suspended?: boolean
+      createdAt?: Date | string
+    };
+    const createdAt =
+      doc.createdAt != null ? new Date(doc.createdAt as string | Date).toISOString() : undefined;
+    return {
+      id: String(doc._id),
+      email: doc.email ?? '',
+      name: doc.name ?? '',
+      role: doc.role ?? '',
+      emailVerified: doc.emailVerified,
+      suspended: doc.suspended,
+      createdAt,
+    };
+  });
+
+  const needsDisplayName = (name: string) => !String(name || '').trim();
+  const toOid = (ids: string[]) => ids.map((id) => new mongoose.Types.ObjectId(id));
+
+  const studentIds = data.filter((r) => r.role === 'student' && needsDisplayName(r.name)).map((r) => r.id);
+  const universityIds = data.filter((r) => r.role === 'university' && needsDisplayName(r.name)).map((r) => r.id);
+  const counsellorIds = data
+    .filter((r) => r.role === 'school_counsellor' && needsDisplayName(r.name))
+    .map((r) => r.id);
+
+  const [studentProfiles, uniProfiles, counsellorProfiles] = await Promise.all([
+    studentIds.length
+      ? StudentProfile.find({ userId: { $in: toOid(studentIds) } })
+          .select('userId firstName lastName')
+          .lean()
+      : Promise.resolve([]),
+    universityIds.length
+      ? UniversityProfile.find({ userId: { $in: toOid(universityIds) } })
+          .select('userId universityName')
+          .lean()
+      : Promise.resolve([]),
+    counsellorIds.length
+      ? CounsellorProfile.find({ userId: { $in: toOid(counsellorIds) } })
+          .select('userId schoolName')
+          .lean()
+      : Promise.resolve([]),
+  ]);
+
+  const studentNameByUserId = new Map<string, string>();
+  for (const p of studentProfiles) {
+    const row = p as { userId?: unknown; firstName?: string; lastName?: string };
+    const uid = String(row.userId ?? '');
+    const full = [row.firstName, row.lastName]
+      .map((x) => (x != null ? String(x).trim() : ''))
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (full) studentNameByUserId.set(uid, full);
+  }
+  const uniNameByUserId = new Map<string, string>();
+  for (const p of uniProfiles) {
+    const row = p as { userId?: unknown; universityName?: string };
+    const uid = String(row.userId ?? '');
+    const n = row.universityName != null ? String(row.universityName).trim() : '';
+    if (n) uniNameByUserId.set(uid, n);
+  }
+  const schoolNameByUserId = new Map<string, string>();
+  for (const p of counsellorProfiles) {
+    const row = p as { userId?: unknown; schoolName?: string };
+    const uid = String(row.userId ?? '');
+    const n = row.schoolName != null ? String(row.schoolName).trim() : '';
+    if (n) schoolNameByUserId.set(uid, n);
+  }
+
+  for (const row of data) {
+    if (!needsDisplayName(row.name)) continue;
+    if (row.role === 'student') {
+      const alt = studentNameByUserId.get(row.id);
+      if (alt) row.name = alt;
+    } else if (row.role === 'university') {
+      const alt = uniNameByUserId.get(row.id);
+      if (alt) row.name = alt;
+    } else if (row.role === 'school_counsellor') {
+      const alt = schoolNameByUserId.get(row.id);
+      if (alt) row.name = alt;
+    }
+  }
+
   return {
-    data: list.map((u) => ({ ...u, id: String((u as { _id: unknown })._id) })),
+    data,
     total,
     page,
     limit,

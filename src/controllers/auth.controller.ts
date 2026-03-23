@@ -1,7 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service';
 import * as twoFactorService from '../services/twoFactor.service';
-import { loginSchema, registerSchema, verifyEmailCodeSchema, resendVerificationSchema, forgotPasswordSchema, resetPasswordSchema, setPasswordSchema } from '../validators/auth.validator';
+import type { GoogleAuthBody, YandexAuthBody, YandexAccessTokenAuthBody } from '../validators/auth.validator';
+import {
+  loginSchema,
+  registerSchema,
+  verifyEmailCodeSchema,
+  resendVerificationSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  setPasswordSchema,
+} from '../validators/auth.validator';
 
 export async function register(
   req: Request,
@@ -25,6 +34,45 @@ export async function login(
   try {
     const data = loginSchema.shape.body.parse(req.body);
     const result = await authService.login(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function googleAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await authService.loginWithGoogle(req.body as GoogleAuthBody);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function yandexAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await authService.loginWithYandex(req.body as YandexAuthBody);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function yandexAccessTokenAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await authService.loginWithYandexAccessToken(req.body as YandexAccessTokenAuthBody);
     res.json(result);
   } catch (e) {
     next(e);

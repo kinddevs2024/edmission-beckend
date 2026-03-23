@@ -7,6 +7,9 @@ import { requireDb } from '../middlewares/requireDb.middleware';
 import {
   registerSchema,
   loginSchema,
+  googleAuthSchema,
+  yandexAuthSchema,
+  yandexAccessTokenAuthSchema,
   verifyEmailCodeSchema,
   resendVerificationSchema,
   forgotPasswordSchema,
@@ -28,6 +31,21 @@ router.post(
   '/login',
   validate(loginSchema.shape.body, 'body'),
   authController.login
+);
+router.post(
+  '/google',
+  validate(googleAuthSchema.shape.body, 'body'),
+  authController.googleAuth
+);
+router.post(
+  '/yandex',
+  validate(yandexAuthSchema.shape.body, 'body'),
+  authController.yandexAuth
+);
+router.post(
+  '/yandex/access-token',
+  validate(yandexAccessTokenAuthSchema.shape.body, 'body'),
+  authController.yandexAccessTokenAuth
 );
 router.post('/refresh', authController.refresh);
 router.post('/logout', authMiddleware, authController.logout);

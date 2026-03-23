@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
+import { OAuth2Client } from 'google-auth-library';
 import { User, RefreshToken, StudentProfile, UniversityProfile, PendingRegistration } from '../models';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
@@ -9,7 +10,13 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/
 import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
 import type { Role } from '../types/role';
-import type { RegisterBody, LoginBody } from '../validators/auth.validator';
+import type {
+  RegisterBody,
+  LoginBody,
+  GoogleAuthBody,
+  YandexAuthBody,
+  YandexAccessTokenAuthBody,
+} from '../validators/auth.validator';
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
 const BCRYPT_ROUNDS = 12;
@@ -69,6 +76,363 @@ function toPlainUser(doc: {
 
 function generateVerificationCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function assertLoginAllowed(user: { email: string; emailVerified?: boolean; role: string; _id: unknown }) {
+  const settings = await settingsService.getSettings();
+  if (settings.requireEmailVerification && !user.emailVerified && user.email !== DEFAULT_ADMIN_EMAIL) {
+    throw new AppError(403, 'Please verify your email before signing in.', ErrorCodes.FORBIDDEN);
+  }
+  if (settings.requireAccountConfirmation && user.role === 'university') {
+    const profile = await UniversityProfile.findOne({ userId: user._id }).lean();
+    if (!profile || !(profile as { verified?: boolean }).verified) {
+      throw new AppError(403, 'Your account is pending approval by an administrator.', ErrorCodes.FORBIDDEN);
+    }
+  }
+}
+
+type UserDoc = InstanceType<typeof User>;
+
+async function issueAuthTokens(user: UserDoc): Promise<{
+  user: ReturnType<typeof toPlainUser> & { universityProfile?: { id: string; verified: boolean; universityName?: string } };
+  accessToken: string;
+  refreshToken: string;
+}> {
+  const accessToken = signAccessToken({
+    sub: String(user._id),
+    email: user.email,
+    role: user.role as Role,
+  });
+  const refreshToken = signRefreshToken({
+    sub: String(user._id),
+    email: user.email,
+    role: user.role as Role,
+  });
+
+  await RefreshToken.create({
+    userId: user._id,
+    token: await bcrypt.hash(refreshToken, 10),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+
+  const plainUser = toPlainUser(user) as ReturnType<typeof toPlainUser> & {
+    universityProfile?: { id: string; verified: boolean; universityName?: string };
+  };
+  (plainUser as { mustChangePassword?: boolean }).mustChangePassword = Boolean(
+    (user as { mustChangePassword?: boolean }).mustChangePassword
+  );
+  if (user.role === 'university') {
+    const up = await UniversityProfile.findOne({ userId: user._id }).lean();
+    if (up) {
+      const u = up as { _id: unknown; verified?: boolean; universityName?: string };
+      plainUser.universityProfile = { id: String(u._id), verified: !!u.verified, universityName: u.universityName };
+    }
+  }
+
+  return {
+    user: plainUser,
+    accessToken,
+    refreshToken,
+  };
+}
+
+async function issueTokensAfterLoginChecks(user: UserDoc) {
+  await assertLoginAllowed(user);
+  return issueAuthTokens(user);
+}
+
+export async function loginWithGoogle(data: GoogleAuthBody) {
+  if (!config.google.clientId) {
+    throw new AppError(503, 'Google sign-in is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+
+  const oauthClient = new OAuth2Client(config.google.clientId);
+  let ticket;
+  try {
+    ticket = await oauthClient.verifyIdToken({
+      idToken: data.idToken,
+      audience: config.google.clientId,
+    });
+  } catch {
+    throw new AppError(401, 'Invalid Google credential', ErrorCodes.UNAUTHORIZED);
+  }
+
+  const payload = ticket.getPayload();
+  if (!payload?.email) {
+    throw new AppError(400, 'Google account has no email', ErrorCodes.VALIDATION);
+  }
+  if (!payload.email_verified) {
+    throw new AppError(400, 'Google email is not verified', ErrorCodes.VALIDATION);
+  }
+
+  const email = payload.email.toLowerCase().trim();
+  const sub = payload.sub;
+  const name = (payload.name ?? '').trim();
+  const picture = payload.picture?.trim();
+
+  let user = await User.findOne({ googleSub: sub });
+  if (!user) {
+    user = await User.findOne({ email });
+  }
+
+  if (user) {
+    if (['admin', 'school_counsellor'].includes(user.role)) {
+      throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
+    }
+    if (user.suspended) {
+      throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
+    }
+    if (user.googleSub && user.googleSub !== sub) {
+      throw new AppError(403, 'This account is linked to a different Google profile.', ErrorCodes.FORBIDDEN);
+    }
+    if (!user.googleSub) {
+      user.googleSub = sub;
+      user.emailVerified = true;
+      await user.save();
+    }
+    return issueTokensAfterLoginChecks(user);
+  }
+
+  if (!data.role) {
+    throw new AppError(
+      404,
+      'No account for this sign-in. Please register first.',
+      ErrorCodes.OAUTH_SIGNUP_REQUIRED
+    );
+  }
+
+  if (data.acceptTerms !== true) {
+    throw new AppError(400, 'You must accept the terms to create an account', ErrorCodes.VALIDATION);
+  }
+
+  await PendingRegistration.deleteOne({ email });
+
+  const oauthPasswordHash = await bcrypt.hash(`oauth-google:${sub}:${uuidv4()}`, BCRYPT_ROUNDS);
+  const newUser = await User.create({
+    email,
+    name,
+    passwordHash: oauthPasswordHash,
+    role: data.role,
+    emailVerified: true,
+    googleSub: sub,
+  });
+
+  if (data.role === 'student') {
+    await StudentProfile.create({
+      userId: newUser._id,
+      avatarUrl: picture || undefined,
+    });
+  }
+  await subscriptionService.createForNewUser(String(newUser._id), data.role);
+
+  return issueAuthTokens(newUser);
+}
+
+function assertYandexRedirectUri(redirectUri: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(redirectUri);
+  } catch {
+    throw new AppError(400, 'Invalid redirect URI', ErrorCodes.VALIDATION);
+  }
+  if (!parsed.pathname.replace(/\/$/, '').endsWith('/auth/yandex/callback')) {
+    throw new AppError(400, 'Invalid redirect path', ErrorCodes.VALIDATION);
+  }
+  const allowedOrigins = new Set<string>();
+  const fe = config.frontendUrl.trim();
+  if (fe) {
+    try {
+      allowedOrigins.add(new URL(fe).origin);
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const o of config.cors.origin) {
+    try {
+      allowedOrigins.add(new URL(o).origin);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!allowedOrigins.has(parsed.origin)) {
+    throw new AppError(400, 'Redirect URI origin not allowed', ErrorCodes.VALIDATION);
+  }
+}
+
+async function exchangeYandexCode(code: string, redirectUri: string): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    client_id: config.yandex.clientId,
+    client_secret: config.yandex.clientSecret,
+    redirect_uri: redirectUri,
+  });
+  const res = await fetch('https://oauth.yandex.ru/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const json = (await res.json()) as {
+    access_token?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (!json.access_token) {
+    logger.warn({ err: json.error, desc: json.error_description }, 'Yandex token exchange failed');
+    throw new AppError(401, 'Yandex authorization failed', ErrorCodes.UNAUTHORIZED);
+  }
+  return json.access_token;
+}
+
+async function fetchYandexLoginInfo(accessToken: string): Promise<{
+  id: string;
+  email: string;
+  name: string;
+  picture?: string;
+}> {
+  const res = await fetch('https://login.yandex.ru/info?format=json', {
+    headers: { Authorization: `OAuth ${accessToken}` },
+  });
+  if (!res.ok) {
+    throw new AppError(401, 'Failed to load Yandex profile', ErrorCodes.UNAUTHORIZED);
+  }
+  const info = (await res.json()) as {
+    id?: string;
+    login?: string;
+    default_email?: string;
+    emails?: string[];
+    display_name?: string;
+    real_name?: string;
+    first_name?: string;
+    last_name?: string;
+    default_avatar_id?: string;
+    is_avatar_empty?: boolean;
+  };
+  const id = info.id != null ? String(info.id) : '';
+  if (!id) {
+    throw new AppError(400, 'Invalid Yandex profile', ErrorCodes.VALIDATION);
+  }
+  const emailRaw = info.default_email || (Array.isArray(info.emails) && info.emails[0]) || '';
+  const email = String(emailRaw).toLowerCase().trim();
+  if (!email || !email.includes('@')) {
+    throw new AppError(
+      400,
+      'Yandex account has no email. Enable login:email for your OAuth app in Yandex.',
+      ErrorCodes.VALIDATION
+    );
+  }
+  const name = (
+    info.display_name ||
+    info.real_name ||
+    `${info.first_name || ''} ${info.last_name || ''}` ||
+    info.login ||
+    ''
+  ).trim();
+  let picture: string | undefined;
+  if (!info.is_avatar_empty && info.default_avatar_id) {
+    picture = `https://avatars.yandex.net/get-yapic/${info.default_avatar_id}/islands-200`;
+  }
+  return { id, email, name, picture };
+}
+
+async function finalizeYandexOAuthProfile(
+  sub: string,
+  email: string,
+  name: string,
+  picture: string | undefined,
+  data: { role?: 'student' | 'university'; acceptTerms?: boolean }
+) {
+  let user = await User.findOne({ yandexSub: sub });
+  if (!user) {
+    user = await User.findOne({ email });
+  }
+
+  if (user) {
+    if (['admin', 'school_counsellor'].includes(user.role)) {
+      throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
+    }
+    if (user.suspended) {
+      throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
+    }
+    if (user.yandexSub && user.yandexSub !== sub) {
+      throw new AppError(403, 'This account is linked to a different Yandex profile.', ErrorCodes.FORBIDDEN);
+    }
+    if (!user.yandexSub) {
+      user.yandexSub = sub;
+      user.emailVerified = true;
+      await user.save();
+    }
+    return issueTokensAfterLoginChecks(user);
+  }
+
+  if (!data.role) {
+    throw new AppError(
+      404,
+      'No account for this sign-in. Please register first.',
+      ErrorCodes.OAUTH_SIGNUP_REQUIRED
+    );
+  }
+
+  if (data.acceptTerms !== true) {
+    throw new AppError(400, 'You must accept the terms to create an account', ErrorCodes.VALIDATION);
+  }
+
+  await PendingRegistration.deleteOne({ email });
+
+  const oauthPasswordHash = await bcrypt.hash(`oauth-yandex:${sub}:${uuidv4()}`, BCRYPT_ROUNDS);
+  const newUser = await User.create({
+    email,
+    name,
+    passwordHash: oauthPasswordHash,
+    role: data.role,
+    emailVerified: true,
+    yandexSub: sub,
+  });
+
+  if (data.role === 'student') {
+    await StudentProfile.create({
+      userId: newUser._id,
+      avatarUrl: picture || undefined,
+    });
+  }
+  await subscriptionService.createForNewUser(String(newUser._id), data.role);
+
+  return issueAuthTokens(newUser);
+}
+
+export async function loginWithYandex(data: YandexAuthBody) {
+  if (!config.yandex.clientId || !config.yandex.clientSecret) {
+    throw new AppError(503, 'Yandex sign-in is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+
+  assertYandexRedirectUri(data.redirectUri);
+
+  let accessToken: string;
+  try {
+    accessToken = await exchangeYandexCode(data.code, data.redirectUri);
+  } catch (e) {
+    if (e instanceof AppError) throw e;
+    throw new AppError(401, 'Yandex authorization failed', ErrorCodes.UNAUTHORIZED);
+  }
+
+  const { id: sub, email, name, picture } = await fetchYandexLoginInfo(accessToken);
+  return finalizeYandexOAuthProfile(sub, email, name, picture, {
+    role: data.role,
+    acceptTerms: data.acceptTerms,
+  });
+}
+
+/** Yandex Passport SDK (response_type=token): validate token via login.yandex.ru/info. No client_secret. */
+export async function loginWithYandexAccessToken(data: YandexAccessTokenAuthBody) {
+  if (!config.yandex.clientId) {
+    throw new AppError(503, 'Yandex sign-in is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+
+  const { id: sub, email, name, picture } = await fetchYandexLoginInfo(data.accessToken);
+  return finalizeYandexOAuthProfile(sub, email, name, picture, {
+    role: data.role,
+    acceptTerms: data.acceptTerms,
+  });
 }
 
 export async function register(data: RegisterBody) {
@@ -162,49 +526,7 @@ export async function login(data: LoginBody) {
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
 
-  const settings = await settingsService.getSettings();
-  if (settings.requireEmailVerification && !user.emailVerified && user.email !== DEFAULT_ADMIN_EMAIL) {
-    throw new AppError(403, 'Please verify your email before signing in.', ErrorCodes.FORBIDDEN);
-  }
-  if (settings.requireAccountConfirmation && user.role === 'university') {
-    const profile = await UniversityProfile.findOne({ userId: user._id }).lean();
-    if (!profile || !(profile as { verified?: boolean }).verified) {
-      throw new AppError(403, 'Your account is pending approval by an administrator.', ErrorCodes.FORBIDDEN);
-    }
-  }
-
-  const accessToken = signAccessToken({
-    sub: String(user._id),
-    email: user.email,
-    role: user.role as Role,
-  });
-  const refreshToken = signRefreshToken({
-    sub: String(user._id),
-    email: user.email,
-    role: user.role as Role,
-  });
-
-  await RefreshToken.create({
-    userId: user._id,
-    token: await bcrypt.hash(refreshToken, 10),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  });
-
-  const plainUser = toPlainUser(user) as ReturnType<typeof toPlainUser> & { universityProfile?: { id: string; verified: boolean; universityName?: string } };
-  (plainUser as { mustChangePassword?: boolean }).mustChangePassword = Boolean((user as { mustChangePassword?: boolean }).mustChangePassword);
-  if (user.role === 'university') {
-    const up = await UniversityProfile.findOne({ userId: user._id }).lean();
-    if (up) {
-      const u = up as { _id: unknown; verified?: boolean; universityName?: string };
-      plainUser.universityProfile = { id: String(u._id), verified: !!u.verified, universityName: u.universityName };
-    }
-  }
-
-  return {
-    user: plainUser,
-    accessToken,
-    refreshToken,
-  };
+  return issueTokensAfterLoginChecks(user);
 }
 
 export async function refresh(refreshToken: string) {
@@ -383,27 +705,7 @@ export async function verifyEmailByCode(email: string, code: string) {
 
   await PendingRegistration.deleteOne({ email: normalized });
 
-  const accessToken = signAccessToken({
-    sub: String(user._id),
-    email: user.email,
-    role: user.role as Role,
-  });
-  const refreshToken = signRefreshToken({
-    sub: String(user._id),
-    email: user.email,
-    role: user.role as Role,
-  });
-  await RefreshToken.create({
-    userId: user._id,
-    token: await bcrypt.hash(refreshToken, 10),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  });
-
-  return {
-    user: toPlainUser(user),
-    accessToken,
-    refreshToken,
-  };
+  return issueAuthTokens(user);
 }
 
 export async function forgotPassword(email: string) {

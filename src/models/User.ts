@@ -18,6 +18,10 @@ const userSchema = new mongoose.Schema(
       whatsapp: { type: String, default: '' },
     },
     passwordHash: { type: String, required: true },
+    /** Google account subject (OpenID); set when user signs in with Google */
+    googleSub: { type: String, sparse: true, unique: true },
+    /** Yandex ID (numeric string from login.yandex.ru/info); set when user signs in with Yandex */
+    yandexSub: { type: String, sparse: true, unique: true },
     emailVerified: { type: Boolean, default: false },
     suspended: { type: Boolean, default: false },
     verifyToken: String,

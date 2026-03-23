@@ -13,6 +13,11 @@ for (const root of roots) {
   if (!result.error) break;
 }
 
+// If Google ID is only in edmission-front/.env (VITE_GOOGLE_CLIENT_ID), merge it without overriding backend keys.
+const backendRoot = path.join(__dirname, '..', '..');
+const siblingFrontEnv = path.join(backendRoot, '..', 'edmission-front', '.env');
+dotenv.config({ path: siblingFrontEnv, override: false });
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '4000', 10),
@@ -63,6 +68,21 @@ export const config = {
     studentStandardPriceId: process.env.STRIPE_STUDENT_STANDARD_PRICE_ID || '',
     studentMaxPriceId: process.env.STRIPE_STUDENT_MAX_PRICE_ID || '',
     universityPremiumPriceId: process.env.STRIPE_UNIVERSITY_PREMIUM_PRICE_ID || '',
+  },
+  /**
+   * OAuth 2.0 Web client ID (Google Cloud Console → Web client).
+   * Prefer GOOGLE_CLIENT_ID in edmission-beckend/.env; falls back to VITE_GOOGLE_CLIENT_ID after merging edmission-front/.env.
+   */
+  google: {
+    clientId: (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim(),
+  },
+  /**
+   * Yandex OAuth (https://oauth.yandex.ru). Web flow: code + client_secret on server.
+   * Client ID may be duplicated as VITE_YANDEX_CLIENT_ID in edmission-front/.env.
+   */
+  yandex: {
+    clientId: (process.env.YANDEX_CLIENT_ID || process.env.VITE_YANDEX_CLIENT_ID || '').trim(),
+    clientSecret: (process.env.YANDEX_CLIENT_SECRET || '').trim(),
   },
   email: {
     from: process.env.EMAIL_FROM || 'noreply@edmission.com',
