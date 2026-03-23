@@ -310,8 +310,8 @@ export async function getUniversities(
       logo: logoUrl,
       logoUrl,
       hasScholarship: schs.length > 0,
-      programs: progs,
-      scholarships: schs,
+      programs: progs.map((program, index) => mapStudentProgram(program, index)),
+      scholarships: schs.map((scholarship, index) => mapStudentScholarship(scholarship, index)),
       faculties: [],
       facultyCodes: Array.isArray((c as { facultyCodes?: string[] }).facultyCodes) ? ((c as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean) : [],
       targetStudentCountries: Array.isArray((c as { targetStudentCountries?: string[] }).targetStudentCountries)
@@ -330,11 +330,12 @@ export async function getUniversities(
   });
 
   const profileIds = profiles.map((u) => (u as { _id: unknown })._id);
-  const [recs, scholarships, programs, faculties] = await Promise.all([
+  const [recs, scholarships, programs, faculties, linkedCatalogs] = await Promise.all([
     Recommendation.find({ studentId: profile._id, universityId: { $in: profileIds } }).lean(),
     profileIds.length > 0 ? Scholarship.find({ universityId: { $in: profileIds } }).sort({ createdAt: 1 }).lean() : [],
     profileIds.length > 0 ? Program.find({ universityId: { $in: profileIds } }).sort({ createdAt: 1 }).lean() : [],
     profileIds.length > 0 ? Faculty.find({ universityId: { $in: profileIds } }).sort({ order: 1, name: 1 }).lean() : [],
+    profileIds.length > 0 ? UniversityCatalog.find({ linkedUniversityProfileId: { $in: profileIds } }).lean() : [],
   ]);
   const recMap: Record<string, { matchScore: number; breakdown?: unknown }> = {};
   for (const r of recs) {
@@ -363,33 +364,47 @@ export async function getUniversities(
     facultiesMap[universityId].push(faculty as unknown as Record<string, unknown>);
   }
 
+  const linkedCatalogMap: Record<string, Record<string, unknown>> = {};
+  for (const catalog of linkedCatalogs) {
+    const linkedProfileId = (catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId;
+    if (!linkedProfileId) continue;
+    linkedCatalogMap[String(linkedProfileId)] = catalog as unknown as Record<string, unknown>;
+  }
+
   const profileItems: SearchableUniversityItem[] = profiles.map((u) => {
     const id = String((u as { _id: unknown })._id);
-    const logoUrl = (u as { logoUrl?: string }).logoUrl;
-    const universityScholarships = scholarshipMap[id] ?? [];
+    const linkedCatalog = linkedCatalogMap[id];
+    const universityPrograms = mergeProgramsWithCatalog(
+      programsMap[id] ?? [],
+      mapCatalogPrograms(linkedCatalog)
+    ).map((program, index) => mapStudentProgram(program, index));
+    const universityScholarships = mergeScholarshipsWithCatalog(
+      scholarshipMap[id] ?? [],
+      mapCatalogScholarships(linkedCatalog)
+    ).map((scholarship, index) => mapStudentScholarship(scholarship, index));
+    const universityFaculties = (facultiesMap[id] ?? []).length > 0 ? (facultiesMap[id] ?? []) : mapCatalogFaculties(linkedCatalog);
+    const logoUrl = pickString((u as { logoUrl?: string }).logoUrl, linkedCatalog?.logoUrl);
     return {
       id,
       _source: 'profile' as const,
-      name: (u as { universityName?: string }).universityName ?? '',
-      universityName: (u as { universityName?: string }).universityName ?? '',
-      country: (u as { country?: string }).country,
-      city: (u as { city?: string }).city,
-      description: (u as { description?: string }).description,
+      name: pickString((u as { universityName?: string }).universityName, linkedCatalog?.universityName) ?? '',
+      universityName: pickString((u as { universityName?: string }).universityName, linkedCatalog?.universityName) ?? '',
+      country: pickString((u as { country?: string }).country, linkedCatalog?.country),
+      city: pickString((u as { city?: string }).city, linkedCatalog?.city),
+      description: pickString((u as { description?: string }).description, linkedCatalog?.description),
       logo: logoUrl,
       logoUrl,
       hasScholarship: universityScholarships.length > 0,
-      programs: programsMap[id] ?? [],
+      programs: universityPrograms,
       scholarships: universityScholarships,
-      faculties: facultiesMap[id] ?? [],
-      facultyCodes: Array.isArray((u as { facultyCodes?: string[] }).facultyCodes) ? ((u as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean) : [],
-      targetStudentCountries: Array.isArray((u as { targetStudentCountries?: string[] }).targetStudentCountries)
-        ? ((u as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
-        : [],
-      minLanguageLevel: (u as { minLanguageLevel?: string }).minLanguageLevel,
-      tuitionPrice: (u as { tuitionPrice?: number }).tuitionPrice,
-      tagline: (u as { tagline?: string }).tagline,
-      establishedYear: (u as { establishedYear?: number }).establishedYear,
-      studentCount: (u as { studentCount?: number }).studentCount,
+      faculties: universityFaculties,
+      facultyCodes: pickStringArray((u as { facultyCodes?: string[] }).facultyCodes, linkedCatalog?.facultyCodes),
+      targetStudentCountries: pickStringArray((u as { targetStudentCountries?: string[] }).targetStudentCountries, linkedCatalog?.targetStudentCountries),
+      minLanguageLevel: pickString((u as { minLanguageLevel?: string }).minLanguageLevel, linkedCatalog?.minLanguageLevel),
+      tuitionPrice: pickNumber((u as { tuitionPrice?: number }).tuitionPrice, linkedCatalog?.tuitionPrice),
+      tagline: pickString((u as { tagline?: string }).tagline, linkedCatalog?.tagline),
+      establishedYear: pickNumber((u as { establishedYear?: number }).establishedYear, linkedCatalog?.establishedYear),
+      studentCount: pickNumber((u as { studentCount?: number }).studentCount, linkedCatalog?.studentCount),
       rating: (u as { rating?: number }).rating,
       createdAt: (u as { createdAt?: Date }).createdAt,
       matchScore: recMap[id]?.matchScore ?? null,
@@ -456,6 +471,188 @@ function normalizeStringArray(values?: string[]) {
 
 function normalizeString(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function hasStringValue(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function hasFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function pickString(primary: unknown, fallback: unknown) {
+  return hasStringValue(primary) ? primary : hasStringValue(fallback) ? fallback : undefined;
+}
+
+function pickNumber(primary: unknown, fallback: unknown) {
+  return hasFiniteNumber(primary) ? primary : hasFiniteNumber(fallback) ? fallback : undefined;
+}
+
+function pickStringArray(primary: unknown, fallback: unknown) {
+  const normalize = (value: unknown) =>
+    Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+  const primaryList = normalize(primary);
+  if (primaryList.length > 0) return primaryList;
+  const fallbackList = normalize(fallback);
+  return fallbackList.length > 0 ? fallbackList : [];
+}
+
+function mapCatalogPrograms(catalog: Record<string, unknown> | null | undefined) {
+  return Array.isArray(catalog?.programs)
+    ? (catalog.programs as Array<Record<string, unknown>>)
+    : [];
+}
+
+function mapCatalogScholarships(catalog: Record<string, unknown> | null | undefined) {
+  return Array.isArray(catalog?.scholarships)
+    ? (catalog.scholarships as Array<Record<string, unknown>>)
+    : [];
+}
+
+function mapCatalogFaculties(catalog: Record<string, unknown> | null | undefined) {
+  const faculties = Array.isArray(catalog?.customFaculties)
+    ? (catalog.customFaculties as Array<Record<string, unknown>>)
+    : [];
+  return faculties.map((faculty, index) => ({
+    ...faculty,
+    id: String(faculty._id ?? `catalog-faculty-${index}`),
+    name: String(faculty.name ?? ''),
+    description: faculty.description != null ? String(faculty.description) : '',
+    items: Array.isArray(faculty.items) ? faculty.items.map((item) => String(item)).filter(Boolean) : [],
+    order: faculty.order != null ? Number(faculty.order) : index,
+  }));
+}
+
+function programMergeKey(program: Record<string, unknown>): string {
+  const name = String(program.name ?? '').trim().toLowerCase();
+  const field = String(program.field ?? '').trim().toLowerCase();
+  const degree = String(program.degreeLevel ?? program.degree ?? '').trim().toLowerCase();
+  return `${name}|${field}|${degree}`;
+}
+
+/** Keep profile programs and add catalog-only rows (linked universities often have partial profile + full catalog). */
+function mergeProgramsWithCatalog(
+  profilePrograms: Array<Record<string, unknown>>,
+  catalogPrograms: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  if (!catalogPrograms.length) return profilePrograms;
+  if (!profilePrograms.length) return catalogPrograms;
+  const seen = new Set(profilePrograms.map(programMergeKey));
+  const extras = catalogPrograms.filter((program) => !seen.has(programMergeKey(program)));
+  return [...profilePrograms, ...extras];
+}
+
+function scholarshipMergeKey(scholarship: Record<string, unknown>): string {
+  const name = String(scholarship.name ?? '').trim().toLowerCase();
+  const coverage = String(scholarship.coveragePercent ?? '');
+  const maxSlots = String(scholarship.maxSlots ?? '');
+  return `${name}|${coverage}|${maxSlots}`;
+}
+
+function resolveScholarshipDeadlineRaw(row: Record<string, unknown>): unknown {
+  return row.deadline ?? row.applicationDeadline ?? row.applicationDate;
+}
+
+function parseDeadlineToIso(value: unknown): string | undefined {
+  if (value == null || value === '') return undefined;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }
+  const text = String(value).trim();
+  if (!text || text.toLowerCase() === 'invalid date') return undefined;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString();
+}
+
+function hasParsableDeadline(row: Record<string, unknown>): boolean {
+  return parseDeadlineToIso(resolveScholarshipDeadlineRaw(row)) != null;
+}
+
+function enrichScholarshipFromCatalog(
+  profileRow: Record<string, unknown>,
+  catalogRow: Record<string, unknown>
+): Record<string, unknown> {
+  const out = { ...profileRow };
+  if (!hasParsableDeadline(out) && hasParsableDeadline(catalogRow)) {
+    out.deadline = catalogRow.deadline ?? catalogRow.applicationDeadline ?? catalogRow.applicationDate;
+  }
+  const elig = out.eligibility;
+  if (elig == null || String(elig).trim() === '') {
+    if (catalogRow.eligibility != null && String(catalogRow.eligibility).trim() !== '') {
+      out.eligibility = catalogRow.eligibility;
+    }
+  }
+  return out;
+}
+
+function mergeScholarshipsWithCatalog(
+  profileScholarships: Array<Record<string, unknown>>,
+  catalogScholarships: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
+  if (!catalogScholarships.length) return profileScholarships;
+  if (!profileScholarships.length) return catalogScholarships;
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const scholarship of profileScholarships) {
+    merged.set(scholarshipMergeKey(scholarship), { ...scholarship });
+  }
+  for (const scholarship of catalogScholarships) {
+    const key = scholarshipMergeKey(scholarship);
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...scholarship });
+    } else {
+      merged.set(key, enrichScholarshipFromCatalog(existing, scholarship));
+    }
+  }
+  return Array.from(merged.values());
+}
+
+function mapStudentScholarship(scholarship: Record<string, unknown>, index: number): Record<string, unknown> {
+  const rawDeadline = resolveScholarshipDeadlineRaw(scholarship);
+  const deadlineIso = parseDeadlineToIso(rawDeadline);
+  const maxSlots =
+    typeof scholarship.maxSlots === 'number' && Number.isFinite(scholarship.maxSlots)
+      ? scholarship.maxSlots
+      : Number(scholarship.maxSlots) || 0;
+  let remainingSlots = scholarship.remainingSlots;
+  if (typeof remainingSlots !== 'number' || !Number.isFinite(remainingSlots)) {
+    const used =
+      typeof scholarship.usedSlots === 'number' && Number.isFinite(scholarship.usedSlots)
+        ? scholarship.usedSlots
+        : 0;
+    remainingSlots = Math.max(0, maxSlots - used);
+  }
+  const coveragePercent =
+    typeof scholarship.coveragePercent === 'number' && Number.isFinite(scholarship.coveragePercent)
+      ? scholarship.coveragePercent
+      : Number(scholarship.coveragePercent) || 0;
+  return {
+    ...scholarship,
+    id: String(scholarship._id ?? scholarship.id ?? `scholarship-${index}`),
+    deadline: deadlineIso,
+    maxSlots,
+    remainingSlots,
+    coveragePercent,
+  };
+}
+
+function mapStudentProgram(program: Record<string, unknown>, index: number): Record<string, unknown> {
+  return {
+    ...program,
+    id: String(program._id ?? program.id ?? `program-${index}`),
+    degreeLevel: program.degreeLevel ?? program.degree,
+    degree: program.degree ?? program.degreeLevel,
+    tuitionFee: program.tuitionFee ?? program.tuition,
+    tuition: program.tuition ?? program.tuitionFee,
+    durationYears: program.durationYears ?? program.duration,
+    entryRequirements: program.entryRequirements ?? program.requirements,
+  };
 }
 
 function matchesUniversityFilters(item: SearchableUniversityItem, query: StudentUniversitiesQuery) {
@@ -614,8 +811,8 @@ export async function getUniversityById(userId: string, universityId: unknown) {
       catalogUniversityId: catalogId,
     }).lean();
     const raw = catalog as unknown as Record<string, unknown>;
-    const progs = Array.isArray(raw.programs) ? raw.programs : [];
-    const schs = Array.isArray(raw.scholarships) ? raw.scholarships : [];
+    const progs = Array.isArray(raw.programs) ? (raw.programs as Array<Record<string, unknown>>) : [];
+    const schs = Array.isArray(raw.scholarships) ? (raw.scholarships as Array<Record<string, unknown>>) : [];
     const establishedYear = (catalog as { establishedYear?: number }).establishedYear;
     const tagline = (catalog as { tagline?: string }).tagline;
     const catalogLogoUrl = (catalog as { logoUrl?: string }).logoUrl;
@@ -627,8 +824,8 @@ export async function getUniversityById(userId: string, universityId: unknown) {
       slogan: tagline,
       logo: catalogLogoUrl,
       logoUrl: catalogLogoUrl,
-      programs: progs.map((p, i) => ({ ...p, id: String(i) })),
-      scholarships: schs.map((s, i) => ({ ...s, id: String(i) })),
+      programs: progs.map((program, index) => mapStudentProgram(program, index)),
+      scholarships: schs.map((scholarship, index) => mapStudentScholarship(scholarship, index)),
       faculties: [],
       matchScore: null,
       breakdown: null,
@@ -641,19 +838,65 @@ export async function getUniversityById(userId: string, universityId: unknown) {
   const university = await UniversityProfile.findById(uid).lean();
   if (!university) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
 
-  const rec = await Recommendation.findOne({ studentId: profile._id, universityId: uid }).lean();
-  const interest = await Interest.findOne({ studentId: profile._id, universityId: uid }).lean();
-  const programs = await Program.find({ universityId: uid }).lean();
-  const scholarships = await Scholarship.find({ universityId: uid }).lean();
-  const faculties = await Faculty.find({ universityId: uid }).sort({ order: 1, name: 1 }).lean();
+  const [rec, interest, programs, scholarships, faculties, linkedCatalog] = await Promise.all([
+    Recommendation.findOne({ studentId: profile._id, universityId: uid }).lean(),
+    Interest.findOne({ studentId: profile._id, universityId: uid }).lean(),
+    Program.find({ universityId: uid }).lean(),
+    Scholarship.find({ universityId: uid }).lean(),
+    Faculty.find({ universityId: uid }).sort({ order: 1, name: 1 }).lean(),
+    UniversityCatalog.findOne({ linkedUniversityProfileId: uid }).lean(),
+  ]);
+
+  const linkedCatalogRecord = linkedCatalog as Record<string, unknown> | null;
+  const mergedPrograms = mergeProgramsWithCatalog(
+    programs as unknown as Array<Record<string, unknown>>,
+    mapCatalogPrograms(linkedCatalogRecord)
+  );
+  const mergedScholarships = mergeScholarshipsWithCatalog(
+    scholarships as unknown as Array<Record<string, unknown>>,
+    mapCatalogScholarships(linkedCatalogRecord)
+  );
+  const effectiveFaculties = faculties.length > 0 ? faculties.map((f) => ({ ...f, id: String((f as { _id: unknown })._id) })) : mapCatalogFaculties(linkedCatalogRecord);
+  const effectiveName = pickString((university as { universityName?: string }).universityName, linkedCatalogRecord?.universityName) ?? '';
+  const effectiveLogoUrl = pickString((university as { logoUrl?: string }).logoUrl, linkedCatalogRecord?.logoUrl);
+  const effectiveCountry = pickString((university as { country?: string }).country, linkedCatalogRecord?.country);
+  const effectiveCity = pickString((university as { city?: string }).city, linkedCatalogRecord?.city);
+  const effectiveDescription = pickString((university as { description?: string }).description, linkedCatalogRecord?.description);
+  const effectiveTagline = pickString((university as { tagline?: string }).tagline, linkedCatalogRecord?.tagline);
+  const effectiveEstablishedYear = pickNumber((university as { establishedYear?: number }).establishedYear, linkedCatalogRecord?.establishedYear);
+  const effectiveStudentCount = pickNumber((university as { studentCount?: number }).studentCount, linkedCatalogRecord?.studentCount);
+  const effectiveFacultyCodes = pickStringArray((university as { facultyCodes?: string[] }).facultyCodes, linkedCatalogRecord?.facultyCodes);
+  const effectiveFacultyItems =
+    ((university as { facultyItems?: Record<string, string[]> }).facultyItems && Object.keys((university as { facultyItems?: Record<string, string[]> }).facultyItems ?? {}).length > 0)
+      ? (university as { facultyItems?: Record<string, string[]> }).facultyItems
+      : ((linkedCatalogRecord?.facultyItems as Record<string, string[]> | undefined) ?? undefined);
+  const effectiveTargetCountries = pickStringArray((university as { targetStudentCountries?: string[] }).targetStudentCountries, linkedCatalogRecord?.targetStudentCountries);
+  const effectiveMinLanguageLevel = pickString((university as { minLanguageLevel?: string }).minLanguageLevel, linkedCatalogRecord?.minLanguageLevel);
+  const effectiveTuitionPrice = pickNumber((university as { tuitionPrice?: number }).tuitionPrice, linkedCatalogRecord?.tuitionPrice);
 
   return {
     ...university,
     id: String((university as { _id: unknown })._id),
-    name: (university as { universityName?: string }).universityName ?? '',
-    programs,
-    scholarships,
-    faculties: faculties.map((f) => ({ ...f, id: String((f as { _id: unknown })._id) })),
+    name: effectiveName,
+    universityName: effectiveName,
+    country: effectiveCountry,
+    city: effectiveCity,
+    description: effectiveDescription,
+    tagline: effectiveTagline,
+    slogan: effectiveTagline,
+    logoUrl: effectiveLogoUrl,
+    logo: effectiveLogoUrl,
+    establishedYear: effectiveEstablishedYear,
+    foundedYear: effectiveEstablishedYear,
+    studentCount: effectiveStudentCount,
+    facultyCodes: effectiveFacultyCodes,
+    facultyItems: effectiveFacultyItems,
+    targetStudentCountries: effectiveTargetCountries,
+    minLanguageLevel: effectiveMinLanguageLevel,
+    tuitionPrice: effectiveTuitionPrice,
+    programs: mergedPrograms.map((program, index) => mapStudentProgram(program, index)),
+    scholarships: mergedScholarships.map((scholarship, index) => mapStudentScholarship(scholarship, index)),
+    faculties: effectiveFaculties,
     matchScore: rec ? (rec as { matchScore: number }).matchScore : null,
     breakdown: rec ? (rec as { breakdown?: unknown }).breakdown : null,
     interest: interest ? { ...interest, id: String((interest as { _id: unknown })._id) } : null,

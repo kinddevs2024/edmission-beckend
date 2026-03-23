@@ -834,7 +834,14 @@ export async function createCatalogUniversity(body: Record<string, unknown>) {
 export async function getCatalogUniversityById(id: string) {
   const doc = await UniversityCatalog.findById(id).lean();
   if (!doc) throw new AppError(404, 'Catalog university not found', ErrorCodes.NOT_FOUND);
-  return { ...doc, id: String((doc as { _id: unknown })._id), name: (doc as { universityName?: string }).universityName ?? '' };
+  const effective = await getEffectiveCatalogUniversityData(doc as unknown as Record<string, unknown>);
+  return {
+    ...doc,
+    ...effective.body,
+    id: effective.id,
+    linkedUniversityProfileId: effective.linkedProfileId,
+    name: effective.body.universityName ?? '',
+  };
 }
 
 export async function updateCatalogUniversity(id: string, body: Record<string, unknown>) {
