@@ -20,6 +20,11 @@ router.get('/profile', universityController.getProfile);
 router.use(requireVerifiedUniversity);
 
 /** Verified university only from here */
+router.get('/flyers', universityController.listFlyers);
+router.post('/flyers', universityController.createFlyer);
+router.patch('/flyers/:id', validateObjectId('id'), universityController.updateFlyer);
+router.delete('/flyers/:id', validateObjectId('id'), universityController.deleteFlyer);
+
 router.put('/profile', validate(universityValidator.updateProfileSchema.shape.body, 'body'), universityController.updateProfile);
 router.get('/dashboard', universityController.getDashboard);
 router.get('/analytics/funnel', universityController.getFunnelAnalytics);

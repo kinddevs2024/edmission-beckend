@@ -391,3 +391,43 @@ export async function createVerificationRequest(req: Request, res: Response, nex
     next(e);
   }
 }
+
+export async function listFlyers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await universityService.listFlyers(req.user.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function createFlyer(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await universityService.createFlyer(req.user.id, req.body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateFlyer(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await universityService.updateFlyer(req.user.id, req.params.id, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteFlyer(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    await universityService.deleteFlyer(req.user.id, req.params.id);
+    res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+}

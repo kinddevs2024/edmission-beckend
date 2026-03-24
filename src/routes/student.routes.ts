@@ -16,6 +16,7 @@ router.patch('/profile', validate(studentValidator.updateProfileSchema.shape.bod
 router.get('/dashboard', studentController.getDashboard);
 router.get('/universities', studentController.getUniversities);
 router.get('/universities/:id', validateUniversityId('id'), studentController.getUniversityById);
+router.get('/universities/:id/flyers', validateUniversityId('id'), studentController.getUniversityFlyers);
 router.post('/universities/:id/interest', validateUniversityId('id'), studentController.addInterest);
 router.get('/interests/limit', studentController.getInterestLimit);
 router.get('/interests/university-ids', studentController.getInterestedUniversityIds);

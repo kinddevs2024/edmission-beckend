@@ -11,6 +11,7 @@ import {
   Offer,
   Recommendation,
   Chat,
+  UniversityFlyer,
 } from '../models';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
@@ -901,6 +902,17 @@ export async function getUniversityById(userId: string, universityId: unknown) {
     breakdown: rec ? (rec as { breakdown?: unknown }).breakdown : null,
     interest: interest ? { ...interest, id: String((interest as { _id: unknown })._id) } : null,
   };
+}
+
+export async function getUniversityFlyers(userId: string, universityId: unknown) {
+  const profile = await StudentProfile.findOne({ userId }).select('_id').lean();
+  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const uid = toObjectIdString(universityId);
+  if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+  const university = await UniversityProfile.findById(uid).select('_id').lean();
+  if (!university) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+  const list = await UniversityFlyer.find({ universityId: uid, isPublished: true }).sort({ createdAt: -1 }).lean();
+  return list.map((item) => ({ ...item, id: String((item as { _id: unknown })._id) }));
 }
 
 export async function addInterest(userId: string, universityId: unknown) {

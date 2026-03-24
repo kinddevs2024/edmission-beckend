@@ -104,6 +104,16 @@ export async function getUniversityById(req: Request, res: Response, next: NextF
   }
 }
 
+export async function getUniversityFlyers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await studentService.getUniversityFlyers(req.user.id, req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function addInterest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();

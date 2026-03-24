@@ -34,13 +34,26 @@ export function authMiddleware(
     return;
   }
 
-  try {
+  (async () => {
     const payload = verifyAccessToken(token);
-    applyAuthToRequest(req, payload);
+    const user = await User.findById(payload.sub).select('email role language').lean();
+    if (!user) {
+      next(new AppError(401, 'Invalid or expired token', ErrorCodes.UNAUTHORIZED));
+      return;
+    }
+    applyAuthToRequest(req, {
+      sub: payload.sub,
+      email: String((user as { email?: string }).email ?? payload.email ?? ''),
+      role: (user as { role: Role }).role,
+    });
+    const dbLanguage = String((user as { language?: string }).language ?? '').trim();
+    if (req.user && dbLanguage && supportedApiLocales.includes(dbLanguage as (typeof supportedApiLocales)[number])) {
+      req.user.language = dbLanguage as (typeof supportedApiLocales)[number];
+    }
     next();
-  } catch {
+  })().catch(() => {
     next(new AppError(401, 'Invalid or expired token', ErrorCodes.UNAUTHORIZED));
-  }
+  });
 }
 
 export function optionalAuthMiddleware(
@@ -56,12 +69,25 @@ export function optionalAuthMiddleware(
     return;
   }
 
-  try {
+  (async () => {
     const payload = verifyAccessToken(token);
-    applyAuthToRequest(req, payload);
-  } catch {
+    const user = await User.findById(payload.sub).select('email role language').lean();
+    if (!user) {
+      next();
+      return;
+    }
+    applyAuthToRequest(req, {
+      sub: payload.sub,
+      email: String((user as { email?: string }).email ?? payload.email ?? ''),
+      role: (user as { role: Role }).role,
+    });
+    const dbLanguage = String((user as { language?: string }).language ?? '').trim();
+    if (req.user && dbLanguage && supportedApiLocales.includes(dbLanguage as (typeof supportedApiLocales)[number])) {
+      req.user.language = dbLanguage as (typeof supportedApiLocales)[number];
+    }
+    next();
+  })().catch(() => {
     // Public endpoints can continue as anonymous if token is absent or invalid.
-  }
-
-  next();
+    next();
+  });
 }

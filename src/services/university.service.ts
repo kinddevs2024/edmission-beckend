@@ -15,6 +15,7 @@ import {
   OfferCertificateTemplate,
   Chat,
   Message,
+  UniversityFlyer,
 } from '../models';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
@@ -1039,4 +1040,80 @@ export async function createVerificationRequest(
   }
 
   return { id: String((req as { _id: unknown })._id), status: 'pending' };
+}
+
+export async function listFlyers(userId: string) {
+  const profile = await UniversityProfile.findOne({ userId }).select('_id').lean();
+  if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
+  const list = await UniversityFlyer.find({ universityId: (profile as { _id: unknown })._id })
+    .sort({ createdAt: -1 })
+    .lean();
+  return list.map((item) => ({ ...item, id: String((item as { _id: unknown })._id) }));
+}
+
+export async function createFlyer(
+  userId: string,
+  payload: {
+    title?: string;
+    source?: 'upload' | 'url' | 'editor';
+    mediaUrl?: string;
+    mediaType?: string;
+    canvasJson?: string;
+    pageFormat?: 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM';
+    width?: number;
+    height?: number;
+    editorVersion?: string;
+    previewImageUrl?: string;
+    isPublished?: boolean;
+  }
+) {
+  const profile = await UniversityProfile.findOne({ userId }).select('_id').lean();
+  if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
+  const source = payload.source ?? 'url';
+  if (source === 'editor' && !payload.canvasJson) {
+    throw new AppError(400, 'canvasJson is required for editor flyer', ErrorCodes.VALIDATION);
+  }
+  if ((source === 'url' || source === 'upload') && !String(payload.mediaUrl ?? '').trim()) {
+    throw new AppError(400, 'mediaUrl is required', ErrorCodes.VALIDATION);
+  }
+  const created = await UniversityFlyer.create({
+    universityId: (profile as { _id: unknown })._id,
+    title: payload.title?.trim() || undefined,
+    source,
+    mediaUrl: payload.mediaUrl?.trim() || undefined,
+    mediaType: payload.mediaType?.trim() || undefined,
+    canvasJson: payload.canvasJson,
+    pageFormat: payload.pageFormat,
+    width: payload.width,
+    height: payload.height,
+    editorVersion: payload.editorVersion,
+    previewImageUrl: payload.previewImageUrl?.trim() || undefined,
+    isPublished: payload.isPublished !== false,
+  });
+  const out = created.toObject() as Record<string, unknown>;
+  return { ...out, id: String(out._id) };
+}
+
+export async function updateFlyer(
+  userId: string,
+  flyerId: string,
+  payload: Record<string, unknown>
+) {
+  const profile = await UniversityProfile.findOne({ userId }).select('_id').lean();
+  if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
+  const flyer = await UniversityFlyer.findOneAndUpdate(
+    { _id: flyerId, universityId: (profile as { _id: unknown })._id },
+    payload,
+    { new: true }
+  ).lean();
+  if (!flyer) throw new AppError(404, 'Flyer not found', ErrorCodes.NOT_FOUND);
+  return { ...flyer, id: String((flyer as { _id: unknown })._id) };
+}
+
+export async function deleteFlyer(userId: string, flyerId: string) {
+  const profile = await UniversityProfile.findOne({ userId }).select('_id').lean();
+  if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
+  const deleted = await UniversityFlyer.findOneAndDelete({ _id: flyerId, universityId: (profile as { _id: unknown })._id }).lean();
+  if (!deleted) throw new AppError(404, 'Flyer not found', ErrorCodes.NOT_FOUND);
+  return { success: true };
 }
