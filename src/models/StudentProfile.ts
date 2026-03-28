@@ -89,6 +89,8 @@ const studentProfileSchema = new mongoose.Schema(
     /** Student's budget for studies (amount per year or total, in budgetCurrency) */
     budgetAmount: { type: Number },
     budgetCurrency: { type: String, default: 'USD' },
+    /** Universities see a reduced profile when private (default). */
+    profileVisibility: { type: String, enum: ['private', 'public'], default: 'private' },
   },
   { timestamps: true }
 );

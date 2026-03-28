@@ -67,6 +67,7 @@ export const updateProfileSchema = z.object({
     portfolioWorks: z.array(portfolioWorkSchema).optional(),
     interestedFaculties: z.array(z.string()).optional(),
     preferredCountries: z.array(z.string()).optional(),
+    profileVisibility: z.enum(['private', 'public']).optional(),
   }).strict(),
 });
 

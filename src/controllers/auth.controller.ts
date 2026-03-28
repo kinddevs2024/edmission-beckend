@@ -10,6 +10,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   setPasswordSchema,
+  changePasswordSchema,
 } from '../validators/auth.validator';
 
 export async function register(
@@ -264,6 +265,24 @@ export async function setPassword(
     }
     const { newPassword } = setPasswordSchema.shape.body.parse(req.body);
     await authService.setPassword(req.user.id, newPassword);
+    res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function changePassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const { currentPassword, newPassword } = changePasswordSchema.shape.body.parse(req.body);
+    await authService.changePassword(req.user.id, currentPassword, newPassword);
     res.json({ success: true });
   } catch (e) {
     next(e);

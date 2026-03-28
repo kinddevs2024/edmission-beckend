@@ -32,6 +32,11 @@ const userSchema = new mongoose.Schema(
     totpEnabled: { type: Boolean, default: false },
     /** When true, user must change password on next login (e.g. temp password from school counsellor). */
     mustChangePassword: { type: Boolean, default: false },
+    /**
+     * false = account created via OAuth without a user-chosen password; must use /auth/set-password once.
+     * true or undefined = normal email/password or password already set.
+     */
+    localPasswordConfigured: { type: Boolean },
     notificationPreferences: {
       emailApplicationUpdates: { type: Boolean, default: true },
       emailTrialReminder: { type: Boolean, default: true },

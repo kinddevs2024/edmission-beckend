@@ -24,6 +24,7 @@ import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
 import { safeRegExp } from '../utils/validators';
 import { getIO } from '../socket';
+import { effectiveProfileVisibility, redactStudentForUniversityListing } from '../utils/studentProfilePrivacy';
 
 export async function getProfile(userId: string) {
   const profile = await UniversityProfile.findOne({ userId }).lean();
@@ -55,7 +56,7 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     country?: string;
     city?: string;
     description?: string;
-    logoUrl?: string;
+    logoUrl?: string | null;
     onboardingCompleted?: boolean;
     facultyCodes?: string[];
     facultyItems?: Record<string, string[]>;
@@ -73,7 +74,9 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   if (rest.country !== undefined) update.country = rest.country;
   if (rest.city !== undefined) update.city = rest.city;
   if (rest.description !== undefined) update.description = rest.description;
-  if (rest.logoUrl !== undefined) update.logoUrl = rest.logoUrl;
+  if (rest.logoUrl !== undefined) {
+    update.logoUrl = rest.logoUrl === null || rest.logoUrl === '' ? null : rest.logoUrl;
+  }
   if (rest.onboardingCompleted !== undefined) update.onboardingCompleted = rest.onboardingCompleted;
   if (rest.facultyCodes !== undefined) {
     const arr = Array.isArray(rest.facultyCodes) ? rest.facultyCodes : [];
@@ -129,7 +132,7 @@ export async function getDashboard(userId: string) {
       .limit(5)
       .populate({
         path: 'studentId',
-        select: 'firstName lastName gpa country userId',
+        select: 'firstName lastName gpa country userId profileVisibility',
         populate: { path: 'userId', select: 'email' },
       })
       .lean(),
@@ -153,17 +156,18 @@ export async function getDashboard(userId: string) {
     acceptanceRate: totalInterests > 0 ? Math.round((acceptedCount / totalInterests) * 100) : 0,
     verified: (profile as { verified?: boolean }).verified ?? false,
     topRecommendations: recs.map((r) => {
-      const rawStudent = (r as { studentId?: { userId?: { email?: string } } }).studentId;
-      const student =
-        rawStudent && typeof rawStudent === 'object'
-          ? {
-              ...rawStudent,
-              userEmail:
-                rawStudent.userId && typeof rawStudent.userId === 'object'
-                  ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
-                  : undefined,
-            }
-          : undefined;
+      const rawStudent = (r as { studentId?: { userId?: { email?: string }; profileVisibility?: unknown } }).studentId;
+      let student: Record<string, unknown> | undefined;
+      if (rawStudent && typeof rawStudent === 'object') {
+        const merged = {
+          ...rawStudent,
+          userEmail:
+            rawStudent.userId && typeof rawStudent.userId === 'object'
+              ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
+              : undefined,
+        } as Record<string, unknown>;
+        student = redactStudentForUniversityListing(merged);
+      }
 
       return {
         ...r,
@@ -389,7 +393,7 @@ export async function getStudents(
 
   const [students, total, interestStudentIds] = await Promise.all([
     StudentProfile.find(filter)
-      .select('firstName lastName avatarUrl country city gpa gradeLevel languageLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId targetDegreeLevel educationStatus schoolCompleted verifiedAt portfolioCompletionPercent')
+      .select('firstName lastName avatarUrl country city gpa gradeLevel languageLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId targetDegreeLevel educationStatus schoolCompleted verifiedAt portfolioCompletionPercent profileVisibility')
       .sort({ gpa: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -421,12 +425,10 @@ export async function getStudents(
     const userId = (s as { userId?: unknown }).userId;
     const studentEmail = userId ? emailByUserId.get(String(userId)) : undefined;
     const { userId: _studentUserId, ...studentData } = s as Record<string, unknown>;
+    const merged = { ...studentData, userEmail: studentEmail } as Record<string, unknown>;
     return {
       id,
-      student: {
-        ...studentData,
-        userEmail: studentEmail,
-      },
+      student: redactStudentForUniversityListing(merged),
       inPipeline: inPipelineSet.has(id),
     };
   });
@@ -560,14 +562,16 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     ready: hasProfile && hasEducation && hasCertificates,
   };
 
-  const out = { ...student };
-  delete (out as Record<string, unknown>).userId;
-  return {
-    ...out,
-    id: String((out as { _id: unknown })._id),
-    email: studentUser && typeof studentUser === 'object' ? String((studentUser as { email?: string }).email ?? '').trim() || undefined : undefined,
-    phone: studentUser && typeof studentUser === 'object' ? String((studentUser as { phone?: string }).phone ?? '').trim() || undefined : undefined,
-    socialLinks: studentUser && typeof studentUser === 'object'
+  const visibility = effectiveProfileVisibility(s.profileVisibility);
+  const out = { ...student } as Record<string, unknown>;
+  delete out.userId;
+
+  let email =
+    studentUser && typeof studentUser === 'object' ? String((studentUser as { email?: string }).email ?? '').trim() || undefined : undefined;
+  let phone =
+    studentUser && typeof studentUser === 'object' ? String((studentUser as { phone?: string }).phone ?? '').trim() || undefined : undefined;
+  let socialLinks =
+    studentUser && typeof studentUser === 'object'
       ? {
           telegram: String((studentUser as { socialLinks?: { telegram?: string } }).socialLinks?.telegram ?? '').trim() || undefined,
           instagram: String((studentUser as { socialLinks?: { instagram?: string } }).socialLinks?.instagram ?? '').trim() || undefined,
@@ -575,7 +579,31 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
           facebook: String((studentUser as { socialLinks?: { facebook?: string } }).socialLinks?.facebook ?? '').trim() || undefined,
           whatsapp: String((studentUser as { socialLinks?: { whatsapp?: string } }).socialLinks?.whatsapp ?? '').trim() || undefined,
         }
-      : undefined,
+      : undefined;
+
+  if (visibility === 'private') {
+    delete out.firstName;
+    delete out.lastName;
+    delete out.avatarUrl;
+    delete out.birthDate;
+    email = undefined;
+    phone = undefined;
+    socialLinks = undefined;
+    if (Array.isArray(out.portfolioWorks)) {
+      out.portfolioWorks = (out.portfolioWorks as Record<string, unknown>[]).map((w) => {
+        const { fileUrl: _f, linkUrl: _l, ...rest } = w;
+        return rest;
+      });
+    }
+  }
+
+  return {
+    ...out,
+    id: String((out as { _id: unknown })._id),
+    profileVisibility: visibility,
+    email,
+    phone,
+    socialLinks,
     documents: docList,
     readiness,
   };
@@ -605,7 +633,7 @@ export async function getPipeline(
   let list = await Interest.find({ universityId: profile._id })
     .populate({
       path: 'studentId',
-      select: 'firstName lastName country city avatarUrl userId',
+      select: 'firstName lastName country city avatarUrl userId profileVisibility',
       populate: { path: 'userId', select: 'email' },
     })
     .sort({ updatedAt: -1 })
@@ -630,17 +658,18 @@ export async function getPipeline(
   }
 
   return list.map((i) => {
-    const rawStudent = (i as { studentId?: { userId?: { email?: string } } }).studentId;
-    const student =
-      rawStudent && typeof rawStudent === 'object'
-        ? {
-            ...rawStudent,
-            userEmail:
-              rawStudent.userId && typeof rawStudent.userId === 'object'
-                ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
-                : undefined,
-          }
-        : undefined;
+    const rawStudent = (i as { studentId?: { userId?: { email?: string }; profileVisibility?: unknown } }).studentId;
+    let student: Record<string, unknown> | undefined;
+    if (rawStudent && typeof rawStudent === 'object') {
+      const merged = {
+        ...rawStudent,
+        userEmail:
+          rawStudent.userId && typeof rawStudent.userId === 'object'
+            ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
+            : undefined,
+      } as Record<string, unknown>;
+      student = redactStudentForUniversityListing(merged);
+    }
 
     return {
       ...i,
@@ -838,7 +867,11 @@ export async function createOffer(
       throw new AppError(404, 'Offer certificate template not found', ErrorCodes.NOT_FOUND);
     }
     const payload = data.certificateData ?? {};
-    const studentName = [studentProfile.firstName, studentProfile.lastName].filter(Boolean).join(' ') || 'Student';
+    const vis = effectiveProfileVisibility((studentProfile as { profileVisibility?: unknown }).profileVisibility);
+    const studentName =
+      vis === 'public'
+        ? [studentProfile.firstName, studentProfile.lastName].filter(Boolean).join(' ') || 'Student'
+        : 'Student';
     const universityName = profile.universityName ?? 'University';
     const replacements: Record<string, string> = {
       studentName,

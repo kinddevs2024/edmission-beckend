@@ -95,6 +95,8 @@ export const config = {
       pass: process.env.SMTP_PASS || '',
     },
   },
+  /** Behind nginx/Cloudflare: set TRUST_PROXY=1 so rate limits use X-Forwarded-For (real client IP). */
+  trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
 };
 
 if (config.nodeEnv === 'production') {

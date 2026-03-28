@@ -15,6 +15,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   setPasswordSchema,
+  changePasswordSchema,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -77,6 +78,12 @@ router.post(
   authMiddleware,
   validate(setPasswordSchema.shape.body, 'body'),
   authController.setPassword
+);
+router.post(
+  '/change-password',
+  authMiddleware,
+  validate(changePasswordSchema.shape.body, 'body'),
+  authController.changePassword
 );
 router.post('/2fa/setup', authMiddleware, authController.setup2FA);
 router.post('/2fa/verify', authMiddleware, authController.verify2FA);

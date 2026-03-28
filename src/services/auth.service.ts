@@ -21,6 +21,22 @@ import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from 
 
 const BCRYPT_ROUNDS = 12;
 
+function hasOAuthLinked(u: { googleSub?: string | null; yandexSub?: string | null }): boolean {
+  const g = u.googleSub != null && String(u.googleSub).trim() !== '';
+  const y = u.yandexSub != null && String(u.yandexSub).trim() !== '';
+  return g || y;
+}
+
+/** OAuth (Google/Yandex) account without an explicit user-chosen login password (legacy: field missing). */
+function computeMustSetLocalPassword(u: {
+  localPasswordConfigured?: boolean | null;
+  googleSub?: string | null;
+  yandexSub?: string | null;
+}): boolean {
+  if (u.localPasswordConfigured === true) return false;
+  return hasOAuthLinked(u);
+}
+
 /** Вызывается при старте сервера: создаёт или обновляет дефолтного админа. */
 export async function ensureDefaultAdmin(): Promise<void> {
   const passwordHash = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, BCRYPT_ROUNDS);
@@ -51,8 +67,12 @@ function toPlainUser(doc: {
   phone?: string
   socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string } | null
   mustChangePassword?: boolean
+  localPasswordConfigured?: boolean | null
+  googleSub?: string | null
+  yandexSub?: string | null
   onboardingTutorialSeen?: { student?: boolean; university?: boolean } | null
 }) {
+  const mustSetLocalPassword = computeMustSetLocalPassword(doc)
   return {
     id: String(doc._id),
     email: doc.email,
@@ -67,6 +87,7 @@ function toPlainUser(doc: {
       whatsapp: doc.socialLinks?.whatsapp ?? '',
     },
     mustChangePassword: Boolean(doc.mustChangePassword),
+    mustSetLocalPassword,
     onboardingTutorialSeen: {
       student: doc.onboardingTutorialSeen?.student ?? false,
       university: doc.onboardingTutorialSeen?.university ?? false,
@@ -118,9 +139,6 @@ async function issueAuthTokens(user: UserDoc): Promise<{
   const plainUser = toPlainUser(user) as ReturnType<typeof toPlainUser> & {
     universityProfile?: { id: string; verified: boolean; universityName?: string };
   };
-  (plainUser as { mustChangePassword?: boolean }).mustChangePassword = Boolean(
-    (user as { mustChangePassword?: boolean }).mustChangePassword
-  );
   if (user.role === 'university') {
     const up = await UniversityProfile.findOne({ userId: user._id }).lean();
     if (up) {
@@ -188,6 +206,7 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
     if (!user.googleSub) {
       user.googleSub = sub;
       user.emailVerified = true;
+      user.localPasswordConfigured = true;
       await user.save();
     }
     return issueTokensAfterLoginChecks(user);
@@ -215,6 +234,7 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
     role: data.role,
     emailVerified: true,
     googleSub: sub,
+    localPasswordConfigured: false,
   });
 
   if (data.role === 'student') {
@@ -360,6 +380,7 @@ async function finalizeYandexOAuthProfile(
     if (!user.yandexSub) {
       user.yandexSub = sub;
       user.emailVerified = true;
+      user.localPasswordConfigured = true;
       await user.save();
     }
     return issueTokensAfterLoginChecks(user);
@@ -387,6 +408,7 @@ async function finalizeYandexOAuthProfile(
     role: data.role,
     emailVerified: true,
     yandexSub: sub,
+    localPasswordConfigured: false,
   });
 
   if (data.role === 'student') {
@@ -526,6 +548,11 @@ export async function login(data: LoginBody) {
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
 
+  if (user.localPasswordConfigured !== true) {
+    user.localPasswordConfigured = true;
+    await user.save();
+  }
+
   return issueTokensAfterLoginChecks(user);
 }
 
@@ -590,7 +617,9 @@ export async function logout(userId: string, refreshToken?: string) {
 
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
-    .select('email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword onboardingTutorialSeen')
+    .select(
+      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured googleSub yandexSub onboardingTutorialSeen'
+    )
     .lean();
   if (!user) {
     throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
@@ -600,10 +629,36 @@ export async function getMe(userId: string) {
     UniversityProfile.findOne({ userId }).lean(),
     subscriptionService.getSubscriptionSummary(userId),
   ]);
-  const u = user as { _id: unknown; email: string; name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; role: string; emailVerified?: boolean; suspended?: boolean; createdAt?: Date; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; totpEnabled?: boolean; mustChangePassword?: boolean; onboardingTutorialSeen?: { student?: boolean; university?: boolean } };
-  const avatar = studentProfile && (studentProfile as { avatarUrl?: string }).avatarUrl
+  const u = user as {
+    _id: unknown
+    email: string
+    name?: string
+    phone?: string
+    socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }
+    role: string
+    emailVerified?: boolean
+    suspended?: boolean
+    createdAt?: Date
+    notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }
+    totpEnabled?: boolean
+    mustChangePassword?: boolean
+    localPasswordConfigured?: boolean
+    googleSub?: string | null
+    yandexSub?: string | null
+    onboardingTutorialSeen?: { student?: boolean; university?: boolean }
+  };
+  const studentAvatar = studentProfile && (studentProfile as { avatarUrl?: string }).avatarUrl
     ? String((studentProfile as { avatarUrl: string }).avatarUrl).trim() || undefined
     : undefined;
+  const universityLogo = universityProfile && (universityProfile as { logoUrl?: string }).logoUrl
+    ? String((universityProfile as { logoUrl: string }).logoUrl).trim() || undefined
+    : undefined;
+  const avatar =
+    u.role === 'student'
+      ? studentAvatar ?? undefined
+      : u.role === 'university'
+        ? universityLogo ?? undefined
+        : undefined;
   return {
     id: String(u._id),
     email: u.email,
@@ -623,6 +678,8 @@ export async function getMe(userId: string) {
     createdAt: u.createdAt,
     totpEnabled: !!u.totpEnabled,
     mustChangePassword: Boolean(u.mustChangePassword),
+    mustSetLocalPassword: computeMustSetLocalPassword(u),
+    localPasswordConfigured: u.localPasswordConfigured !== false,
     notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
     onboardingTutorialSeen: u.onboardingTutorialSeen ?? { student: false, university: false },
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
@@ -693,6 +750,7 @@ export async function verifyEmailByCode(email: string, code: string) {
     passwordHash: pending.passwordHash,
     role: pending.role as Role,
     emailVerified: true,
+    localPasswordConfigured: true,
   });
 
   if (pending.role === 'student') {
@@ -751,6 +809,7 @@ export async function resetPassword(token: string, newPassword: string) {
     passwordHash,
     resetToken: null,
     resetTokenExpires: null,
+    localPasswordConfigured: true,
   });
   return { success: true };
 }
@@ -765,6 +824,38 @@ export async function setPassword(userId: string, newPassword: string) {
   await User.findByIdAndUpdate(userId, {
     passwordHash,
     mustChangePassword: false,
+    localPasswordConfigured: true,
+  });
+  return { success: true };
+}
+
+/** Change password for logged-in user (knows current password). OAuth-only accounts must use set-password first. */
+export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
+  const user = await User.findById(userId).select('passwordHash localPasswordConfigured').lean();
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  const doc = user as { passwordHash?: string; localPasswordConfigured?: boolean | null };
+  if (doc.localPasswordConfigured === false) {
+    throw new AppError(
+      400,
+      'Set a password for your account first (for example after signing in with Google or Yandex)',
+      ErrorCodes.VALIDATION
+    );
+  }
+  const hash = doc.passwordHash ?? '';
+  const valid = await bcrypt.compare(currentPassword, hash);
+  if (!valid) {
+    throw new AppError(401, 'Current password is incorrect', ErrorCodes.UNAUTHORIZED);
+  }
+  const { passwordSchema } = await import('../validators/auth.validator');
+  passwordSchema.parse(newPassword);
+  if (await bcrypt.compare(newPassword, hash)) {
+    throw new AppError(400, 'New password must be different from the current password', ErrorCodes.VALIDATION);
+  }
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  await User.findByIdAndUpdate(userId, {
+    passwordHash,
+    mustChangePassword: false,
+    localPasswordConfigured: true,
   });
   return { success: true };
 }

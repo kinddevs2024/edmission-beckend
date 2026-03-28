@@ -75,8 +75,15 @@ export async function createNotification(userId: string, params: CreateNotificat
   });
   const plain = doc.toObject ? doc.toObject() : (doc as unknown as Record<string, unknown>);
   const id = String(plain._id);
-  const link = buildNotificationLink(params.type, params.referenceId, params.referenceType, params.metadata);
-  const recipient = await User.findById(userId).select('language').lean();
+  const recipient = await User.findById(userId).select('language role').lean();
+  const recipientRole = (recipient as { role?: string } | null)?.role;
+  const link = buildNotificationLink(
+    params.type,
+    params.referenceId,
+    params.referenceType,
+    params.metadata,
+    recipientRole
+  );
   const locale = ((recipient as { language?: ApiLocale } | null)?.language ?? 'en') as ApiLocale;
   const localizedPayload = localizeNotificationRecord(
     {
@@ -105,11 +112,18 @@ function buildNotificationLink(
   type: string,
   referenceId?: string,
   _referenceType?: string,
-  _metadata?: Record<string, unknown>
+  _metadata?: Record<string, unknown>,
+  recipientRole?: string
 ): string | null {
   switch (type) {
     case 'message':
-      return referenceId ? `/chat/${referenceId}` : null;
+      if (!referenceId) return null;
+      if (recipientRole === 'student') return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
+      if (recipientRole === 'university') return `/university/chat?chatId=${encodeURIComponent(referenceId)}`;
+      if (recipientRole === 'admin' || recipientRole === 'school_counsellor') {
+        return `/admin/chats?chatId=${encodeURIComponent(referenceId)}`;
+      }
+      return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
     case 'offer':
       return '/student/offers';
     case 'document':

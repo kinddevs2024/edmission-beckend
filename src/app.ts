@@ -12,6 +12,10 @@ import { globalApiRateLimiter } from './middlewares/rateLimit.middleware';
 
 const app = express();
 
+if (config.trustProxy) {
+  app.set('trust proxy', 1);
+}
+
 app.disable('x-powered-by');
 app.use(helmet({
   contentSecurityPolicy: config.enableSwagger

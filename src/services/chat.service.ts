@@ -4,6 +4,7 @@ import * as notificationService from './notification.service';
 import * as emailService from './email.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
+import { redactStudentForUniversityChat } from '../utils/studentProfilePrivacy';
 
 function buildMessageVisibilityFilter(viewerUserId?: string): Record<string, unknown> {
   const filter: Record<string, unknown> = {
@@ -156,7 +157,7 @@ export async function getChats(userId: string) {
     }
   } else if (universityProfile) {
     chats = await Chat.find({ universityId: (universityProfile as { _id: unknown })._id })
-      .populate('studentId', 'firstName lastName avatarUrl userId')
+      .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility')
       .lean();
     const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
     const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
@@ -176,7 +177,10 @@ export async function getChats(userId: string) {
       if (stu && typeof stu === 'object') {
         const sid = (stu as { userId?: unknown }).userId;
         const extra = sid ? studentUserById.get(String(sid)) : undefined;
-        (c as { student?: unknown }).student = { ...(stu as object), ...(extra ? { userEmail: extra.email } : {}) };
+        const merged = { ...(stu as object), ...(extra ? { userEmail: extra.email } : {}) } as Record<string, unknown>;
+        const redacted = redactStudentForUniversityChat(merged);
+        (c as { student?: unknown }).student = redacted;
+        (c as { studentId?: unknown }).studentId = redacted;
       } else {
         (c as { student?: unknown }).student = stu as unknown;
       }
@@ -360,7 +364,7 @@ export async function getOrCreateChatForUser(
 export async function getOneChatFormatted(chatId: string, userId: string) {
   const chat = await Chat.findById(chatId)
     .populate('universityId', 'universityName logoUrl userId')
-    .populate('studentId', 'firstName lastName avatarUrl userId')
+    .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility')
     .lean();
   if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
 
@@ -385,12 +389,24 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     .lean();
   const lastMessage = lastMsg ? [formatChatMessage(lastMsg as Record<string, unknown>)] : [];
 
+  let studentOut: unknown = chatObj.studentId;
+  if (
+    studentOut &&
+    typeof studentOut === 'object' &&
+    userId === universityUserId &&
+    chatObj.studentId &&
+    typeof chatObj.studentId === 'object'
+  ) {
+    studentOut = redactStudentForUniversityChat({ ...(chatObj.studentId as Record<string, unknown>) });
+  }
+
   return {
     ...chat,
     id: String(chatObj._id),
     lastMessage,
     university: chatObj.universityId,
-    student: chatObj.studentId,
+    studentId: studentOut,
+    student: studentOut,
     isReadOnly: readOnlyState.isReadOnly,
     readOnlyReason: readOnlyState.readOnlyReason,
   };

@@ -294,6 +294,7 @@ export async function createUser(payload: { role: 'student' | 'university' | 'ad
     suspended: false,
     resetToken: inviteToken,
     resetTokenExpires: inviteTokenExpires,
+    localPasswordConfigured: !isInvite,
   });
 
   if (role === 'student') {

@@ -18,6 +18,12 @@ const uploadedImageUrlSchema = z.string().min(1).refine(
   { message: 'Invalid url' }
 );
 
+/** Allow clearing logo with '' or null from the client */
+const optionalLogoUrlSchema = z.preprocess(
+  (val) => (val === '' ? null : val),
+  z.union([z.null(), uploadedImageUrlSchema]).optional()
+);
+
 export const updateInterestSchema = z.object({
   body: z.object({
     status: z.enum(['under_review', 'chat_opened', 'offer_sent', 'rejected', 'accepted']),
@@ -99,7 +105,7 @@ export const updateProfileSchema = z.object({
     country: z.string().max(100).optional(),
     city: z.string().max(100).optional(),
     description: z.string().max(5000).optional(),
-    logoUrl: uploadedImageUrlSchema.optional(),
+    logoUrl: optionalLogoUrlSchema,
     onboardingCompleted: z.boolean().optional(),
     facultyCodes: z.array(z.string()).max(50).optional(),
     facultyItems: z.record(z.array(z.string())).optional(),

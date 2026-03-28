@@ -163,6 +163,10 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     const arr = Array.isArray(data.preferredCountries) ? data.preferredCountries : [];
     update.preferredCountries = arr.map((s) => String(s)).filter((s) => s.trim()).slice(0, 30);
   }
+  if (data.profileVisibility !== undefined) {
+    const v = String(data.profileVisibility);
+    update.profileVisibility = v === 'public' ? 'public' : 'private';
+  }
 
   const updated = await StudentProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
   return { ...updated, id: String((updated as { _id: unknown })._id) };
