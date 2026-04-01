@@ -232,8 +232,8 @@ export async function forgotPassword(
 ): Promise<void> {
   try {
     const { email } = forgotPasswordSchema.shape.body.parse(req.body);
-    await authService.forgotPassword(email);
-    res.json({ success: true });
+    const result = await authService.forgotPassword(email);
+    res.json(result);
   } catch (e) {
     next(e);
   }

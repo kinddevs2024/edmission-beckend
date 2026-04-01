@@ -535,7 +535,8 @@ export async function resendVerificationCode(email: string) {
 }
 
 export async function login(data: LoginBody) {
-  const user = await User.findOne({ email: data.email });
+  const normalizedEmail = data.email.toLowerCase().trim();
+  const user = await User.findOne({ email: normalizedEmail });
   if (!user) {
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
@@ -584,6 +585,9 @@ export async function refresh(refreshToken: string) {
   const user = await User.findById(payload.sub);
   if (!user || user.suspended) {
     throw new AppError(401, 'User not found or suspended', ErrorCodes.UNAUTHORIZED);
+  }
+  if (payload.iat && user.passwordChangedAt instanceof Date && payload.iat * 1000 < user.passwordChangedAt.getTime()) {
+    throw new AppError(401, 'Invalid refresh token', ErrorCodes.UNAUTHORIZED);
   }
 
   const accessToken = signAccessToken({
@@ -766,19 +770,13 @@ export async function verifyEmailByCode(email: string, code: string) {
   return issueAuthTokens(user);
 }
 
-export async function forgotPassword(email: string) {
-  const user = await User.findOne({ email });
+export async function forgotPassword(email: string): Promise<{ success: true; resetLink?: string }> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const user = await User.findOne({ email: normalizedEmail });
   if (!user) return { success: true };
 
-  if (!config.email.enabled && !config.email.sendgridApiKey) {
-    throw new AppError(
-      503,
-      'Password reset is temporarily unavailable. Please contact support.',
-      ErrorCodes.SERVICE_UNAVAILABLE
-    );
-  }
-
   const resetToken = uuidv4();
+  const resetLink = emailService.buildResetPasswordLink(resetToken);
   await User.findByIdAndUpdate(user._id, {
     resetToken,
     resetTokenExpires: new Date(Date.now() + 60 * 60 * 1000),
@@ -786,11 +784,23 @@ export async function forgotPassword(email: string) {
 
   const sent = await emailService.sendResetPasswordEmail(user.email, resetToken);
   if (!sent && config.email.enabled) {
-    throw new AppError(
-      503,
-      'Failed to send reset email. Please try again later.',
-      ErrorCodes.SERVICE_UNAVAILABLE
+    if (config.nodeEnv === 'production') {
+      throw new AppError(
+        503,
+        'Failed to send reset email. Please try again later.',
+        ErrorCodes.SERVICE_UNAVAILABLE
+      );
+    }
+    logger.warn(
+      { email: user.email, resetLink },
+      'Password reset email could not be delivered; returning reset link for non-production use'
     );
+    return { success: true, resetLink };
+  }
+
+  if (!sent) {
+    logger.info({ email: user.email, resetLink }, 'Email disabled: password reset link (use in dev)');
+    return { success: true, resetLink };
   }
 
   return { success: true };
@@ -810,7 +820,9 @@ export async function resetPassword(token: string, newPassword: string) {
     resetToken: null,
     resetTokenExpires: null,
     localPasswordConfigured: true,
+    passwordChangedAt: new Date(),
   });
+  await RefreshToken.deleteMany({ userId: user._id });
   return { success: true };
 }
 
@@ -825,7 +837,9 @@ export async function setPassword(userId: string, newPassword: string) {
     passwordHash,
     mustChangePassword: false,
     localPasswordConfigured: true,
+    passwordChangedAt: new Date(),
   });
+  await RefreshToken.deleteMany({ userId });
   return { success: true };
 }
 
@@ -856,6 +870,8 @@ export async function changePassword(userId: string, currentPassword: string, ne
     passwordHash,
     mustChangePassword: false,
     localPasswordConfigured: true,
+    passwordChangedAt: new Date(),
   });
+  await RefreshToken.deleteMany({ userId });
   return { success: true };
 }

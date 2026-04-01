@@ -133,7 +133,7 @@ export async function getDashboard(userId: string) {
       .populate({
         path: 'studentId',
         select: 'firstName lastName gpa country userId profileVisibility',
-        populate: { path: 'userId', select: 'email' },
+        populate: { path: 'userId', select: 'email name' },
       })
       .lean(),
   ]);
@@ -164,6 +164,10 @@ export async function getDashboard(userId: string) {
           userEmail:
             rawStudent.userId && typeof rawStudent.userId === 'object'
               ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
+              : undefined,
+          name:
+            rawStudent.userId && typeof rawStudent.userId === 'object'
+              ? String((rawStudent.userId as { name?: string }).name ?? '').trim() || undefined
               : undefined,
         } as Record<string, unknown>;
         student = redactStudentForUniversityListing(merged);
@@ -409,12 +413,15 @@ export async function getStudents(
     })
     .filter(Boolean);
   const users = userIds.length
-    ? await User.find({ _id: { $in: userIds } }).select('_id email').lean()
+    ? await User.find({ _id: { $in: userIds } }).select('_id email name').lean()
     : [];
   const emailByUserId = new Map(
     users.map((user) => [
       String((user as { _id: unknown })._id),
-      String((user as { email?: string }).email ?? '').trim() || undefined,
+      {
+        email: String((user as { email?: string }).email ?? '').trim() || undefined,
+        name: String((user as { name?: string }).name ?? '').trim() || undefined,
+      },
     ])
   );
 
@@ -423,9 +430,9 @@ export async function getStudents(
   const data = students.map((s) => {
     const id = String((s as { _id: unknown })._id);
     const userId = (s as { userId?: unknown }).userId;
-    const studentEmail = userId ? emailByUserId.get(String(userId)) : undefined;
+    const studentUserMeta = userId ? emailByUserId.get(String(userId)) : undefined;
     const { userId: _studentUserId, ...studentData } = s as Record<string, unknown>;
-    const merged = { ...studentData, userEmail: studentEmail } as Record<string, unknown>;
+    const merged = { ...studentData, userEmail: studentUserMeta?.email, name: studentUserMeta?.name } as Record<string, unknown>;
     return {
       id,
       student: redactStudentForUniversityListing(merged),
@@ -634,7 +641,7 @@ export async function getPipeline(
     .populate({
       path: 'studentId',
       select: 'firstName lastName country city avatarUrl userId profileVisibility',
-      populate: { path: 'userId', select: 'email' },
+      populate: { path: 'userId', select: 'email name' },
     })
     .sort({ updatedAt: -1 })
     .lean();
@@ -666,6 +673,10 @@ export async function getPipeline(
         userEmail:
           rawStudent.userId && typeof rawStudent.userId === 'object'
             ? String((rawStudent.userId as { email?: string }).email ?? '').trim() || undefined
+            : undefined,
+        name:
+          rawStudent.userId && typeof rawStudent.userId === 'object'
+            ? String((rawStudent.userId as { name?: string }).name ?? '').trim() || undefined
             : undefined,
       } as Record<string, unknown>;
       student = redactStudentForUniversityListing(merged);

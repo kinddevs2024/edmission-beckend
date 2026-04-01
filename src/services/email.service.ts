@@ -4,6 +4,11 @@ import { logger } from '../utils/logger';
 
 const getFrontendUrl = () => config.frontendUrl?.replace(/\/$/, '') || 'https://edmission.uz';
 
+export function buildResetPasswordLink(resetToken: string): string {
+  const baseUrl = getFrontendUrl();
+  return `${baseUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+}
+
 function createSmtpTransporter() {
   const { host, port, user, pass } = config.email.smtp;
   if (!host || !user || !pass) return null;
@@ -101,8 +106,7 @@ export function resetPasswordHtml(resetLink: string): string {
 }
 
 export async function sendResetPasswordEmail(to: string, resetToken: string): Promise<boolean> {
-  const baseUrl = getFrontendUrl();
-  const resetLink = `${baseUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+  const resetLink = buildResetPasswordLink(resetToken);
   return sendMail(to, 'Reset your password', resetPasswordHtml(resetLink));
 }
 

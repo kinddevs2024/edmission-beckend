@@ -13,6 +13,8 @@ export interface TokenPayload {
   email: string;
   role: Role;
   jti?: string;
+  iat?: number;
+  exp?: number;
 }
 
 export function signAccessToken(payload: Omit<TokenPayload, 'jti'>): string {

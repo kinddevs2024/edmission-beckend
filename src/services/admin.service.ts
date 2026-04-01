@@ -351,7 +351,19 @@ export async function resetUserPassword(userId: string, newPassword: string) {
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
   if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot reset default admin password', ErrorCodes.FORBIDDEN);
   const passwordHash = await bcrypt.hash(String(newPassword || ''), BCRYPT_ROUNDS);
-  await User.findByIdAndUpdate(userId, { passwordHash }, { new: true });
+  await User.findByIdAndUpdate(
+    userId,
+    {
+      passwordHash,
+      localPasswordConfigured: true,
+      mustChangePassword: false,
+      resetToken: null,
+      resetTokenExpires: null,
+      passwordChangedAt: new Date(),
+    },
+    { new: true }
+  );
+  await RefreshToken.deleteMany({ userId });
   return { success: true };
 }
 

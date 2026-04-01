@@ -1,5 +1,6 @@
 import { StudentDocument, StudentProfile } from '../models';
 import { getPageDimensions, parseScene, stringifyScene } from './documentRenderer.service';
+import { ensureStudentProfile } from './studentProfile.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 
 type PageFormat = 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM';
@@ -23,8 +24,7 @@ const ALLOWED_TYPES = ['transcript', 'diploma', 'language_certificate', 'course_
 const ALLOWED_PAGE_FORMATS: PageFormat[] = ['A4_PORTRAIT', 'A4_LANDSCAPE', 'LETTER', 'CUSTOM'];
 
 export async function addDocument(userId: string, data: StudentDocumentInput) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   assertDocumentType(data.type);
   const doc = await StudentDocument.create({
@@ -38,8 +38,7 @@ export async function addDocument(userId: string, data: StudentDocumentInput) {
 }
 
 export async function updateDocument(userId: string, docId: string, data: StudentDocumentInput) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const current = await StudentDocument.findOne({ _id: docId, studentId: profile._id }).lean();
   if (!current) throw new AppError(404, 'Document not found', ErrorCodes.NOT_FOUND);
@@ -64,8 +63,7 @@ export async function updateDocument(userId: string, docId: string, data: Studen
 }
 
 export async function deleteDocument(userId: string, docId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const deleted = await StudentDocument.findOneAndDelete({ _id: docId, studentId: profile._id }).lean();
   if (!deleted) throw new AppError(404, 'Document not found', ErrorCodes.NOT_FOUND);
@@ -73,8 +71,7 @@ export async function deleteDocument(userId: string, docId: string) {
 }
 
 export async function getMyDocuments(userId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const list = await StudentDocument.find({ studentId: profile._id }).sort({ createdAt: -1 }).lean();
   return list.map((document) => mapStudentDocument(document as Record<string, unknown>));

@@ -21,6 +21,13 @@ function applyAuthToRequest(req: Request, payload: { sub: string; email: string;
   }
 }
 
+function tokenIssuedBeforePasswordChange(iat: number | undefined, passwordChangedAt: Date | string | undefined): boolean {
+  if (!iat || !passwordChangedAt) return false;
+  const changedAtMs = new Date(passwordChangedAt).getTime();
+  if (Number.isNaN(changedAtMs)) return false;
+  return iat * 1000 < changedAtMs;
+}
+
 export function authMiddleware(
   req: Request,
   _res: Response,
@@ -36,8 +43,12 @@ export function authMiddleware(
 
   (async () => {
     const payload = verifyAccessToken(token);
-    const user = await User.findById(payload.sub).select('email role language').lean();
+    const user = await User.findById(payload.sub).select('email role language passwordChangedAt').lean();
     if (!user) {
+      next(new AppError(401, 'Invalid or expired token', ErrorCodes.UNAUTHORIZED));
+      return;
+    }
+    if (tokenIssuedBeforePasswordChange(payload.iat, (user as { passwordChangedAt?: Date | string }).passwordChangedAt)) {
       next(new AppError(401, 'Invalid or expired token', ErrorCodes.UNAUTHORIZED));
       return;
     }
@@ -71,8 +82,12 @@ export function optionalAuthMiddleware(
 
   (async () => {
     const payload = verifyAccessToken(token);
-    const user = await User.findById(payload.sub).select('email role language').lean();
+    const user = await User.findById(payload.sub).select('email role language passwordChangedAt').lean();
     if (!user) {
+      next();
+      return;
+    }
+    if (tokenIssuedBeforePasswordChange(payload.iat, (user as { passwordChangedAt?: Date | string }).passwordChangedAt)) {
       next();
       return;
     }

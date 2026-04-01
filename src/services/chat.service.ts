@@ -118,7 +118,7 @@ export async function getChats(userId: string) {
       .map((c) => (c.universityId && typeof c.universityId === 'object' ? (c.universityId as { userId?: unknown }).userId : null))
       .filter((id): id is unknown => !!id);
     const uniUsers = uniUserIds.length
-      ? await User.find({ _id: { $in: uniUserIds } }).select('email').lean()
+      ? await User.find({ _id: { $in: uniUserIds } }).select('email name').lean()
       : [];
     const universityProfileIds = (chats as { universityId?: unknown }[])
       .map((c) => toObjectIdString(c.universityId))
@@ -135,9 +135,9 @@ export async function getChats(userId: string) {
     const readOnlyUniversityIds = new Set(
       readOnlyInterests.map((interest) => String((interest as { universityId: unknown }).universityId))
     );
-    const uniUserById = new Map<string, { email?: string }>();
-    for (const u of uniUsers as { _id: unknown; email?: string }[]) {
-      uniUserById.set(String(u._id), { email: u.email });
+    const uniUserById = new Map<string, { email?: string; name?: string }>();
+    for (const u of uniUsers as { _id: unknown; email?: string; name?: string }[]) {
+      uniUserById.set(String(u._id), { email: u.email, name: u.name });
     }
     for (const c of chats as { _id: unknown; universityId?: { userId?: unknown }; lastMessage?: unknown; university?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
       (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
@@ -145,7 +145,7 @@ export async function getChats(userId: string) {
       if (uni && typeof uni === 'object') {
         const uid = (uni as { userId?: unknown }).userId;
         const extra = uid ? uniUserById.get(String(uid)) : undefined;
-        (c as { university?: unknown }).university = { ...(uni as object), ...(extra ? { userEmail: extra.email } : {}) };
+        (c as { university?: unknown }).university = { ...(uni as object), ...(extra ? { userEmail: extra.email, name: extra.name } : {}) };
         const universityProfileId = toObjectIdString(uni);
         (c as { isReadOnly?: boolean }).isReadOnly = !!universityProfileId && readOnlyUniversityIds.has(universityProfileId);
         (c as { readOnlyReason?: string }).readOnlyReason = (c as { isReadOnly?: boolean }).isReadOnly ? 'rejected' : undefined;
@@ -165,11 +165,11 @@ export async function getChats(userId: string) {
       .map((c) => (c.studentId && typeof c.studentId === 'object' ? (c.studentId as { userId?: unknown }).userId : null))
       .filter((id): id is unknown => !!id);
     const studentUsers = studentUserIds.length
-      ? await User.find({ _id: { $in: studentUserIds } }).select('email').lean()
+      ? await User.find({ _id: { $in: studentUserIds } }).select('email name').lean()
       : [];
-    const studentUserById = new Map<string, { email?: string }>();
-    for (const u of studentUsers as { _id: unknown; email?: string }[]) {
-      studentUserById.set(String(u._id), { email: u.email });
+    const studentUserById = new Map<string, { email?: string; name?: string }>();
+    for (const u of studentUsers as { _id: unknown; email?: string; name?: string }[]) {
+      studentUserById.set(String(u._id), { email: u.email, name: u.name });
     }
     for (const c of chats as { _id: unknown; studentId?: { userId?: unknown }; lastMessage?: unknown; student?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
       (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
@@ -177,7 +177,7 @@ export async function getChats(userId: string) {
       if (stu && typeof stu === 'object') {
         const sid = (stu as { userId?: unknown }).userId;
         const extra = sid ? studentUserById.get(String(sid)) : undefined;
-        const merged = { ...(stu as object), ...(extra ? { userEmail: extra.email } : {}) } as Record<string, unknown>;
+        const merged = { ...(stu as object), ...(extra ? { userEmail: extra.email, name: extra.name } : {}) } as Record<string, unknown>;
         const redacted = redactStudentForUniversityChat(merged);
         (c as { student?: unknown }).student = redacted;
         (c as { studentId?: unknown }).studentId = redacted;

@@ -15,6 +15,8 @@ import {
 } from '../models';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
+import { ensureStudentProfile } from './studentProfile.service';
+import { calculateMatchScore } from './matching.service';
 import { filterSkills, filterInterests, filterHobbies } from '../constants/profileCriteria';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString, toObjectIdStrings } from '../utils/objectId';
@@ -47,8 +49,8 @@ function computePortfolioCompletion(doc: Record<string, unknown>): number {
 }
 
 export async function getProfile(userId: string) {
-  const profile = await StudentProfile.findOne({ userId })
-    .lean();
+  const ensuredProfile = await ensureStudentProfile(userId);
+  const profile = await StudentProfile.findById(ensuredProfile._id).lean();
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
   const user = await mongoose.model('User').findById(userId).select('email emailVerified').lean() as Record<string, unknown> | null;
   const profileObj = profile as Record<string, unknown>;
@@ -65,8 +67,7 @@ export async function getProfile(userId: string) {
 }
 
 export async function updateProfile(userId: string, data: Record<string, unknown>) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const update: Record<string, unknown> = { needsRecalculation: true };
   if (data.firstName !== undefined) update.firstName = String(data.firstName);
@@ -173,8 +174,7 @@ export async function updateProfile(userId: string, data: Record<string, unknown
 }
 
 export async function getDashboard(userId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const [recommendations, interests, offers] = await Promise.all([
     Recommendation.find({ studentId: profile._id })
@@ -269,8 +269,17 @@ export async function getUniversities(
   userId: string,
   query: StudentUniversitiesQuery
 ) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
+  const profileObject = profile.toObject ? profile.toObject() : profile;
+  if (!isMinimalPortfolioComplete(profileObject as Record<string, unknown>)) {
+    return {
+      data: [],
+      total: 0,
+      page: Math.max(1, query.page || 1),
+      limit: Math.min(50, Math.max(1, query.limit || 20)),
+      totalPages: 0,
+    };
+  }
 
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
@@ -293,10 +302,14 @@ export async function getUniversities(
     baseWhere.country = { $in: preferredCountries };
   }
 
-  const [catalogs, profiles] = await Promise.all([
+  const [catalogs, profiles, interestedProfileIds, interestedCatalogIds] = await Promise.all([
     UniversityCatalog.find({ ...baseWhere, linkedUniversityProfileId: { $exists: false } }).sort({ universityName: 1 }).lean(),
     UniversityProfile.find({ ...baseWhere, verified: true }).sort({ universityName: 1 }).lean(),
+    Interest.find({ studentId: profile._id }).select('universityId').lean(),
+    CatalogInterest.find({ studentId: profile._id }).select('catalogUniversityId').lean(),
   ]);
+  const interestedProfileIdSet = new Set(interestedProfileIds.map((row) => String((row as { universityId?: unknown }).universityId ?? '')).filter(Boolean));
+  const interestedCatalogIdSet = new Set(interestedCatalogIds.map((row) => String((row as { catalogUniversityId?: unknown }).catalogUniversityId ?? '')).filter(Boolean));
 
   const catalogItems: SearchableUniversityItem[] = catalogs.map((c) => {
     const id = `catalog-${String((c as { _id: unknown })._id)}`;
@@ -419,6 +432,13 @@ export async function getUniversities(
 
   const merged = [...catalogItems, ...profileItems]
     .filter((item) => {
+      if (item._source === 'catalog') {
+        const rawId = item.id.replace(/^catalog-/, '');
+        return !interestedCatalogIdSet.has(rawId);
+      }
+      return !interestedProfileIdSet.has(item.id);
+    })
+    .filter((item) => {
       if (!useProfileFilters) return true;
       if (!explicitCountry && preferredCountries.length > 0 && item.country && !preferredCountries.includes(item.country)) {
         return false;
@@ -428,11 +448,56 @@ export async function getUniversities(
       }
       return item.facultyCodes.some((code) => interestedFaculties.includes(code));
     })
-    .filter((item) => matchesUniversityFilters(item, query))
+    .map((item) => {
+      const match = calculateMatchScore(
+        profileObject as Parameters<typeof calculateMatchScore>[0],
+        {
+          country: item.country,
+          city: item.city,
+          facultyCodes: item.facultyCodes,
+          minLanguageLevel: item.minLanguageLevel,
+          tuitionPrice: resolveTuitionPrice(item),
+          programs: item.programs.map((program) => ({
+            field: String(program.field ?? ''),
+            language: program.language != null ? String(program.language) : undefined,
+            tuitionFee: typeof (program.tuitionFee ?? program.tuition) === 'number' ? Number(program.tuitionFee ?? program.tuition) : undefined,
+            degreeLevel: program.degreeLevel != null ? String(program.degreeLevel) : undefined,
+            degree: program.degree != null ? String(program.degree) : undefined,
+            entryRequirements: program.entryRequirements != null ? String(program.entryRequirements) : undefined,
+          })),
+          scholarships: item.scholarships.map((scholarship) => ({
+            eligibility: scholarship.eligibility != null ? String(scholarship.eligibility) : undefined,
+          })),
+        }
+      );
+      return {
+        ...item,
+        matchScore: match.score,
+        breakdown: match.breakdown,
+        isSuitable: match.isSuitable,
+      };
+    })
+    .filter((item) => matchesUniversityFilters(item, query));
+
+  const strictMatches = merged
+    .filter((item) => item.isSuitable)
     .sort((left, right) => compareUniversities(left, right, query.sort));
 
-  const total = merged.length;
-  const dataWithCount = merged
+  const fallbackMatches = merged
+    .slice()
+    .sort((left, right) =>
+      compareFallbackUniversities(
+        left as Record<string, unknown>,
+        right as Record<string, unknown>,
+        profileObject as Record<string, unknown>
+      )
+    )
+    .slice(0, 3);
+
+  const visibleUniversities = strictMatches.length > 0 ? strictMatches : fallbackMatches;
+
+  const total = visibleUniversities.length;
+  const dataWithCount = visibleUniversities
     .slice(skip, skip + limit)
     .map((item) => ({
       id: item.id,
@@ -476,6 +541,49 @@ function normalizeStringArray(values?: string[]) {
 
 function normalizeString(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function countryClosenessScore(universityCountry: unknown, studentProfile: Record<string, unknown>) {
+  const uniCountry = normalizeString(universityCountry);
+  if (!uniCountry) return 0;
+
+  const studentCountry = normalizeString(studentProfile.country);
+  if (studentCountry && uniCountry === studentCountry) return 3;
+
+  const preferredCountries = Array.isArray(studentProfile.preferredCountries)
+    ? (studentProfile.preferredCountries as unknown[]).map((value) => normalizeString(value)).filter(Boolean)
+    : [];
+  if (preferredCountries.includes(uniCountry)) return 2;
+
+  return 0;
+}
+
+function compareFallbackUniversities(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  studentProfile: Record<string, unknown>
+) {
+  const leftCountryScore = countryClosenessScore(left.country, studentProfile);
+  const rightCountryScore = countryClosenessScore(right.country, studentProfile);
+  if (rightCountryScore !== leftCountryScore) return rightCountryScore - leftCountryScore;
+
+  const leftMatch = typeof left.matchScore === 'number' ? left.matchScore : 0;
+  const rightMatch = typeof right.matchScore === 'number' ? right.matchScore : 0;
+  if (rightMatch !== leftMatch) return rightMatch - leftMatch;
+
+  const leftScholarship = left.hasScholarship ? 1 : 0;
+  const rightScholarship = right.hasScholarship ? 1 : 0;
+  if (rightScholarship !== leftScholarship) return rightScholarship - leftScholarship;
+
+  const leftRating = typeof left.rating === 'number' ? left.rating : 0;
+  const rightRating = typeof right.rating === 'number' ? right.rating : 0;
+  if (rightRating !== leftRating) return rightRating - leftRating;
+
+  return compareUniversities(
+    left as SearchableUniversityItem,
+    right as SearchableUniversityItem,
+    'match'
+  );
 }
 
 function hasStringValue(value: unknown): value is string {
@@ -909,7 +1017,8 @@ export async function getUniversityById(userId: string, universityId: unknown) {
 }
 
 export async function getUniversityFlyers(userId: string, universityId: unknown) {
-  const profile = await StudentProfile.findOne({ userId }).select('_id').lean();
+  const ensuredProfile = await ensureStudentProfile(userId);
+  const profile = await StudentProfile.findById(ensuredProfile._id).select('_id').lean();
   if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
   const uid = toObjectIdString(universityId);
   if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
@@ -920,8 +1029,7 @@ export async function getUniversityFlyers(userId: string, universityId: unknown)
 }
 
 export async function addInterest(userId: string, universityId: unknown) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const subscription = await subscriptionService.canSendApplication(userId);
   if (!subscription.allowed) {
@@ -993,7 +1101,8 @@ export async function getInterestLimit(userId: string) {
 
 /** Lightweight: returns only university IDs the student has shown interest in (profile ids + catalog-xxx). */
 export async function getInterestedUniversityIds(userId: string): Promise<string[]> {
-  const profile = await StudentProfile.findOne({ userId }).select('_id').lean();
+  const ensuredProfile = await ensureStudentProfile(userId);
+  const profile = await StudentProfile.findById(ensuredProfile._id).select('_id').lean();
   if (!profile) return [];
   const [interests, catalogInterests] = await Promise.all([
     Interest.find({ studentId: profile._id }).select('universityId').lean(),
@@ -1008,8 +1117,7 @@ export async function getInterestedUniversityIds(userId: string): Promise<string
 }
 
 export async function getApplications(userId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const [interests, catalogInterests] = await Promise.all([
     Interest.find({ studentId: profile._id }).populate('universityId', 'universityName country city').lean(),
@@ -1046,8 +1154,7 @@ export async function getApplications(userId: string) {
 }
 
 export async function getOffers(userId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const list = await Offer.find({ studentId: profile._id })
     .populate('universityId', 'universityName')
@@ -1068,8 +1175,7 @@ export async function getOffers(userId: string) {
 }
 
 export async function acceptOffer(userId: string, offerId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const offer = await Offer.findById(offerId).populate('scholarshipId');
   if (!offer || String(offer.studentId) !== String(profile._id)) throw new AppError(404, 'Offer not found', ErrorCodes.NOT_FOUND);
@@ -1115,8 +1221,7 @@ export async function acceptOffer(userId: string, offerId: string) {
 }
 
 export async function declineOffer(userId: string, offerId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const offer = await Offer.findOne({ _id: offerId, studentId: profile._id });
   if (!offer) throw new AppError(404, 'Offer not found', ErrorCodes.NOT_FOUND);
@@ -1153,8 +1258,7 @@ export async function declineOffer(userId: string, offerId: string) {
 
 /** Student asks to wait with decision: move offer to 'waiting' and set/extend expiresAt for 14 days from now. */
 export async function waitOnOffer(userId: string, offerId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
 
   const offer = await Offer.findOne({ _id: offerId, studentId: profile._id });
   if (!offer) throw new AppError(404, 'Offer not found', ErrorCodes.NOT_FOUND);
@@ -1173,8 +1277,11 @@ export async function waitOnOffer(userId: string, offerId: string) {
 const RECOMMENDATIONS_LIMIT = 5;
 
 export async function getRecommendations(userId: string) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
+  const profileObject = profile.toObject ? profile.toObject() : profile;
+  if (!isMinimalPortfolioComplete(profileObject as Record<string, unknown>)) {
+    return [];
+  }
 
   const [recDocs, catalogDocs] = await Promise.all([
     Recommendation.find({ studentId: profile._id })
@@ -1216,12 +1323,58 @@ export async function getRecommendations(userId: string) {
       };
     });
 
-  return [...recList, ...catalogList];
+  const scored = [...recList, ...catalogList]
+    .map((item) => {
+      const university = item.university as Record<string, unknown> | undefined;
+      const programs = Array.isArray(university?.programs) ? university?.programs as Array<Record<string, unknown>> : [];
+      const scholarships = Array.isArray(university?.scholarships) ? university?.scholarships as Array<Record<string, unknown>> : [];
+      const match = calculateMatchScore(
+        profileObject as Parameters<typeof calculateMatchScore>[0],
+        {
+          country: university?.country as string | undefined,
+          city: university?.city as string | undefined,
+          facultyCodes: (university?.facultyCodes as string[] | undefined) ?? [],
+          minLanguageLevel: university?.minLanguageLevel as string | undefined,
+          tuitionPrice: typeof university?.tuitionPrice === 'number' ? Number(university.tuitionPrice) : undefined,
+          programs: programs.map((program) => ({
+            field: String(program.field ?? ''),
+            language: program.language != null ? String(program.language) : undefined,
+            tuitionFee: typeof (program.tuitionFee ?? program.tuition) === 'number' ? Number(program.tuitionFee ?? program.tuition) : undefined,
+            degreeLevel: program.degreeLevel != null ? String(program.degreeLevel) : undefined,
+            degree: program.degree != null ? String(program.degree) : undefined,
+            entryRequirements: program.entryRequirements != null ? String(program.entryRequirements) : undefined,
+          })),
+          scholarships: scholarships.map((scholarship) => ({
+            eligibility: scholarship.eligibility != null ? String(scholarship.eligibility) : undefined,
+          })),
+        }
+      );
+      return {
+        ...item,
+        matchScore: match.score,
+        breakdown: match.breakdown,
+        matchBreakdown: match.breakdown,
+        isSuitable: match.isSuitable,
+      };
+    })
+    .sort((left, right) =>
+      compareFallbackUniversities(
+        left as Record<string, unknown>,
+        right as Record<string, unknown>,
+        profileObject as Record<string, unknown>
+      )
+    );
+
+  const suitableRecommendations = scored.filter((item) => item.isSuitable);
+  if (suitableRecommendations.length > 0) {
+    return suitableRecommendations.slice(0, RECOMMENDATIONS_LIMIT);
+  }
+
+  return scored.slice(0, Math.min(RECOMMENDATIONS_LIMIT, 3));
 }
 
 export async function getCompare(userId: string, ids: unknown[]) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
+  const profile = await ensureStudentProfile(userId);
   const rawIds = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
   if (rawIds.length > 5) {
     throw new AppError(400, 'Provide 1-5 university ids', ErrorCodes.VALIDATION);
