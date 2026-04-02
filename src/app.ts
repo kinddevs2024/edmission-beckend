@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
+import { createCorsOriginDelegate } from './config/corsPolicy';
 import { errorHandler } from './middlewares/errorHandler.middleware';
 import { apiLocaleMiddleware } from './middlewares/apiLocale.middleware';
 import routes from './routes';
@@ -34,7 +35,12 @@ app.use(helmet({
       },
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-app.use(cors({ origin: config.cors.origin, credentials: true }));
+app.use(
+  cors({
+    origin: createCorsOriginDelegate(config.cors.origin, config.nodeEnv),
+    credentials: true,
+  })
+);
 app.use(cookieParser());
 app.use(apiLocaleMiddleware);
 app.use('/api', globalApiRateLimiter);

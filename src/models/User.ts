@@ -46,6 +46,16 @@ const userSchema = new mongoose.Schema(
       student: { type: Boolean, default: false },
       university: { type: Boolean, default: false },
     },
+    /** Expo push tokens for mobile app (Expo Push / FCM/APNs via Expo). */
+    expoPushTokens: {
+      type: [
+        {
+          token: { type: String, required: true },
+          updatedAt: { type: Date, default: () => new Date() },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

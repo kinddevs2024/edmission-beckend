@@ -165,11 +165,16 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
   }
 
   const oauthClient = new OAuth2Client(config.google.clientId);
+  const googleAudiences = [
+    config.google.clientId,
+    config.google.iosClientId,
+    config.google.androidClientId,
+  ].filter((id): id is string => Boolean(id));
   let ticket;
   try {
     ticket = await oauthClient.verifyIdToken({
       idToken: data.idToken,
-      audience: config.google.clientId,
+      audience: googleAudiences.length === 1 ? googleAudiences[0] : googleAudiences,
     });
   } catch {
     throw new AppError(401, 'Invalid Google credential', ErrorCodes.UNAUTHORIZED);
@@ -255,28 +260,51 @@ function assertYandexRedirectUri(redirectUri: string): void {
   } catch {
     throw new AppError(400, 'Invalid redirect URI', ErrorCodes.VALIDATION);
   }
-  if (!parsed.pathname.replace(/\/$/, '').endsWith('/auth/yandex/callback')) {
+
+  const pathNorm = parsed.pathname.replace(/\/$/, '') || '';
+  /** Web: …/auth/yandex/callback */
+  const webStyleOk = pathNorm.endsWith('/auth/yandex/callback');
+  /** Native scheme edmission://auth/yandex/callback → hostname "auth", path /yandex/callback */
+  const nativeEdmissionOk =
+    parsed.protocol === 'edmission:' &&
+    parsed.hostname === 'auth' &&
+    pathNorm.replace(/\/$/, '') === '/yandex/callback';
+  /** Expo Go: exp://host:port/--/auth/yandex/callback */
+  const expoGoOk =
+    parsed.protocol === 'exp:' && /\/auth\/yandex\/callback$/.test(pathNorm);
+
+  if (!webStyleOk && !nativeEdmissionOk && !expoGoOk) {
     throw new AppError(400, 'Invalid redirect path', ErrorCodes.VALIDATION);
   }
-  const allowedOrigins = new Set<string>();
-  const fe = config.frontendUrl.trim();
-  if (fe) {
-    try {
-      allowedOrigins.add(new URL(fe).origin);
-    } catch {
-      /* ignore */
+
+  if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+    const allowedOrigins = new Set<string>();
+    const fe = config.frontendUrl.trim();
+    if (fe) {
+      try {
+        allowedOrigins.add(new URL(fe).origin);
+      } catch {
+        /* ignore */
+      }
     }
-  }
-  for (const o of config.cors.origin) {
-    try {
-      allowedOrigins.add(new URL(o).origin);
-    } catch {
-      /* ignore */
+    for (const o of config.cors.origin) {
+      try {
+        allowedOrigins.add(new URL(o).origin);
+      } catch {
+        /* ignore */
+      }
     }
+    if (!allowedOrigins.has(parsed.origin)) {
+      throw new AppError(400, 'Redirect URI origin not allowed', ErrorCodes.VALIDATION);
+    }
+    return;
   }
-  if (!allowedOrigins.has(parsed.origin)) {
-    throw new AppError(400, 'Redirect URI origin not allowed', ErrorCodes.VALIDATION);
+
+  if (parsed.protocol === 'edmission:' || parsed.protocol === 'exp:') {
+    return;
   }
+
+  throw new AppError(400, 'Redirect URI origin not allowed', ErrorCodes.VALIDATION);
 }
 
 async function exchangeYandexCode(code: string, redirectUri: string): Promise<string> {

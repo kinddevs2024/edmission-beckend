@@ -1,5 +1,6 @@
 import path from 'path';
 import dotenv from 'dotenv';
+import { resolveCorsAllowedOrigins } from './corsPolicy';
 
 // Load .env from project root (works when PM2 runs node dist/index.js from any cwd)
 const roots = [
@@ -31,13 +32,8 @@ export const config = {
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) || [
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'http://localhost:8080',
-      'https://edmission.uz',
-      'http://edmission.uz',
-    ],
+    /** Explicit allowlist from CORS_ORIGIN + used for OAuth redirect checks */
+    origin: resolveCorsAllowedOrigins(),
   },
   enableSwagger: process.env.ENABLE_SWAGGER === 'true',
   ollama: {
@@ -75,6 +71,9 @@ export const config = {
    */
   google: {
     clientId: (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim(),
+    /** Optional: native OAuth client IDs — id_token `aud` must match one of these (see mobile Google Sign-In). */
+    iosClientId: (process.env.GOOGLE_IOS_CLIENT_ID || '').trim(),
+    androidClientId: (process.env.GOOGLE_ANDROID_CLIENT_ID || '').trim(),
   },
   /**
    * Yandex OAuth (https://oauth.yandex.ru). Web flow: code + client_secret on server.

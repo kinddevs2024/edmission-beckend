@@ -1,8 +1,34 @@
-import { UniversityProfile, StudentProfile, Scholarship, LandingCertificate, SiteVisit } from '../models';
+import { UniversityCatalog, UniversityProfile, StudentProfile, Scholarship, LandingCertificate, SiteVisit } from '../models';
 
 function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
+
+export type TrustedUniversityLogo = {
+  id: string;
+  name: string;
+  logoUrl: string;
+};
+
+export type TrustedUniversityLogoPage = {
+  items: TrustedUniversityLogo[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+  hasMore: boolean;
+};
+
+type TrustedUniversityLogoAggregateResult = {
+  items?: Array<{
+    id: unknown;
+    name?: unknown;
+    logoUrl?: unknown;
+  }>;
+  meta?: Array<{
+    total?: unknown;
+  }>;
+};
 
 export async function getLandingCertificates(): Promise<Array<{ id: string; type: string; title: string; imageUrl: string; order: number }>> {
   const list = await LandingCertificate.find().sort({ order: 1, createdAt: 1 }).lean();
@@ -28,32 +54,103 @@ export async function getPublicStats(): Promise<{
   return { universities, students, scholarships };
 }
 
-export async function getTrustedUniversityLogos(limit = 15): Promise<Array<{ id: string; name: string; logoUrl: string }>> {
-  const safeLimit = Math.max(1, Math.min(limit, 30));
-  const list = await UniversityProfile.aggregate([
+/**
+ * Logos for landing carousels: serve real catalog logos from the DB in stable pages
+ * so clients can start quickly and progressively load the full set in the background.
+ */
+export async function getTrustedUniversityLogos(input: {
+  limit?: number;
+  offset?: number;
+} = {}): Promise<TrustedUniversityLogoPage> {
+  const safeLimit = Math.max(1, Math.min(Math.floor(Number(input.limit)) || 25, 60));
+  const safeOffset = Math.max(0, Math.floor(Number(input.offset)) || 0);
+
+  const [result] = await UniversityCatalog.aggregate<TrustedUniversityLogoAggregateResult>([
     {
       $match: {
-        verified: true,
         logoUrl: { $type: 'string', $nin: ['', null] },
       },
     },
     {
       $project: {
-        _id: 1,
-        name: '$universityName',
-        logoUrl: 1,
+        catalogId: '$_id',
+        name: {
+          $trim: {
+            input: { $ifNull: ['$universityName', ''] },
+          },
+        },
+        logoUrl: {
+          $trim: {
+            input: { $ifNull: ['$logoUrl', ''] },
+          },
+        },
       },
     },
-    { $sample: { size: safeLimit } },
+    {
+      $match: {
+        logoUrl: { $ne: '' },
+      },
+    },
+    {
+      $addFields: {
+        urlLen: { $strLenCP: '$logoUrl' },
+      },
+    },
+    {
+      $sort: {
+        urlLen: 1,
+        logoUrl: 1,
+        name: 1,
+        catalogId: 1,
+      },
+    },
+    {
+      $group: {
+        _id: '$logoUrl',
+        id: { $first: '$catalogId' },
+        name: { $first: '$name' },
+        logoUrl: { $first: '$logoUrl' },
+        urlLen: { $first: '$urlLen' },
+      },
+    },
+    {
+      $sort: {
+        urlLen: 1,
+        logoUrl: 1,
+        name: 1,
+        id: 1,
+      },
+    },
+    {
+      $facet: {
+        items: [
+          { $skip: safeOffset },
+          { $limit: safeLimit },
+        ],
+        meta: [{ $count: 'total' }],
+      },
+    },
   ]);
 
-  return list
-    .filter((item) => typeof item.logoUrl === 'string' && item.logoUrl.trim())
-    .map((item) => ({
-      id: String(item._id),
-      name: typeof item.name === 'string' && item.name.trim() ? item.name : 'Partner University',
-      logoUrl: String(item.logoUrl).trim(),
-    }));
+  const total = Array.isArray(result?.meta) && result.meta[0]?.total ? Number(result.meta[0].total) : 0;
+  const items = (Array.isArray(result?.items) ? result.items : [])
+    .map((item: { id: unknown; name?: unknown; logoUrl?: unknown }) => ({
+      id: String(item.id),
+      name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : 'Partner University',
+      logoUrl: typeof item.logoUrl === 'string' ? item.logoUrl.trim() : '',
+    }))
+    .filter((item: TrustedUniversityLogo) => item.logoUrl);
+
+  const nextOffset = safeOffset + items.length < total ? safeOffset + items.length : null;
+
+  return {
+    items,
+    total,
+    limit: safeLimit,
+    offset: safeOffset,
+    nextOffset,
+    hasMore: nextOffset !== null,
+  };
 }
 
 export async function recordSiteVisit(input: {

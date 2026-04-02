@@ -105,7 +105,73 @@ export async function createNotification(userId: string, params: CreateNotificat
     io.to(`user:${userId}`).emit('notification', localizedPayload);
   }
 
+  void sendExpoPushToUser(userId, {
+    title: String(localizedPayload.title ?? ''),
+    body: String(localizedPayload.body ?? ''),
+    data: {
+      notificationId: id,
+      type: params.type,
+      link: link ?? undefined,
+    },
+  });
+
   return { ...plain, id };
+}
+
+const MAX_EXPO_PUSH_TOKENS = 8;
+
+export async function registerExpoPushToken(userId: string, token: string) {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new AppError(400, 'Push token is required', ErrorCodes.VALIDATION);
+  }
+  const user = await User.findById(userId);
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  type TokenRow = { token: string; updatedAt: Date };
+  const existing = ((user as { expoPushTokens?: TokenRow[] }).expoPushTokens ?? []).filter(
+    (t) => t.token !== trimmed
+  );
+  existing.push({ token: trimmed, updatedAt: new Date() });
+  const next = existing.slice(-MAX_EXPO_PUSH_TOKENS);
+  (user as { expoPushTokens: TokenRow[] }).expoPushTokens = next;
+  await user.save();
+  return { success: true };
+}
+
+async function sendExpoPushToUser(
+  userId: string,
+  payload: { title: string; body: string; data: Record<string, unknown> }
+) {
+  if (!payload.title && !payload.body) return;
+  const doc = await User.findById(userId).select('expoPushTokens').lean();
+  const rows = (doc as { expoPushTokens?: { token: string }[] } | null)?.expoPushTokens ?? [];
+  const tokens = [...new Set(rows.map((r) => r.token).filter(Boolean))];
+  if (!tokens.length) return;
+
+  for (const to of tokens) {
+    try {
+      const res = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to,
+          title: payload.title,
+          body: payload.body,
+          sound: 'default',
+          data: payload.data,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.warn('[push] Expo send failed', res.status, text);
+      }
+    } catch (e) {
+      console.warn('[push] Expo send error', e);
+    }
+  }
 }
 
 function buildNotificationLink(

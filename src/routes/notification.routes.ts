@@ -6,6 +6,7 @@ const router = Router();
 
 router.use(authMiddleware);
 
+router.post('/push-token', notificationController.registerPushToken);
 router.get('/', notificationController.getNotifications);
 router.patch('/read-all', notificationController.markAllRead);
 router.patch('/:id/read', notificationController.markRead);

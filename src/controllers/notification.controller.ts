@@ -49,6 +49,17 @@ export async function deleteOne(req: Request, res: Response, next: NextFunction)
   }
 }
 
+export async function registerPushToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const result = await notificationService.registerExpoPushToken(req.user.id, token);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function deleteBulk(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();

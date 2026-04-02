@@ -91,7 +91,7 @@ export function applicationStatusChangedHtml(universityName: string, status: str
   return `
     <p>Hello ${studentName},</p>
     <p>Your application status at <strong>${universityName}</strong> has been updated to: <strong>${status.replace(/_/g, ' ')}</strong>.</p>
-    <p>Log in to Edmission to view details.</p>
+    <p>Login to Edmission to view details.</p>
     <p>— Edmission Team</p>
   `;
 }

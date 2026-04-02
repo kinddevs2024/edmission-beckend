@@ -19,9 +19,15 @@ export async function getStats(_req: Request, res: Response, next: NextFunction)
   }
 }
 
-export async function getTrustedUniversityLogos(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getTrustedUniversityLogos(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const logos = await publicService.getTrustedUniversityLogos();
+    const rawLimit = req.query.limit;
+    const parsedLimit = rawLimit !== undefined && rawLimit !== null && String(rawLimit) !== '' ? Number(rawLimit) : 25;
+    const limit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
+    const rawOffset = req.query.offset;
+    const parsedOffset = rawOffset !== undefined && rawOffset !== null && String(rawOffset) !== '' ? Number(rawOffset) : 0;
+    const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+    const logos = await publicService.getTrustedUniversityLogos({ limit, offset });
     res.json(logos);
   } catch (e) {
     next(e);

@@ -4,6 +4,8 @@ import { socketAuthMiddleware } from '../middlewares/socketAuth.middleware';
 import { registerChatHandlers } from './chat.handlers';
 import { registerNotificationHandlers } from './notification.handlers';
 import { logger } from '../utils/logger';
+import { config } from '../config';
+import { createCorsOriginDelegate } from '../config/corsPolicy';
 
 let ioInstance: Server | null = null;
 
@@ -14,7 +16,8 @@ export function getIO(): Server | null {
 export function initSocket(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()) || ['http://localhost:3000'],
+      origin: createCorsOriginDelegate(config.cors.origin, config.nodeEnv),
+      credentials: true,
     },
   });
 
