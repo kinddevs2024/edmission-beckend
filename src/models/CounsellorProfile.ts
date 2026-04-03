@@ -13,7 +13,6 @@ const counsellorProfileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-counsellorProfileSchema.index({ userId: 1 });
 counsellorProfileSchema.index({ schoolName: 1 });
 counsellorProfileSchema.index({ isPublic: 1 });
 

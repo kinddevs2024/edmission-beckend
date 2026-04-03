@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Notification, User } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { getIO } from '../socket';
@@ -220,6 +221,22 @@ function buildNotificationLink(
     default:
       return null;
   }
+}
+
+/** When user opens a chat, mark all unread "message" notifications tied to that chat. */
+export async function markMessageNotificationsReadByChatId(userId: string, chatId: string): Promise<void> {
+  const chatIdStr = String(chatId).trim();
+  if (!chatIdStr || !mongoose.Types.ObjectId.isValid(userId)) return;
+  const uid = new mongoose.Types.ObjectId(userId);
+  await Notification.updateMany(
+    {
+      userId: uid,
+      type: 'message',
+      readAt: null,
+      $or: [{ referenceId: chatIdStr }, { 'metadata.chatId': chatIdStr }],
+    },
+    { $set: { readAt: new Date() } }
+  );
 }
 
 export async function markRead(userId: string, notificationId: string, locale: ApiLocale = 'en') {

@@ -14,6 +14,7 @@ router.use(requireRole('student'));
 router.get('/profile', studentController.getProfile);
 router.patch('/profile', validate(studentValidator.updateProfileSchema.shape.body, 'body'), studentController.updateProfile);
 router.get('/dashboard', studentController.getDashboard);
+router.get('/university-countries', studentController.getUniversityCountries);
 router.get('/universities', studentController.getUniversities);
 router.get('/universities/:id', validateUniversityId('id'), studentController.getUniversityById);
 router.get('/universities/:id/flyers', validateUniversityId('id'), studentController.getUniversityFlyers);

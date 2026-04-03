@@ -30,7 +30,6 @@ const universityProfileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-universityProfileSchema.index({ userId: 1 });
 universityProfileSchema.index({ country: 1 });
 universityProfileSchema.index({ city: 1 });
 universityProfileSchema.index({ verified: 1 });

@@ -414,6 +414,18 @@ export async function getPendingDocuments(req: Request, res: Response, next: Nex
   }
 }
 
+export async function listAdminStudentDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const raw = req.query.status as string | undefined;
+    const status =
+      raw === 'approved' || raw === 'rejected' || raw === 'all' || raw === 'pending' ? raw : 'pending';
+    const data = await adminService.listAdminStudentDocuments(status);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function reviewDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { decision, rejectionReason } = req.body;

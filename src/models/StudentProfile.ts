@@ -95,7 +95,6 @@ const studentProfileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-studentProfileSchema.index({ userId: 1 });
 studentProfileSchema.index({ counsellorUserId: 1 });
 studentProfileSchema.index({ gpa: 1 });
 studentProfileSchema.index({ gradeLevel: 1 });

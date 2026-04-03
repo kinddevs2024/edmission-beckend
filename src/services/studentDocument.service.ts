@@ -77,23 +77,55 @@ export async function getMyDocuments(userId: string) {
   return list.map((document) => mapStudentDocument(document as Record<string, unknown>));
 }
 
+function mapDocumentRowForAdmin(document: Record<string, unknown>) {
+  const mapped = mapStudentDocument(document);
+  const student = document.studentId as
+    | { _id?: unknown; userId?: unknown; firstName?: string; lastName?: string }
+    | null
+    | undefined;
+  const studentName = student
+    ? [student.firstName, student.lastName].filter(Boolean).join(' ') || 'Student'
+    : '—';
+  return {
+    ...mapped,
+    studentName,
+    rejectionReason:
+      typeof document.rejectionReason === 'string' && document.rejectionReason.trim()
+        ? document.rejectionReason.trim()
+        : undefined,
+    reviewedAt:
+      document.reviewedAt instanceof Date
+        ? document.reviewedAt.toISOString()
+        : typeof document.reviewedAt === 'string'
+          ? document.reviewedAt
+          : undefined,
+    reviewedBy: document.reviewedBy != null ? String(document.reviewedBy) : undefined,
+  };
+}
+
+/** Admin queue: oldest pending first. */
 export async function listPendingForAdmin() {
   const list = await StudentDocument.find({ status: 'pending' })
     .populate('studentId', 'userId firstName lastName')
     .sort({ createdAt: 1 })
     .lean();
 
-  return list.map((document) => {
-    const mapped = mapStudentDocument(document as Record<string, unknown>);
-    const student = (document as Record<string, unknown>).studentId as
-      | { _id?: unknown; userId?: unknown; firstName?: string; lastName?: string }
-      | null;
+  return list.map((doc) => mapDocumentRowForAdmin(doc as Record<string, unknown>));
+}
 
-    return {
-      ...mapped,
-      studentName: student ? [student.firstName, student.lastName].filter(Boolean).join(' ') || 'Student' : 'вЂ”',
-    };
-  });
+export type AdminDocumentListStatus = 'pending' | 'approved' | 'rejected' | 'all';
+
+/** Admin list with optional status filter (default pending). Newest first except pending uses FIFO. */
+export async function listDocumentsForAdmin(status: AdminDocumentListStatus = 'pending') {
+  const filter = status === 'all' ? {} : { status };
+  const sort = status === 'pending' ? ({ createdAt: 1 } as const) : ({ createdAt: -1 } as const);
+  const list = await StudentDocument.find(filter)
+    .populate('studentId', 'userId firstName lastName')
+    .sort(sort)
+    .limit(500)
+    .lean();
+
+  return list.map((doc) => mapDocumentRowForAdmin(doc as Record<string, unknown>));
 }
 
 export async function reviewDocument(

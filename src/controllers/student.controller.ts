@@ -85,6 +85,16 @@ export async function getUniversities(req: Request, res: Response, next: NextFun
   }
 }
 
+export async function getUniversityCountries(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const data = await studentService.getUniversityCountries();
+    res.json({ data });
+  } catch (e) {
+    next(e);
+  }
+}
+
 function splitCsvParam(value: unknown): string[] | undefined {
   if (typeof value !== 'string') return undefined;
   const list = value

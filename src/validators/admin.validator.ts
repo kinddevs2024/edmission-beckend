@@ -93,6 +93,11 @@ export const reviewDocumentSchema = z.object({
   }),
 });
 
+/** Parsed against req.query (flat), not { query: {...} } */
+export const adminStudentDocumentsQuerySchema = z.object({
+  status: z.enum(['pending', 'approved', 'rejected', 'all']).optional(),
+});
+
 export const updateSubscriptionSchema = z.object({
   body: z.object({
     plan: z.string().optional(),

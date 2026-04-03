@@ -78,7 +78,13 @@ router.get('/tickets', validate(adminValidator.ticketsQuerySchema, 'query'), adm
 router.get('/tickets/:id', validateObjectId('id'), adminController.getTicket);
 router.patch('/tickets/:id/status', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateTicketStatusSchema.shape.body, 'body'), adminController.updateTicketStatus);
 router.post('/tickets/:id/reply', requireAdminOnly, validateObjectId('id'), validate(adminValidator.addTicketReplySchema.shape.body, 'body'), adminController.addTicketReply);
-router.get('/documents/pending', adminController.getPendingDocuments);
+router.get(
+  '/documents',
+  requireAdminOnly,
+  validate(adminValidator.adminStudentDocumentsQuerySchema, 'query'),
+  adminController.listAdminStudentDocuments
+);
+router.get('/documents/pending', requireAdminOnly, adminController.getPendingDocuments);
 router.patch('/documents/:id/review', requireAdminOnly, validateObjectId('id'), validate(adminValidator.reviewDocumentSchema.shape.body, 'body'), adminController.reviewDocument);
 
 router.get('/offers', validate(adminValidator.offersQuerySchema, 'query'), adminController.getOffers);

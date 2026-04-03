@@ -22,7 +22,6 @@ const subscriptionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-subscriptionSchema.index({ userId: 1 });
 subscriptionSchema.index({ role: 1, plan: 1 });
 subscriptionSchema.index({ status: 1 });
 

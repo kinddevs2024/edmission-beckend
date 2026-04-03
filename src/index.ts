@@ -13,11 +13,6 @@ const httpServer = http.createServer(app);
 
 initSocket(httpServer);
 
-if (config.nodeEnv !== 'test') {
-  startRecommendationWorker();
-  startLifecycleWorker();
-}
-
 async function start() {
   // Сначала слушаем порт — чтобы бэкенд сразу отвечал на /api/* (в т.ч. /api/health, /api/auth/register).
   // Иначе при долгом или неудачном подключении к MongoDB сервер не слушал бы и фронт получал бы таймаут.
@@ -30,6 +25,13 @@ async function start() {
     logger.info('Database connected');
     await ensureDefaultAdmin();
     logger.info('Default admin ensured');
+
+    // Cron jobs depend on Mongo. Start them only after the first successful connection
+    // to avoid Mongoose buffering timeouts during startup.
+    if (config.nodeEnv !== 'test') {
+      startRecommendationWorker();
+      startLifecycleWorker();
+    }
   } catch (e) {
     logger.error(e, 'Database connection failed — server keeps listening; /api/health works, auth/register will return 503 until MongoDB is up');
     // Не выходим: порт 4000 остаётся слушать, фронт получит ответ на /api/health. Регистрация и т.д. вернут 503, пока не поднимется MongoDB.

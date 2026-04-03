@@ -25,6 +25,11 @@ import { toObjectIdString } from '../utils/objectId';
 import { safeRegExp } from '../utils/validators';
 import { getIO } from '../socket';
 import { effectiveProfileVisibility, redactStudentForUniversityListing } from '../utils/studentProfilePrivacy';
+import { languageRowsFromApprovedCertificates, mergeProfileLanguagesWithCertificates } from '../utils/languageFromCertificate';
+
+function isMongoDuplicateKeyError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code: unknown }).code === 11000;
+}
 
 export async function getProfile(userId: string) {
   const profile = await UniversityProfile.findOne({ userId }).lean();
@@ -156,6 +161,8 @@ export async function getDashboard(userId: string) {
     acceptanceRate: totalInterests > 0 ? Math.round((acceptedCount / totalInterests) * 100) : 0,
     verified: (profile as { verified?: boolean }).verified ?? false,
     topRecommendations: recs.map((r) => {
+      const sidRaw = (r as { studentId?: unknown }).studentId;
+      const studentProfileId = toObjectIdString(sidRaw) ?? undefined;
       const rawStudent = (r as { studentId?: { userId?: { email?: string }; profileVisibility?: unknown } }).studentId;
       let student: Record<string, unknown> | undefined;
       if (rawStudent && typeof rawStudent === 'object') {
@@ -176,6 +183,7 @@ export async function getDashboard(userId: string) {
       return {
         ...r,
         id: String((r as { _id: unknown })._id),
+        studentProfileId,
         student,
         matchScore: (r as { matchScore?: number }).matchScore,
       };
@@ -509,6 +517,13 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   if (!student) {
     student = await StudentProfile.findOne({ userId: sid }).lean();
   }
+  if (!student) {
+    const interest = await Interest.findOne({ _id: sid, universityId: profile._id }).select('studentId').lean();
+    if (interest) {
+      const profileId = toObjectIdString((interest as { studentId?: unknown }).studentId);
+      if (profileId) student = await StudentProfile.findById(profileId).lean();
+    }
+  }
   if (!student) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
 
   // Enforce profile view limits based on university subscription.
@@ -516,22 +531,30 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   const isPremium = subscriptionService.hasPremiumUniversityPlan(sub);
 
   if (!isPremium) {
-    // Count distinct viewed students for this university user (including this one if already viewed).
-    const existingView = await StudentProfileView.findOne({
-      universityUserId: _userId,
-      studentProfileId: student._id,
-    }).lean();
+    const universityUserIdNorm = toObjectIdString(_userId) ?? String(_userId);
+    const studentProfileIdNorm = toObjectIdString((student as { _id: unknown })._id);
+    if (studentProfileIdNorm) {
+      const existingView = await StudentProfileView.findOne({
+        universityUserId: universityUserIdNorm,
+        studentProfileId: studentProfileIdNorm,
+      }).lean();
 
-    if (!existingView) {
-      const totalViews = await StudentProfileView.countDocuments({ universityUserId: _userId });
-      const LIMIT = 15;
-      if (totalViews >= LIMIT) {
-        throw new AppError(403, 'Student profile view limit reached for your current plan', ErrorCodes.FORBIDDEN);
+      if (!existingView) {
+        const totalViews = await StudentProfileView.countDocuments({ universityUserId: universityUserIdNorm });
+        const LIMIT = 15;
+        if (totalViews >= LIMIT) {
+          throw new AppError(403, 'Student profile view limit reached for your current plan', ErrorCodes.FORBIDDEN);
+        }
+        try {
+          await StudentProfileView.create({
+            universityUserId: universityUserIdNorm,
+            studentProfileId: studentProfileIdNorm,
+          });
+        } catch (e: unknown) {
+          if (!isMongoDuplicateKeyError(e)) throw e;
+          // Concurrent insert or findOne miss: unique index already has this pair — treat as already viewed.
+        }
       }
-      await StudentProfileView.create({
-        universityUserId: _userId,
-        studentProfileId: student._id,
-      });
     }
   }
 
@@ -604,6 +627,17 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     }
   }
 
+  const profileLangRows = Array.isArray(out.languages)
+    ? (out.languages as { language?: string; level?: string }[])
+        .map((x) => ({
+          language: String(x?.language ?? '').trim(),
+          level: String(x?.level ?? '').trim(),
+        }))
+        .filter((x) => x.language || x.level)
+    : [];
+  const fromCertificates = languageRowsFromApprovedCertificates(docList);
+  const languagesMerged = mergeProfileLanguagesWithCertificates(profileLangRows, fromCertificates);
+
   return {
     ...out,
     id: String((out as { _id: unknown })._id),
@@ -611,6 +645,7 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     email,
     phone,
     socialLinks,
+    languages: languagesMerged,
     documents: docList,
     readiness,
   };
@@ -665,6 +700,8 @@ export async function getPipeline(
   }
 
   return list.map((i) => {
+    const sidRaw = (i as { studentId?: unknown }).studentId;
+    const studentProfileId = toObjectIdString(sidRaw) ?? undefined;
     const rawStudent = (i as { studentId?: { userId?: { email?: string }; profileVisibility?: unknown } }).studentId;
     let student: Record<string, unknown> | undefined;
     if (rawStudent && typeof rawStudent === 'object') {
@@ -685,6 +722,7 @@ export async function getPipeline(
     return {
       ...i,
       id: String((i as { _id: unknown })._id),
+      studentProfileId,
       student,
     };
   });

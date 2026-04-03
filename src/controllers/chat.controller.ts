@@ -41,7 +41,10 @@ export async function getMessages(req: Request, res: Response, next: NextFunctio
 export async function markRead(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    await chatService.markRead(req.params.chatId, req.user.id);
+    const { chatId } = req.params;
+    await chatService.markRead(chatId, req.user.id);
+    const io = getIO();
+    if (io) io.to(`chat:${chatId}`).emit('messages_read', { chatId });
     res.json({ success: true });
   } catch (e) {
     next(e);

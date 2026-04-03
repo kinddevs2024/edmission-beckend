@@ -36,6 +36,7 @@ import { DEFAULT_ADMIN_EMAIL } from '../config/defaultAdmin';
 import * as subscriptionService from './subscription.service';
 import * as ticketService from './ticket.service';
 import * as studentDocumentService from './studentDocument.service';
+import type { AdminDocumentListStatus } from './studentDocument.service';
 import * as emailService from './email.service';
 import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
@@ -696,6 +697,10 @@ export async function addTicketReply(ticketId: string, adminUserId: string, mess
 
 export async function getPendingDocuments() {
   return studentDocumentService.listPendingForAdmin();
+}
+
+export async function listAdminStudentDocuments(status: AdminDocumentListStatus) {
+  return studentDocumentService.listDocumentsForAdmin(status);
 }
 
 export async function reviewDocument(docId: string, adminUserId: string, decision: 'approved' | 'rejected', rejectionReason?: string) {

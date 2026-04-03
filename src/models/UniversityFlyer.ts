@@ -2,7 +2,8 @@ import { Schema, model, Types } from 'mongoose';
 
 const universityFlyerSchema = new Schema(
   {
-    universityId: { type: Schema.Types.ObjectId, ref: 'UniversityProfile', required: true, index: true },
+    // Index is declared via `universityFlyerSchema.index(...)` below.
+    universityId: { type: Schema.Types.ObjectId, ref: 'UniversityProfile', required: true },
     title: { type: String, trim: true },
     source: { type: String, enum: ['upload', 'url', 'editor'], default: 'url' },
     mediaUrl: { type: String, trim: true },

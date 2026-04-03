@@ -100,95 +100,146 @@ async function getLastMessagesByChatIds(chatIds: unknown[], viewerUserId?: strin
   return map;
 }
 
-export async function getChats(userId: string) {
-  const user = await User.findById(userId).lean();
-  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+/** Incoming messages (not from viewer) still marked unread — for chat list badges. System lines excluded. */
+async function getUnreadCountsByChatIds(chatIds: unknown[], viewerUserId: string): Promise<Map<string, number>> {
+  if (chatIds.length === 0) return new Map();
+  if (!mongoose.Types.ObjectId.isValid(viewerUserId)) return new Map();
+  const viewerOid = new mongoose.Types.ObjectId(viewerUserId);
+  const match: Record<string, unknown> = {
+    chatId: { $in: chatIds },
+    senderId: { $ne: viewerOid },
+    isRead: { $ne: true },
+    type: { $ne: 'system' },
+    ...buildMessageVisibilityFilter(viewerUserId),
+  };
+  const rows = await Message.aggregate([{ $match: match }, { $group: { _id: '$chatId', count: { $sum: 1 } } }]);
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(String((r as { _id: unknown })._id), (r as { count: number }).count);
+  }
+  return map;
+}
 
-  const studentProfile = await StudentProfile.findOne({ userId }).lean();
-  const universityProfile = await UniversityProfile.findOne({ userId }).lean();
+async function loadChatsAsUniversityViewer(universityProfile: { _id: unknown }, userId: string): Promise<unknown[]> {
+  const chats = await Chat.find({ universityId: universityProfile._id })
+    .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility _id')
+    .lean();
+  const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
+  const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
+  const studentUserIds = (chats as { studentId?: { userId?: unknown } }[])
+    .map((c) => (c.studentId && typeof c.studentId === 'object' ? (c.studentId as { userId?: unknown }).userId : null))
+    .filter((id): id is unknown => !!id);
+  const studentUsers = studentUserIds.length
+    ? await User.find({ _id: { $in: studentUserIds } }).select('email name').lean()
+    : [];
+  const studentUserById = new Map<string, { email?: string; name?: string }>();
+  for (const u of studentUsers as { _id: unknown; email?: string; name?: string }[]) {
+    studentUserById.set(String(u._id), { email: u.email, name: u.name });
+  }
+  for (const c of chats as { _id: unknown; studentId?: { userId?: unknown }; lastMessage?: unknown; student?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
+    (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
+    const stu = c.studentId;
+    if (stu && typeof stu === 'object') {
+      const sid = (stu as { userId?: unknown }).userId;
+      const extra = sid ? studentUserById.get(String(sid)) : undefined;
+      const merged = { ...(stu as object), ...(extra ? { userEmail: extra.email, name: extra.name } : {}) } as Record<string, unknown>;
+      const redacted = redactStudentForUniversityChat(merged);
+      (c as { student?: unknown }).student = redacted;
+      (c as { studentId?: unknown }).studentId = redacted;
+    } else {
+      (c as { student?: unknown }).student = stu as unknown;
+    }
+    (c as { isReadOnly?: boolean }).isReadOnly = false;
+    (c as { readOnlyReason?: string }).readOnlyReason = undefined;
+  }
+  return chats;
+}
 
-  let chats: unknown[];
-  if (studentProfile) {
-    chats = await Chat.find({ studentId: (studentProfile as { _id: unknown })._id })
-      .populate('universityId', 'universityName logoUrl userId')
-      .lean();
-    const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
-    const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
-    const uniUserIds = (chats as { universityId?: { userId?: unknown } }[])
-      .map((c) => (c.universityId && typeof c.universityId === 'object' ? (c.universityId as { userId?: unknown }).userId : null))
-      .filter((id): id is unknown => !!id);
-    const uniUsers = uniUserIds.length
-      ? await User.find({ _id: { $in: uniUserIds } }).select('email name').lean()
-      : [];
-    const universityProfileIds = (chats as { universityId?: unknown }[])
-      .map((c) => toObjectIdString(c.universityId))
-      .filter((id): id is string => !!id);
-    const readOnlyInterests = universityProfileIds.length > 0
-      ? await Interest.find({
-        studentId: (studentProfile as { _id: unknown })._id,
+async function loadChatsAsStudentViewer(studentProfile: { _id: unknown }, userId: string): Promise<unknown[]> {
+  const chats = await Chat.find({ studentId: studentProfile._id })
+    // _id required: selective populate omits it by default; frontend needs profile id for /student/universities/:id
+    .populate('universityId', 'universityName logoUrl userId _id')
+    .lean();
+  const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
+  const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
+  const uniUserIds = (chats as { universityId?: { userId?: unknown } }[])
+    .map((c) => (c.universityId && typeof c.universityId === 'object' ? (c.universityId as { userId?: unknown }).userId : null))
+    .filter((id): id is unknown => !!id);
+  const uniUsers = uniUserIds.length
+    ? await User.find({ _id: { $in: uniUserIds } }).select('email name').lean()
+    : [];
+  const universityProfileIds = (chats as { universityId?: unknown }[])
+    .map((c) => toObjectIdString(c.universityId))
+    .filter((id): id is string => !!id);
+  const readOnlyInterests = universityProfileIds.length > 0
+    ? await Interest.find({
+        studentId: studentProfile._id,
         universityId: { $in: universityProfileIds },
         status: 'rejected',
       })
         .select('universityId')
         .lean()
-      : [];
-    const readOnlyUniversityIds = new Set(
-      readOnlyInterests.map((interest) => String((interest as { universityId: unknown }).universityId))
-    );
-    const uniUserById = new Map<string, { email?: string; name?: string }>();
-    for (const u of uniUsers as { _id: unknown; email?: string; name?: string }[]) {
-      uniUserById.set(String(u._id), { email: u.email, name: u.name });
-    }
-    for (const c of chats as { _id: unknown; universityId?: { userId?: unknown }; lastMessage?: unknown; university?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
-      (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
-      const uni = c.universityId;
-      if (uni && typeof uni === 'object') {
-        const uid = (uni as { userId?: unknown }).userId;
-        const extra = uid ? uniUserById.get(String(uid)) : undefined;
-        (c as { university?: unknown }).university = { ...(uni as object), ...(extra ? { userEmail: extra.email, name: extra.name } : {}) };
-        const universityProfileId = toObjectIdString(uni);
-        (c as { isReadOnly?: boolean }).isReadOnly = !!universityProfileId && readOnlyUniversityIds.has(universityProfileId);
-        (c as { readOnlyReason?: string }).readOnlyReason = (c as { isReadOnly?: boolean }).isReadOnly ? 'rejected' : undefined;
-      } else {
-        (c as { university?: unknown }).university = uni as unknown;
-        (c as { isReadOnly?: boolean }).isReadOnly = false;
-        (c as { readOnlyReason?: string }).readOnlyReason = undefined;
-      }
-    }
-  } else if (universityProfile) {
-    chats = await Chat.find({ universityId: (universityProfile as { _id: unknown })._id })
-      .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility')
-      .lean();
-    const chatIds = (chats as { _id: unknown }[]).map((c) => c._id);
-    const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
-    const studentUserIds = (chats as { studentId?: { userId?: unknown } }[])
-      .map((c) => (c.studentId && typeof c.studentId === 'object' ? (c.studentId as { userId?: unknown }).userId : null))
-      .filter((id): id is unknown => !!id);
-    const studentUsers = studentUserIds.length
-      ? await User.find({ _id: { $in: studentUserIds } }).select('email name').lean()
-      : [];
-    const studentUserById = new Map<string, { email?: string; name?: string }>();
-    for (const u of studentUsers as { _id: unknown; email?: string; name?: string }[]) {
-      studentUserById.set(String(u._id), { email: u.email, name: u.name });
-    }
-    for (const c of chats as { _id: unknown; studentId?: { userId?: unknown }; lastMessage?: unknown; student?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
-      (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
-      const stu = c.studentId;
-      if (stu && typeof stu === 'object') {
-        const sid = (stu as { userId?: unknown }).userId;
-        const extra = sid ? studentUserById.get(String(sid)) : undefined;
-        const merged = { ...(stu as object), ...(extra ? { userEmail: extra.email, name: extra.name } : {}) } as Record<string, unknown>;
-        const redacted = redactStudentForUniversityChat(merged);
-        (c as { student?: unknown }).student = redacted;
-        (c as { studentId?: unknown }).studentId = redacted;
-      } else {
-        (c as { student?: unknown }).student = stu as unknown;
-      }
+    : [];
+  const readOnlyUniversityIds = new Set(
+    readOnlyInterests.map((interest) => String((interest as { universityId: unknown }).universityId))
+  );
+  const uniUserById = new Map<string, { email?: string; name?: string }>();
+  for (const u of uniUsers as { _id: unknown; email?: string; name?: string }[]) {
+    uniUserById.set(String(u._id), { email: u.email, name: u.name });
+  }
+  for (const c of chats as { _id: unknown; universityId?: { userId?: unknown }; lastMessage?: unknown; university?: unknown; isReadOnly?: boolean; readOnlyReason?: string }[]) {
+    (c as { lastMessage?: unknown }).lastMessage = lastByChat.get(String(c._id)) ?? [];
+    const uni = c.universityId;
+    if (uni && typeof uni === 'object') {
+      const uid = (uni as { userId?: unknown }).userId;
+      const extra = uid ? uniUserById.get(String(uid)) : undefined;
+      (c as { university?: unknown }).university = { ...(uni as object), ...(extra ? { userEmail: extra.email, name: extra.name } : {}) };
+      const universityProfileId = toObjectIdString(uni);
+      (c as { isReadOnly?: boolean }).isReadOnly = !!universityProfileId && readOnlyUniversityIds.has(universityProfileId);
+      (c as { readOnlyReason?: string }).readOnlyReason = (c as { isReadOnly?: boolean }).isReadOnly ? 'rejected' : undefined;
+    } else {
+      (c as { university?: unknown }).university = uni as unknown;
       (c as { isReadOnly?: boolean }).isReadOnly = false;
       (c as { readOnlyReason?: string }).readOnlyReason = undefined;
     }
+  }
+  return chats;
+}
+
+export async function getChats(userId: string) {
+  const user = await User.findById(userId).lean();
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+
+  const userRole = String((user as { role?: string }).role ?? '');
+  const studentProfile = await StudentProfile.findOne({ userId }).lean();
+  const universityProfile = await UniversityProfile.findOne({ userId }).lean();
+
+  let chats: unknown[];
+  /**
+   * Prefer JWT role when both profiles exist (e.g. test data), otherwise university accounts used to load
+   * student chats and saw an empty list.
+   */
+  if (userRole === 'university' && universityProfile) {
+    chats = await loadChatsAsUniversityViewer(universityProfile as { _id: unknown }, userId);
+  } else if (userRole === 'student' && studentProfile) {
+    chats = await loadChatsAsStudentViewer(studentProfile as { _id: unknown }, userId);
+  } else if (studentProfile && !universityProfile && userRole !== 'university') {
+    chats = await loadChatsAsStudentViewer(studentProfile as { _id: unknown }, userId);
+  } else if (universityProfile && !studentProfile) {
+    chats = await loadChatsAsUniversityViewer(universityProfile as { _id: unknown }, userId);
   } else {
     chats = [];
+  }
+
+  const chatOidList = (chats as { _id: unknown }[]).map((c) => c._id);
+  const unreadByChat = await getUnreadCountsByChatIds(chatOidList, userId);
+  const chatRows = chats as Array<Record<string, unknown> & { _id: unknown; unreadCount?: number }>;
+  for (const c of chatRows) {
+    c.unreadCount = unreadByChat.get(String(c._id)) ?? 0;
+    const sp = toObjectIdString(c.studentId);
+    const up = toObjectIdString(c.universityId);
+    if (sp) c.studentProfileId = sp;
+    if (up) c.universityProfileId = up;
   }
 
   return chats.map((c: unknown) => {
@@ -277,6 +328,7 @@ export async function markRead(chatId: string, userId: string) {
     },
     { isRead: true }
   );
+  await notificationService.markMessageNotificationsReadByChatId(userId, String(chatId));
   return { success: true };
 }
 
@@ -363,8 +415,8 @@ export async function getOrCreateChatForUser(
 /** Get one chat by id and return in same shape as getChats items (for getOrCreate response). */
 export async function getOneChatFormatted(chatId: string, userId: string) {
   const chat = await Chat.findById(chatId)
-    .populate('universityId', 'universityName logoUrl userId')
-    .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility')
+    .populate('universityId', 'universityName logoUrl userId _id')
+    .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility _id')
     .lean();
   if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
 
@@ -400,6 +452,9 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     studentOut = redactStudentForUniversityChat({ ...(chatObj.studentId as Record<string, unknown>) });
   }
 
+  const unreadMap = await getUnreadCountsByChatIds([chatObj._id], userId);
+  const unreadCount = unreadMap.get(String(chatObj._id)) ?? 0;
+
   return {
     ...chat,
     id: String(chatObj._id),
@@ -409,6 +464,9 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     student: studentOut,
     isReadOnly: readOnlyState.isReadOnly,
     readOnlyReason: readOnlyState.readOnlyReason,
+    unreadCount,
+    studentProfileId,
+    universityProfileId,
   };
 }
 

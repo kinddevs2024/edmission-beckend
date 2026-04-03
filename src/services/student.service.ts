@@ -286,6 +286,9 @@ export async function getUniversities(
   const skip = (page - 1) * limit;
   const useProfileFilters = query.useProfileFilters !== false;
 
+  const studentCountry = typeof (profile as { country?: string }).country === 'string'
+    ? (profile as { country?: string }).country?.trim() ?? ''
+    : '';
   const preferredCountries = Array.isArray((profile as { preferredCountries?: string[] }).preferredCountries)
     ? ((profile as { preferredCountries?: string[] }).preferredCountries ?? []).filter(Boolean)
     : [];
@@ -295,11 +298,9 @@ export async function getUniversities(
   const explicitFacultyCodes = normalizeStringArray(query.facultyCodes);
   const explicitCountry = typeof query.country === 'string' && query.country.trim() ? query.country.trim() : '';
 
-  const baseWhere: { country?: string | { $in: string[] } } = {};
+  const baseWhere: { country?: string } = {};
   if (explicitCountry) {
     baseWhere.country = explicitCountry;
-  } else if (useProfileFilters && preferredCountries.length > 0) {
-    baseWhere.country = { $in: preferredCountries };
   }
 
   const [catalogs, profiles, interestedProfileIds, interestedCatalogIds] = await Promise.all([
@@ -440,8 +441,22 @@ export async function getUniversities(
     })
     .filter((item) => {
       if (!useProfileFilters) return true;
-      if (!explicitCountry && preferredCountries.length > 0 && item.country && !preferredCountries.includes(item.country)) {
-        return false;
+      if (!explicitCountry) {
+        const preferredSet = new Set(
+          [
+            studentCountry,
+            ...preferredCountries,
+          ]
+            .map((value) => String(value ?? '').trim().toLowerCase())
+            .filter(Boolean)
+        );
+        if (preferredSet.size > 0) {
+          const universityTargetCountries = (item.targetStudentCountries ?? [])
+            .map((value) => String(value ?? '').trim().toLowerCase())
+            .filter(Boolean);
+          if (universityTargetCountries.length === 0) return false;
+          if (!universityTargetCountries.some((country) => preferredSet.has(country))) return false;
+        }
       }
       if (explicitFacultyCodes.length > 0 || interestedFaculties.length === 0) {
         return true;
@@ -531,6 +546,21 @@ export async function getUniversities(
     limit,
     totalPages: Math.ceil(total / limit),
   };
+}
+
+export async function getUniversityCountries(): Promise<string[]> {
+  const [catalogCountries, profileCountries] = await Promise.all([
+    UniversityCatalog.distinct('country', { country: { $exists: true, $ne: '' } }),
+    UniversityProfile.distinct('country', { verified: true, country: { $exists: true, $ne: '' } }),
+  ]);
+
+  return Array.from(
+    new Set(
+      [...catalogCountries, ...profileCountries]
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left.localeCompare(right));
 }
 
 function normalizeStringArray(values?: string[]) {
@@ -874,36 +904,47 @@ function compareNullableNumber(left: number | null | undefined, right: number | 
   return direction === 'asc' ? leftValue - rightValue : rightValue - leftValue;
 }
 
+function getUniversitySortName(item: Pick<SearchableUniversityItem, 'name' | 'universityName'>) {
+  const byName = typeof item.name === 'string' ? item.name.trim() : '';
+  if (byName) return byName;
+  const byUniversityName = typeof item.universityName === 'string' ? item.universityName.trim() : '';
+  if (byUniversityName) return byUniversityName;
+  return '';
+}
+
 function compareUniversities(left: SearchableUniversityItem, right: SearchableUniversityItem, sort?: string) {
+  const leftName = getUniversitySortName(left);
+  const rightName = getUniversitySortName(right);
+
   if (sort === 'name') {
-    return left.name.localeCompare(right.name);
+    return leftName.localeCompare(rightName);
   }
 
   if (sort === 'rating') {
     const ratingCompare = compareNullableNumber(left.rating, right.rating, 'desc');
-    return ratingCompare !== 0 ? ratingCompare : left.name.localeCompare(right.name);
+    return ratingCompare !== 0 ? ratingCompare : leftName.localeCompare(rightName);
   }
 
   if (sort === 'tuition_asc') {
     const tuitionCompare = compareNullableNumber(resolveTuitionPrice(left), resolveTuitionPrice(right), 'asc');
-    return tuitionCompare !== 0 ? tuitionCompare : left.name.localeCompare(right.name);
+    return tuitionCompare !== 0 ? tuitionCompare : leftName.localeCompare(rightName);
   }
 
   if (sort === 'tuition_desc') {
     const tuitionCompare = compareNullableNumber(resolveTuitionPrice(left), resolveTuitionPrice(right), 'desc');
-    return tuitionCompare !== 0 ? tuitionCompare : left.name.localeCompare(right.name);
+    return tuitionCompare !== 0 ? tuitionCompare : leftName.localeCompare(rightName);
   }
 
   if (sort === 'newest') {
     const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
     const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
     if (leftTime !== rightTime) return rightTime - leftTime;
-    return left.name.localeCompare(right.name);
+    return leftName.localeCompare(rightName);
   }
 
   const matchCompare = compareNullableNumber(left.matchScore, right.matchScore, 'desc');
   if (matchCompare !== 0) return matchCompare;
-  return left.name.localeCompare(right.name);
+  return leftName.localeCompare(rightName);
 }
 
 export async function getUniversityById(userId: string, universityId: unknown) {
@@ -916,8 +957,9 @@ export async function getUniversityById(userId: string, universityId: unknown) {
     if (!catalogId) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
     const catalog = await UniversityCatalog.findById(catalogId).lean();
     if (!catalog) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
-    if ((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId) {
-      throw new AppError(404, 'University no longer available', ErrorCodes.NOT_FOUND);
+    const linkedFromCatalog = toObjectIdString((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+    if (linkedFromCatalog) {
+      return getUniversityById(userId, linkedFromCatalog);
     }
     const catalogInterest = await CatalogInterest.findOne({
       studentId: profile._id,
@@ -949,7 +991,15 @@ export async function getUniversityById(userId: string, universityId: unknown) {
   const uid = toObjectIdString(universityId);
   if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
   const university = await UniversityProfile.findById(uid).lean();
-  if (!university) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+  if (!university) {
+    const catalogRow = await UniversityCatalog.findById(uid).lean();
+    if (catalogRow) {
+      const linkedPid = toObjectIdString((catalogRow as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+      if (linkedPid) return getUniversityById(userId, linkedPid);
+      return getUniversityById(userId, `catalog-${uid}`);
+    }
+    throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+  }
 
   const [rec, interest, programs, scholarships, faculties, linkedCatalog] = await Promise.all([
     Recommendation.findOne({ studentId: profile._id, universityId: uid }).lean(),
@@ -1045,8 +1095,9 @@ export async function addInterest(userId: string, universityId: unknown) {
     if (!catalogId) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
     const catalog = await UniversityCatalog.findById(catalogId);
     if (!catalog) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
-    if ((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId) {
-      throw new AppError(404, 'University no longer available', ErrorCodes.NOT_FOUND);
+    const linkedForInterest = toObjectIdString((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+    if (linkedForInterest) {
+      return addInterest(userId, linkedForInterest);
     }
     const interest = await CatalogInterest.findOneAndUpdate(
       { studentId: profile._id, catalogUniversityId: catalogId },
