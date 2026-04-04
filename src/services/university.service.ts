@@ -638,6 +638,50 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   const fromCertificates = languageRowsFromApprovedCertificates(docList);
   const languagesMerged = mergeProfileLanguagesWithCertificates(profileLangRows, fromCertificates);
 
+  /** Other universities' scholarship-linked offers: only city + coverage % (no institution name). */
+  let peerScholarships: { city: string; coveragePercent: number }[] = [];
+  const otherScholarshipOffers = await Offer.find({
+    studentId: studentProfileId,
+    universityId: { $ne: profile._id },
+    scholarshipId: { $ne: null },
+    status: { $in: ['pending', 'waiting', 'accepted', 'declined'] },
+  })
+    .select('universityId coveragePercent')
+    .sort({ createdAt: -1 })
+    .lean();
+
+  if (otherScholarshipOffers.length > 0) {
+    const uniIds = [
+      ...new Set(
+        otherScholarshipOffers
+          .map((o) => toObjectIdString((o as { universityId?: unknown }).universityId))
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+    const uniRows =
+      uniIds.length > 0
+        ? await UniversityProfile.find({ _id: { $in: uniIds } })
+            .select('city')
+            .lean()
+        : [];
+    const cityByUniId = new Map<string, string>();
+    for (const u of uniRows) {
+      const id = toObjectIdString((u as { _id: unknown })._id);
+      if (!id) continue;
+      const raw = (u as { city?: string }).city;
+      cityByUniId.set(id, typeof raw === 'string' ? raw.trim() : '');
+    }
+    peerScholarships = otherScholarshipOffers.map((o) => {
+      const uid = toObjectIdString((o as { universityId?: unknown }).universityId) ?? '';
+      const city = cityByUniId.get(uid) ?? '';
+      const cov = (o as { coveragePercent?: number }).coveragePercent;
+      return {
+        city: city || '',
+        coveragePercent: typeof cov === 'number' && Number.isFinite(cov) ? cov : 0,
+      };
+    });
+  }
+
   return {
     ...out,
     id: String((out as { _id: unknown })._id),
@@ -648,6 +692,7 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     languages: languagesMerged,
     documents: docList,
     readiness,
+    peerScholarships,
   };
 }
 
