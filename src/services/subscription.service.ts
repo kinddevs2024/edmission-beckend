@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Subscription, Interest, Offer, StudentProfile, UniversityProfile, User } from '../models';
+import { Subscription, Interest, CatalogInterest, Offer, StudentProfile, UniversityProfile, User } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
 import * as emailService from './email.service';
@@ -34,6 +34,19 @@ const APPLICATION_LIMITS: Record<string, number | null> = {
   [STUDENT_PLAN.STANDARD]: 15,
   [STUDENT_PLAN.MAX_PREMIUM]: null,
 };
+
+const FREE_STUDENT_INTEREST_CAP = APPLICATION_LIMITS[STUDENT_PLAN.FREE_TRIAL] ?? 3;
+
+/**
+ * Unknown / legacy plan values must not become "unlimited" (undefined key → null coalescing bug).
+ * Only explicit `null` in APPLICATION_LIMITS means unlimited (e.g. max premium).
+ */
+function studentApplicationLimitForPlan(effectivePlan: string | null): number | null {
+  if (!effectivePlan) return FREE_STUDENT_INTEREST_CAP;
+  const lim = APPLICATION_LIMITS[effectivePlan];
+  if (lim === undefined) return FREE_STUDENT_INTEREST_CAP;
+  return lim;
+}
 
 /** Max offers ("student requests") per university. null = unlimited */
 const OFFER_LIMITS: Record<string, number | null> = {
@@ -125,6 +138,15 @@ export function hasPremiumUniversityPlan(sub: SubscriptionInfo | null): boolean 
   return effective === UNIVERSITY_PLAN.PREMIUM;
 }
 
+/** Count interest “slots”: real universities (Interest) + catalog templates (CatalogInterest). */
+async function countStudentInterestDocuments(studentProfileId: mongoose.Types.ObjectId): Promise<number> {
+  const [profileInterests, catalogInterests] = await Promise.all([
+    Interest.countDocuments({ studentId: studentProfileId }),
+    CatalogInterest.countDocuments({ studentId: studentProfileId }),
+  ]);
+  return profileInterests + catalogInterests;
+}
+
 /** Check if student can send one more application (interest). Returns { allowed, current, limit } */
 export async function canSendApplication(userId: string): Promise<{
   allowed: boolean;
@@ -136,21 +158,27 @@ export async function canSendApplication(userId: string): Promise<{
   if (!profile) {
     throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
   }
-  const sub = await getSubscription(userId);
+
+  let sub = await getSubscription(userId);
+  if (!sub) {
+    await createForNewUser(userId, 'student');
+    sub = await getSubscription(userId);
+  }
+
   const effectivePlan = getEffectivePlan(sub);
   const trialExpired = !!(sub?.plan === STUDENT_PLAN.FREE_TRIAL && isTrialExpired(sub));
+  const current = await countStudentInterestDocuments(profile._id);
 
   if (!effectivePlan) {
     return {
       allowed: false,
-      current: await Interest.countDocuments({ studentId: profile._id }),
-      limit: APPLICATION_LIMITS[STUDENT_PLAN.FREE_TRIAL] ?? 0,
+      current,
+      limit: FREE_STUDENT_INTEREST_CAP,
       trialExpired: !!trialExpired,
     };
   }
 
-  const limit = APPLICATION_LIMITS[effectivePlan] ?? null;
-  const current = await Interest.countDocuments({ studentId: profile._id });
+  const limit = studentApplicationLimitForPlan(effectivePlan);
   const allowed = limit === null ? true : current < limit;
   return { allowed, current, limit, trialExpired };
 }
@@ -230,8 +258,8 @@ export async function getSubscriptionSummary(userId: string): Promise<{
   let offerCurrent = 0;
 
   if (studentProfile) {
-    applicationCurrent = await Interest.countDocuments({ studentId: studentProfile._id });
-    applicationLimit = effectivePlan ? APPLICATION_LIMITS[effectivePlan] ?? null : APPLICATION_LIMITS[STUDENT_PLAN.FREE_TRIAL];
+    applicationCurrent = await countStudentInterestDocuments(studentProfile._id);
+    applicationLimit = studentApplicationLimitForPlan(effectivePlan);
   }
   if (universityProfile) {
     offerCurrent = await Offer.countDocuments({ universityId: universityProfile._id });

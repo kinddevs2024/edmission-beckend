@@ -498,6 +498,8 @@ export async function getUniversities(
     .filter((item) => item.isSuitable)
     .sort((left, right) => compareUniversities(left, right, query.sort));
 
+  /** When nothing passes isSuitable, still show a short ranked list (explore UI expects ~6 cards). */
+  const FALLBACK_UNIVERSITIES_CAP = 6;
   const fallbackMatches = merged
     .slice()
     .sort((left, right) =>
@@ -507,7 +509,7 @@ export async function getUniversities(
         profileObject as Record<string, unknown>
       )
     )
-    .slice(0, 3);
+    .slice(0, FALLBACK_UNIVERSITIES_CAP);
 
   const visibleUniversities = strictMatches.length > 0 ? strictMatches : fallbackMatches;
 
@@ -1078,18 +1080,20 @@ export async function getUniversityFlyers(userId: string, universityId: unknown)
   return list.map((item) => ({ ...item, id: String((item as { _id: unknown })._id) }));
 }
 
+function assertInterestSubscriptionAllowed(
+  subscription: Awaited<ReturnType<typeof subscriptionService.canSendApplication>>
+): void {
+  if (subscription.allowed) return;
+  if (subscription.trialExpired) {
+    throw new AppError(402, 'Trial expired. Upgrade to a paid plan to continue sending applications.', ErrorCodes.PAYMENT_REQUIRED);
+  }
+  throw new AppError(402, `Application limit reached (${subscription.current}/${subscription.limit ?? '?'}). Upgrade your plan to send more.`, ErrorCodes.PAYMENT_REQUIRED);
+}
+
 export async function addInterest(userId: string, universityId: unknown) {
   const profile = await ensureStudentProfile(userId);
-
-  const subscription = await subscriptionService.canSendApplication(userId);
-  if (!subscription.allowed) {
-    if (subscription.trialExpired) {
-      throw new AppError(402, 'Trial expired. Upgrade to a paid plan to continue sending applications.', ErrorCodes.PAYMENT_REQUIRED);
-    }
-    throw new AppError(402, `Application limit reached (${subscription.current}/${subscription.limit ?? '?'}). Upgrade your plan to send more.`, ErrorCodes.PAYMENT_REQUIRED);
-  }
-
   const idStr = String(universityId ?? '').trim();
+
   if (idStr.startsWith('catalog-')) {
     const catalogId = toObjectIdString(idStr.replace(/^catalog-/, ''));
     if (!catalogId) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
@@ -1099,6 +1103,18 @@ export async function addInterest(userId: string, universityId: unknown) {
     if (linkedForInterest) {
       return addInterest(userId, linkedForInterest);
     }
+
+    const existingCatalog = await CatalogInterest.findOne({
+      studentId: profile._id,
+      catalogUniversityId: catalogId,
+    }).lean();
+    if (existingCatalog) {
+      return { ...existingCatalog, id: String((existingCatalog as { _id: unknown })._id) };
+    }
+
+    const subscription = await subscriptionService.canSendApplication(userId);
+    assertInterestSubscriptionAllowed(subscription);
+
     const interest = await CatalogInterest.findOneAndUpdate(
       { studentId: profile._id, catalogUniversityId: catalogId },
       { status: 'interested' },
@@ -1123,6 +1139,15 @@ export async function addInterest(userId: string, universityId: unknown) {
 
   const uid = toObjectIdString(universityId);
   if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+
+  const existingInterest = await Interest.findOne({ studentId: profile._id, universityId: uid }).lean();
+  if (existingInterest) {
+    return { ...existingInterest, id: String((existingInterest as { _id: unknown })._id) };
+  }
+
+  const subscription = await subscriptionService.canSendApplication(userId);
+  assertInterestSubscriptionAllowed(subscription);
+
   const uni = await UniversityProfile.findById(uid);
   if (!uni) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
 
@@ -1326,6 +1351,10 @@ export async function waitOnOffer(userId: string, offerId: string) {
 }
 
 const RECOMMENDATIONS_LIMIT = 5;
+/** Load enough rows to score so we can return 3+ after isSuitable filtering (was capped at 5 total). */
+const RECOMMENDATIONS_FETCH_POOL = 24;
+/** Dashboard grid expects 3 cards; pad with next-best matches if fewer pass isSuitable. */
+const RECOMMENDATIONS_MIN_FOR_DASHBOARD = 3;
 
 export async function getRecommendations(userId: string) {
   const profile = await ensureStudentProfile(userId);
@@ -1337,11 +1366,11 @@ export async function getRecommendations(userId: string) {
   const [recDocs, catalogDocs] = await Promise.all([
     Recommendation.find({ studentId: profile._id })
       .sort({ matchScore: -1 })
-      .limit(RECOMMENDATIONS_LIMIT)
+      .limit(RECOMMENDATIONS_FETCH_POOL)
       .populate('universityId')
       .lean(),
     UniversityCatalog.find({ linkedUniversityProfileId: { $exists: false } })
-      .limit(RECOMMENDATIONS_LIMIT)
+      .limit(RECOMMENDATIONS_FETCH_POOL)
       .sort({ universityName: 1 })
       .lean(),
   ]);
@@ -1363,7 +1392,7 @@ export async function getRecommendations(userId: string) {
       const cid = String((c as { _id: unknown })._id);
       return !usedIds.has(cid);
     })
-    .slice(0, Math.max(0, RECOMMENDATIONS_LIMIT - recList.length))
+    .slice(0, Math.max(0, RECOMMENDATIONS_FETCH_POOL - recList.length))
     .map((c) => {
       const id = `catalog-${String((c as { _id: unknown })._id)}`;
       return {
@@ -1416,9 +1445,34 @@ export async function getRecommendations(userId: string) {
       )
     );
 
+  const getRecUniversityKey = (item: (typeof scored)[number]): string => {
+    const raw = item as unknown as Record<string, unknown>;
+    const uid = raw.universityId;
+    if (typeof uid === 'string' && uid.startsWith('catalog-')) return uid;
+    const uni = raw.university as { _id?: unknown } | undefined;
+    if (uni?._id != null) return String(uni._id);
+    if (uid != null) return String(uid);
+    return '';
+  };
+
   const suitableRecommendations = scored.filter((item) => item.isSuitable);
   if (suitableRecommendations.length > 0) {
-    return suitableRecommendations.slice(0, RECOMMENDATIONS_LIMIT);
+    const merged: typeof scored = [];
+    const seen = new Set<string>();
+    const pushUnique = (items: typeof scored) => {
+      for (const row of items) {
+        if (merged.length >= RECOMMENDATIONS_LIMIT) return;
+        const key = getRecUniversityKey(row);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(row);
+      }
+    };
+    pushUnique(suitableRecommendations);
+    if (merged.length < RECOMMENDATIONS_MIN_FOR_DASHBOARD) {
+      pushUnique(scored);
+    }
+    return merged;
   }
 
   return scored.slice(0, Math.min(RECOMMENDATIONS_LIMIT, 3));
@@ -1427,8 +1481,9 @@ export async function getRecommendations(userId: string) {
 export async function getCompare(userId: string, ids: unknown[]) {
   const profile = await ensureStudentProfile(userId);
   const rawIds = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
-  if (rawIds.length > 5) {
-    throw new AppError(400, 'Provide 1-5 university ids', ErrorCodes.VALIDATION);
+  const compareMaxIds = 15;
+  if (rawIds.length > compareMaxIds) {
+    throw new AppError(400, `Provide 1-${compareMaxIds} university ids`, ErrorCodes.VALIDATION);
   }
   if (rawIds.length === 0) {
     return [];
