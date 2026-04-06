@@ -4,7 +4,6 @@ import mongoose from 'mongoose';
 import {
   User,
   StudentProfile,
-  StudentDocument,
   CounsellorProfile,
   SchoolJoinRequest,
   SchoolInvitation,
@@ -656,41 +655,76 @@ export async function listSchoolInvitationsForStudent(studentUserId: string) {
 
 /** List documents of a student (counsellor must own the student). */
 export async function getStudentDocuments(counsellorUserId: string, studentUserId: string) {
-  const profile = await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
-  const list = await StudentDocument.find({ studentId: profile._id }).sort({ createdAt: -1 }).lean();
-  return list.map((d: Record<string, unknown>) => ({
-    ...d,
-    id: String(d._id),
-  }));
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.getMyDocuments(studentUserId);
 }
 
 /** Add document for a student (counsellor adds with status approved). */
 export async function addDocumentForStudent(
   counsellorUserId: string,
   studentUserId: string,
-  data: { type: string; fileUrl: string; name?: string; certificateType?: string; score?: string }
+  data: {
+    type: string;
+    source?: 'upload' | 'editor';
+    fileUrl?: string;
+    name?: string;
+    certificateType?: string;
+    score?: string;
+    previewImageUrl?: string;
+    canvasJson?: string;
+    pageFormat?: 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM';
+    width?: number;
+    height?: number;
+    editorVersion?: string;
+  }
 ) {
-  const profile = await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
-  const allowed = ['transcript', 'diploma', 'language_certificate', 'course_certificate', 'passport', 'id_card', 'other'];
-  if (!allowed.includes(data.type)) throw new AppError(400, 'Invalid document type', ErrorCodes.VALIDATION);
-  const doc = await StudentDocument.create({
-    studentId: profile._id,
-    type: data.type,
-    fileUrl: data.fileUrl,
-    name: data.name ? String(data.name).trim() : undefined,
-    certificateType: data.certificateType ? String(data.certificateType).trim() : undefined,
-    score: data.score != null ? String(data.score) : undefined,
-    status: 'approved',
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.addDocument(studentUserId, data);
+}
+
+/** Update a document of a student (counsellor must own the student). */
+export async function updateDocumentForStudent(
+  counsellorUserId: string,
+  studentUserId: string,
+  documentId: string,
+  data: {
+    type?: string;
+    source?: 'upload' | 'editor';
+    fileUrl?: string;
+    name?: string;
+    certificateType?: string;
+    score?: string;
+    previewImageUrl?: string;
+    canvasJson?: string;
+    pageFormat?: 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM';
+    width?: number;
+    height?: number;
+    editorVersion?: string;
+  }
+) {
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.updateDocument(studentUserId, documentId, data as {
+    type: string;
+    source?: 'upload' | 'editor';
+    fileUrl?: string;
+    name?: string;
+    certificateType?: string;
+    score?: string;
+    previewImageUrl?: string;
+    canvasJson?: string;
+    pageFormat?: 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM';
+    width?: number;
+    height?: number;
+    editorVersion?: string;
   });
-  const d = doc.toObject() as Record<string, unknown>;
-  return { ...d, id: String(d._id) };
 }
 
 /** Delete a document of a student (counsellor must own the student). */
 export async function deleteDocumentForStudent(counsellorUserId: string, studentUserId: string, documentId: string) {
-  const profile = await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
-  const doc = await StudentDocument.findOne({ _id: documentId, studentId: profile._id });
-  if (!doc) throw new AppError(404, 'Document not found', ErrorCodes.NOT_FOUND);
-  await StudentDocument.findByIdAndDelete(documentId);
-  return { success: true };
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.deleteDocument(studentUserId, documentId);
 }

@@ -310,12 +310,52 @@ export async function addStudentDocument(req: Request, res: Response, next: Next
     const body = (req.body && typeof req.body === 'object') ? req.body : {};
     const data = await counsellorService.addDocumentForStudent(req.user.id, req.params.studentUserId, {
       type: body.type,
+      source: body.source,
       fileUrl: body.fileUrl,
       name: body.name,
       certificateType: body.certificateType,
       score: body.score,
+      previewImageUrl: body.previewImageUrl,
+      canvasJson: body.canvasJson,
+      pageFormat: body.pageFormat,
+      width: body.width,
+      height: body.height,
+      editorVersion: body.editorVersion,
     });
     res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Update document of a student. */
+export async function updateStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const data = await counsellorService.updateDocumentForStudent(
+      req.user.id,
+      req.params.studentUserId,
+      req.params.documentId,
+      {
+        type: body.type,
+        source: body.source,
+        fileUrl: body.fileUrl,
+        name: body.name,
+        certificateType: body.certificateType,
+        score: body.score,
+        previewImageUrl: body.previewImageUrl,
+        canvasJson: body.canvasJson,
+        pageFormat: body.pageFormat,
+        width: body.width,
+        height: body.height,
+        editorVersion: body.editorVersion,
+      }
+    );
+    res.json(data);
   } catch (e) {
     next(e);
   }

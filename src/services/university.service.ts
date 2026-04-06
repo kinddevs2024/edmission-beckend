@@ -61,13 +61,18 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     country?: string;
     city?: string;
     description?: string;
+    rating?: number;
     logoUrl?: string | null;
+    coverImageUrl?: string | null;
     onboardingCompleted?: boolean;
     facultyCodes?: string[];
     facultyItems?: Record<string, string[]>;
     targetStudentCountries?: string[];
     minLanguageLevel?: string;
     tuitionPrice?: number;
+    ieltsMinBand?: number | null;
+    gpaMinMode?: 'scale' | 'percent' | null;
+    gpaMinValue?: number | null;
   };
   const { programs, ...rest } = raw;
 
@@ -79,8 +84,12 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   if (rest.country !== undefined) update.country = rest.country;
   if (rest.city !== undefined) update.city = rest.city;
   if (rest.description !== undefined) update.description = rest.description;
+  if (rest.rating !== undefined) update.rating = rest.rating != null ? Number(rest.rating) : null;
   if (rest.logoUrl !== undefined) {
     update.logoUrl = rest.logoUrl === null || rest.logoUrl === '' ? null : rest.logoUrl;
+  }
+  if (rest.coverImageUrl !== undefined) {
+    update.coverImageUrl = rest.coverImageUrl === null || rest.coverImageUrl === '' ? null : rest.coverImageUrl;
   }
   if (rest.onboardingCompleted !== undefined) update.onboardingCompleted = rest.onboardingCompleted;
   if (rest.facultyCodes !== undefined) {
@@ -104,6 +113,18 @@ export async function updateProfile(userId: string, data: Record<string, unknown
   }
   if (rest.minLanguageLevel !== undefined) update.minLanguageLevel = rest.minLanguageLevel != null ? String(rest.minLanguageLevel).trim() || null : null;
   if (rest.tuitionPrice !== undefined) update.tuitionPrice = rest.tuitionPrice != null ? Number(rest.tuitionPrice) : null;
+  if (rest.ieltsMinBand !== undefined) {
+    const v = rest.ieltsMinBand;
+    update.ieltsMinBand = v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+  }
+  if (rest.gpaMinMode !== undefined) {
+    update.gpaMinMode =
+      rest.gpaMinMode === 'scale' || rest.gpaMinMode === 'percent' ? rest.gpaMinMode : null;
+  }
+  if (rest.gpaMinValue !== undefined) {
+    const v = rest.gpaMinValue;
+    update.gpaMinValue = v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+  }
 
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
 
@@ -405,7 +426,7 @@ export async function getStudents(
 
   const [students, total, interestStudentIds] = await Promise.all([
     StudentProfile.find(filter)
-      .select('firstName lastName avatarUrl country city gpa gradeLevel languageLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId targetDegreeLevel educationStatus schoolCompleted verifiedAt portfolioCompletionPercent profileVisibility')
+      .select('firstName lastName avatarUrl country city gpa gradeLevel languageLevel languages skills interests hobbies schoolName graduationYear interestedFaculties preferredCountries budgetAmount budgetCurrency userId targetDegreeLevel educationStatus schoolCompleted verifiedAt portfolioCompletionPercent profileVisibility counsellorUserId')
       .sort({ gpa: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -595,6 +616,15 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
   const visibility = effectiveProfileVisibility(s.profileVisibility);
   const out = { ...student } as Record<string, unknown>;
   delete out.userId;
+  if (s.counsellorUserId) {
+    delete out.schoolName;
+    if (Array.isArray(out.schoolsAttended)) {
+      out.schoolsAttended = (out.schoolsAttended as Record<string, unknown>[]).map((row) => {
+        const { institutionName: _i, ...rest } = row;
+        return rest;
+      });
+    }
+  }
 
   let email =
     studentUser && typeof studentUser === 'object' ? String((studentUser as { email?: string }).email ?? '').trim() || undefined : undefined;

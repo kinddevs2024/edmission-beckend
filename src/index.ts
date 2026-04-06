@@ -13,6 +13,49 @@ const httpServer = http.createServer(app);
 
 initSocket(httpServer);
 
+let dbReady = false;
+let reconnectTimer: NodeJS.Timeout | null = null;
+let workersStarted = false;
+let reconnectInProgress = false;
+
+async function initializeAfterDbConnected() {
+  if (!dbReady) {
+    await ensureDefaultAdmin();
+    logger.info('Default admin ensured');
+    dbReady = true;
+  }
+
+  // Start workers once after first successful DB connection.
+  if (!workersStarted && config.nodeEnv !== 'test') {
+    startRecommendationWorker();
+    startLifecycleWorker();
+    workersStarted = true;
+  }
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  const retryEveryMs = 15000;
+  reconnectTimer = setInterval(async () => {
+    if (reconnectInProgress) return;
+    reconnectInProgress = true;
+    try {
+      await connectDatabase();
+      logger.info('Database reconnected in background');
+      await initializeAfterDbConnected();
+      if (reconnectTimer) {
+        clearInterval(reconnectTimer);
+        reconnectTimer = null;
+      }
+    } catch (e) {
+      logger.warn(e, 'Background DB reconnect failed; will keep retrying');
+    } finally {
+      reconnectInProgress = false;
+    }
+  }, retryEveryMs);
+  logger.warn({ retryEveryMs }, 'Background DB reconnect loop started');
+}
+
 async function start() {
   // Сначала слушаем порт — чтобы бэкенд сразу отвечал на /api/* (в т.ч. /api/health, /api/auth/register).
   // Иначе при долгом или неудачном подключении к MongoDB сервер не слушал бы и фронт получал бы таймаут.
@@ -23,18 +66,11 @@ async function start() {
   try {
     await connectDatabase();
     logger.info('Database connected');
-    await ensureDefaultAdmin();
-    logger.info('Default admin ensured');
-
-    // Cron jobs depend on Mongo. Start them only after the first successful connection
-    // to avoid Mongoose buffering timeouts during startup.
-    if (config.nodeEnv !== 'test') {
-      startRecommendationWorker();
-      startLifecycleWorker();
-    }
+    await initializeAfterDbConnected();
   } catch (e) {
     logger.error(e, 'Database connection failed — server keeps listening; /api/health works, auth/register will return 503 until MongoDB is up');
-    // Не выходим: порт 4000 остаётся слушать, фронт получит ответ на /api/health. Регистрация и т.д. вернут 503, пока не поднимется MongoDB.
+    // Do not exit: keep API up and reconnect DB in background when network returns.
+    scheduleReconnect();
   }
 
   if (aiProvider.useOpenAI()) {
@@ -60,6 +96,7 @@ start().catch((e) => {
 });
 
 process.on('SIGINT', () => {
+  if (reconnectTimer) clearInterval(reconnectTimer);
   httpServer.close();
   process.exit(0);
 });

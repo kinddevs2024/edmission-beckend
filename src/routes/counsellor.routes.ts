@@ -25,6 +25,7 @@ router.post('/students/:studentUserId/generate-temp-password', validateObjectId(
 router.delete('/students/:studentUserId', validateObjectId('studentUserId'), counsellorController.deleteMyStudent);
 router.get('/students/:studentUserId/documents', validateObjectId('studentUserId'), counsellorController.getStudentDocuments);
 router.post('/students/:studentUserId/documents', validateObjectId('studentUserId'), validate(counsellorValidator.addDocumentForStudentSchema.shape.body, 'body'), counsellorController.addStudentDocument);
+router.patch('/students/:studentUserId/documents/:documentId', validateObjectId('studentUserId'), validateObjectId('documentId'), validate(counsellorValidator.updateDocumentForStudentSchema.shape.body, 'body'), counsellorController.updateStudentDocument);
 router.delete('/students/:studentUserId/documents/:documentId', validateObjectId('studentUserId'), validateObjectId('documentId'), counsellorController.deleteStudentDocument);
 
 router.get('/invitations', validate(counsellorValidator.listMyInvitationsQuerySchema, 'query'), counsellorController.listMyInvitations);

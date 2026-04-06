@@ -8,7 +8,11 @@ export function effectiveProfileVisibility(value: unknown): ProfileVisibility {
 /** Strip PII for university discovery / pipeline / dashboard list items. */
 export function redactStudentForUniversityListing(student: Record<string, unknown>): Record<string, unknown> {
   if (effectiveProfileVisibility(student.profileVisibility) === 'public') {
-    return { ...student };
+    const pub = { ...student };
+    if (pub.counsellorUserId) {
+      delete pub.schoolName;
+    }
+    return pub;
   }
   const o = { ...student };
   delete o.firstName;
@@ -18,6 +22,9 @@ export function redactStudentForUniversityListing(student: Record<string, unknow
   if (o.userId && typeof o.userId === 'object' && o.userId !== null) {
     const u = o.userId as Record<string, unknown>;
     o.userId = u._id != null ? { _id: u._id } : o.userId;
+  }
+  if (o.counsellorUserId) {
+    delete o.schoolName;
   }
   return o;
 }

@@ -12,7 +12,9 @@ import {
   Recommendation,
   Chat,
   UniversityFlyer,
+  StudentDocument,
 } from '../models';
+import { getEffectiveIeltsMinBand } from '../utils/admissionRequirements';
 import * as notificationService from './notification.service';
 import * as subscriptionService from './subscription.service';
 import { ensureStudentProfile } from './studentProfile.service';
@@ -253,6 +255,9 @@ type SearchableUniversityItem = {
   breakdown?: unknown;
   minLanguageLevel?: string;
   tuitionPrice?: number;
+  ieltsMinBand?: number;
+  gpaMinMode?: 'scale' | 'percent';
+  gpaMinValue?: number;
   facultyCodes: string[];
   targetStudentCountries: string[];
   programs: Array<Record<string, unknown>>;
@@ -340,6 +345,12 @@ export async function getUniversities(
       breakdown: null,
       minLanguageLevel: (c as { minLanguageLevel?: string }).minLanguageLevel,
       tuitionPrice: (c as { tuitionPrice?: number }).tuitionPrice,
+      ieltsMinBand: (c as { ieltsMinBand?: number }).ieltsMinBand,
+      gpaMinMode: (() => {
+        const m = (c as { gpaMinMode?: string }).gpaMinMode;
+        return m === 'scale' || m === 'percent' ? m : undefined;
+      })(),
+      gpaMinValue: (c as { gpaMinValue?: number }).gpaMinValue,
       tagline: (c as { tagline?: string }).tagline,
       establishedYear: (c as { establishedYear?: number }).establishedYear,
       studentCount: (c as { studentCount?: number }).studentCount,
@@ -421,6 +432,13 @@ export async function getUniversities(
       targetStudentCountries: pickStringArray((u as { targetStudentCountries?: string[] }).targetStudentCountries, linkedCatalog?.targetStudentCountries),
       minLanguageLevel: pickString((u as { minLanguageLevel?: string }).minLanguageLevel, linkedCatalog?.minLanguageLevel),
       tuitionPrice: pickNumber((u as { tuitionPrice?: number }).tuitionPrice, linkedCatalog?.tuitionPrice),
+      ieltsMinBand: pickNumber((u as { ieltsMinBand?: number }).ieltsMinBand, linkedCatalog?.ieltsMinBand),
+      gpaMinMode: (() => {
+        const raw =
+          (u as { gpaMinMode?: string }).gpaMinMode ?? (linkedCatalog as { gpaMinMode?: string } | undefined)?.gpaMinMode;
+        return raw === 'scale' || raw === 'percent' ? raw : undefined;
+      })(),
+      gpaMinValue: pickNumber((u as { gpaMinValue?: number }).gpaMinValue, linkedCatalog?.gpaMinValue),
       tagline: pickString((u as { tagline?: string }).tagline, linkedCatalog?.tagline),
       establishedYear: pickNumber((u as { establishedYear?: number }).establishedYear, linkedCatalog?.establishedYear),
       studentCount: pickNumber((u as { studentCount?: number }).studentCount, linkedCatalog?.studentCount),
@@ -531,6 +549,9 @@ export async function getUniversities(
       matchBreakdown: item.breakdown,
       minLanguageLevel: item.minLanguageLevel,
       tuitionPrice: resolveTuitionPrice(item),
+      ieltsMinBand: item.ieltsMinBand,
+      gpaMinMode: item.gpaMinMode,
+      gpaMinValue: item.gpaMinValue,
       facultyCodes: item.facultyCodes,
       targetStudentCountries: item.targetStudentCountries,
       foundedYear: item.establishedYear,
@@ -1038,6 +1059,19 @@ export async function getUniversityById(userId: string, universityId: unknown) {
   const effectiveTargetCountries = pickStringArray((university as { targetStudentCountries?: string[] }).targetStudentCountries, linkedCatalogRecord?.targetStudentCountries);
   const effectiveMinLanguageLevel = pickString((university as { minLanguageLevel?: string }).minLanguageLevel, linkedCatalogRecord?.minLanguageLevel);
   const effectiveTuitionPrice = pickNumber((university as { tuitionPrice?: number }).tuitionPrice, linkedCatalogRecord?.tuitionPrice);
+  const effectiveIeltsMinBand = pickNumber(
+    (university as { ieltsMinBand?: number }).ieltsMinBand,
+    (linkedCatalogRecord as { ieltsMinBand?: number } | undefined)?.ieltsMinBand
+  );
+  const rawGpaMode =
+    (university as { gpaMinMode?: string }).gpaMinMode ??
+    (linkedCatalogRecord as { gpaMinMode?: string } | undefined)?.gpaMinMode;
+  const effectiveGpaMinMode =
+    rawGpaMode === 'scale' || rawGpaMode === 'percent' ? rawGpaMode : undefined;
+  const effectiveGpaMinValue = pickNumber(
+    (university as { gpaMinValue?: number }).gpaMinValue,
+    (linkedCatalogRecord as { gpaMinValue?: number } | undefined)?.gpaMinValue
+  );
 
   return {
     ...university,
@@ -1059,6 +1093,9 @@ export async function getUniversityById(userId: string, universityId: unknown) {
     targetStudentCountries: effectiveTargetCountries,
     minLanguageLevel: effectiveMinLanguageLevel,
     tuitionPrice: effectiveTuitionPrice,
+    ieltsMinBand: effectiveIeltsMinBand ?? undefined,
+    gpaMinMode: effectiveGpaMinMode,
+    gpaMinValue: effectiveGpaMinValue ?? undefined,
     programs: mergedPrograms.map((program, index) => mapStudentProgram(program, index)),
     scholarships: mergedScholarships.map((scholarship, index) => mapStudentScholarship(scholarship, index)),
     faculties: effectiveFaculties,
@@ -1078,6 +1115,18 @@ export async function getUniversityFlyers(userId: string, universityId: unknown)
   if (!university) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
   const list = await UniversityFlyer.find({ universityId: uid, isPublished: true }).sort({ createdAt: -1 }).lean();
   return list.map((item) => ({ ...item, id: String((item as { _id: unknown })._id) }));
+}
+
+async function hasUploadedIeltsCertificate(studentProfileId: mongoose.Types.ObjectId): Promise<boolean> {
+  const doc = await StudentDocument.findOne({
+    studentId: studentProfileId,
+    type: 'language_certificate',
+    fileUrl: { $exists: true, $ne: '' },
+    $or: [{ certificateType: { $regex: /ielts/i } }, { name: { $regex: /ielts/i } }],
+  })
+    .select('_id')
+    .lean();
+  return !!doc;
 }
 
 function assertInterestSubscriptionAllowed(
@@ -1150,6 +1199,21 @@ export async function addInterest(userId: string, universityId: unknown) {
 
   const uni = await UniversityProfile.findById(uid);
   if (!uni) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+
+  const ieltsMin = getEffectiveIeltsMinBand(
+    (uni as { ieltsMinBand?: number }).ieltsMinBand,
+    (uni as { minLanguageLevel?: string }).minLanguageLevel
+  );
+  if (ieltsMin != null && ieltsMin > 0) {
+    const ok = await hasUploadedIeltsCertificate(profile._id as mongoose.Types.ObjectId);
+    if (!ok) {
+      throw new AppError(
+        400,
+        'Upload an IELTS certificate under Documents before showing interest in this university.',
+        ErrorCodes.VALIDATION
+      );
+    }
+  }
 
   const interest = await Interest.findOneAndUpdate(
     { studentId: profile._id, universityId: uid },

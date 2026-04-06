@@ -24,6 +24,15 @@ export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   host: process.env.HOST || '0.0.0.0',
   mongodbUri: process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/edmission',
+  /** Slow / unstable networks: longer waits for SRV lookup, TLS, server selection (ms). */
+  mongodbServerSelectionTimeoutMs: parseInt(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || '120000', 10),
+  mongodbConnectTimeoutMs: parseInt(process.env.MONGODB_CONNECT_TIMEOUT_MS || '90000', 10),
+  /** 0 = no socket idle timeout (recommended for flaky links; operations still bounded by server selection). */
+  mongodbSocketTimeoutMs: parseInt(process.env.MONGODB_SOCKET_TIMEOUT_MS || '0', 10),
+  /** How many times to retry initial connect after failure (e.g. DNS blip). */
+  mongodbConnectRetries: Math.max(1, parseInt(process.env.MONGODB_CONNECT_RETRIES || '8', 10)),
+  /** Delay between connect attempts (ms). */
+  mongodbConnectRetryDelayMs: Math.max(500, parseInt(process.env.MONGODB_CONNECT_RETRY_DELAY_MS || '3000', 10)),
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-secret',
     refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret',

@@ -17,6 +17,9 @@ const universityCatalogSchema = new mongoose.Schema(
     targetStudentCountries: [String],
     /** Minimum requirements (e.g. IELTS 6.5, CEFR B2, GPA 3.0) */
     minLanguageLevel: String,
+    ieltsMinBand: Number,
+    gpaMinMode: { type: String, enum: ['scale', 'percent'] },
+    gpaMinValue: Number,
     /** Minimum tuition per year in primary currency */
     tuitionPrice: Number,
     /** Set when a UniversityProfile is created from this catalog (on approval). Catalog is then hidden from students. */
