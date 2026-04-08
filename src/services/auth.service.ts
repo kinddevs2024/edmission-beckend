@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
-import { User, RefreshToken, StudentProfile, UniversityProfile, PendingRegistration } from '../models';
+import { User, RefreshToken, StudentProfile, UniversityProfile, PendingRegistration, PendingPhoneRegistration } from '../models';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import * as settingsService from './settings.service';
@@ -13,6 +13,8 @@ import type { Role } from '../types/role';
 import type {
   RegisterBody,
   LoginBody,
+  LoginByPhoneBody,
+  PhoneRegisterStartBody,
   GoogleAuthBody,
   YandexAuthBody,
   YandexAccessTokenAuthBody,
@@ -20,6 +22,19 @@ import type {
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
 const BCRYPT_ROUNDS = 12;
+
+function normalizePhone(raw: string): string {
+  const trimmed = String(raw || '').trim();
+  const hasPlus = trimmed.startsWith('+');
+  const digits = trimmed.replace(/\D/g, '');
+  if (!digits) return '';
+  return `${hasPlus ? '+' : ''}${digits}`;
+}
+
+function makePhonePlaceholderEmail(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return `phone_${digits}@phone.edmission.local`;
+}
 
 function hasOAuthLinked(u: { googleSub?: string | null; yandexSub?: string | null }): boolean {
   const g = u.googleSub != null && String(u.googleSub).trim() !== '';
@@ -583,6 +598,168 @@ export async function login(data: LoginBody) {
   }
 
   return issueTokensAfterLoginChecks(user);
+}
+
+export async function loginByPhone(data: LoginByPhoneBody) {
+  const normalizedPhone = normalizePhone(data.phone);
+  const user = await User.findOne({ phone: normalizedPhone });
+  if (!user) {
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+  if (user.suspended) {
+    throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
+  }
+  const valid = await bcrypt.compare(data.password, user.passwordHash);
+  if (!valid) {
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+  if (user.localPasswordConfigured !== true) {
+    user.localPasswordConfigured = true;
+    await user.save();
+  }
+  return issueTokensAfterLoginChecks(user);
+}
+
+function generatePhoneVerifyCode(): string {
+  return `reg_${uuidv4().replace(/-/g, '').slice(0, 24)}`;
+}
+
+export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
+  const normalizedPhone = normalizePhone(data.phone);
+  if (!normalizedPhone) {
+    throw new AppError(400, 'Invalid phone', ErrorCodes.VALIDATION);
+  }
+  const existingByPhone = await User.findOne({ phone: normalizedPhone }).select('_id').lean();
+  if (existingByPhone) {
+    throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
+  }
+
+  const placeholderEmail = makePhonePlaceholderEmail(normalizedPhone);
+  const existingByEmail = await User.findOne({ email: placeholderEmail }).select('_id').lean();
+  if (existingByEmail) {
+    throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
+  }
+
+  const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS);
+  const verifyCode = generatePhoneVerifyCode();
+  const verifyCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+  const fullName = [data.firstName?.trim(), data.lastName?.trim()].filter(Boolean).join(' ').trim();
+
+  const pending = await PendingPhoneRegistration.findOneAndUpdate(
+    { phone: normalizedPhone },
+    {
+      phone: normalizedPhone,
+      passwordHash,
+      role: data.role,
+      name: fullName,
+      avatarUrl: data.avatarUrl?.trim() || undefined,
+      verifyCode,
+      verifyCodeExpires,
+      verifiedViaTelegram: false,
+      telegramChatId: '',
+      telegramUsername: '',
+      verifiedAt: null,
+    },
+    { upsert: true, new: true }
+  );
+
+  const botUsername = config.telegram.botUsername;
+  const deepLink = botUsername ? `https://t.me/${botUsername}?start=${verifyCode}` : '';
+  return {
+    registrationId: String((pending as { _id: unknown })._id),
+    phone: normalizedPhone,
+    verification: {
+      method: 'telegram',
+      code: verifyCode,
+      expiresAt: verifyCodeExpires.toISOString(),
+      deepLink,
+    },
+  };
+}
+
+export async function getPhoneRegistrationStatus(registrationId: string) {
+  const pending = await PendingPhoneRegistration.findById(registrationId).lean();
+  if (!pending) {
+    throw new AppError(404, 'Registration request not found or expired', ErrorCodes.NOT_FOUND);
+  }
+  const p = pending as { verifiedViaTelegram?: boolean; verifiedAt?: Date; verifyCodeExpires?: Date };
+  return {
+    verifiedViaTelegram: Boolean(p.verifiedViaTelegram),
+    verifiedAt: p.verifiedAt ? new Date(p.verifiedAt).toISOString() : null,
+    expiresAt: p.verifyCodeExpires ? new Date(p.verifyCodeExpires).toISOString() : null,
+  };
+}
+
+export async function completePhoneRegistration(registrationId: string) {
+  const pending = await PendingPhoneRegistration.findById(registrationId);
+  if (!pending) {
+    throw new AppError(404, 'Registration request not found or expired', ErrorCodes.NOT_FOUND);
+  }
+  if (!pending.verifiedViaTelegram) {
+    throw new AppError(400, 'Phone is not verified in Telegram yet', ErrorCodes.VALIDATION);
+  }
+
+  const existingByPhone = await User.findOne({ phone: pending.phone }).select('_id').lean();
+  if (existingByPhone) {
+    await PendingPhoneRegistration.findByIdAndDelete(pending._id);
+    throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
+  }
+
+  const email = makePhonePlaceholderEmail(pending.phone);
+  const existingByEmail = await User.findOne({ email }).select('_id').lean();
+  if (existingByEmail) {
+    await PendingPhoneRegistration.findByIdAndDelete(pending._id);
+    throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
+  }
+
+  const user = await User.create({
+    email,
+    name: pending.name || '',
+    phone: pending.phone,
+    passwordHash: pending.passwordHash,
+    role: pending.role as Role,
+    emailVerified: true,
+    localPasswordConfigured: true,
+    telegram: {
+      chatId: pending.telegramChatId || '',
+      username: pending.telegramUsername || '',
+      linkedAt: pending.verifiedAt || new Date(),
+    },
+  });
+
+  if (pending.role === 'student') {
+    await StudentProfile.create({
+      userId: user._id,
+      avatarUrl: pending.avatarUrl || undefined,
+    });
+  }
+  await subscriptionService.createForNewUser(String(user._id), pending.role);
+  await PendingPhoneRegistration.findByIdAndDelete(pending._id);
+  return issueAuthTokens(user);
+}
+
+export async function verifyPhoneRegistrationByTelegram(
+  verifyCode: string,
+  telegramChatId: string,
+  telegramUsername: string
+): Promise<{ ok: boolean; message: string }> {
+  const pending = await PendingPhoneRegistration.findOne({
+    verifyCode,
+    verifyCodeExpires: { $gt: new Date() },
+  });
+
+  if (!pending) {
+    return { ok: false, message: 'Registration code is invalid or expired.' };
+  }
+
+  pending.verifiedViaTelegram = true;
+  pending.telegramChatId = telegramChatId;
+  pending.telegramUsername = telegramUsername || '';
+  pending.verifiedAt = new Date();
+  await pending.save();
+
+  return { ok: true, message: 'Phone confirmed. Return to Edmission and finish registration.' };
 }
 
 export async function refresh(refreshToken: string) {

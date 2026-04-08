@@ -56,8 +56,25 @@ const userSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    telegram: {
+      chatId: { type: String, default: '' },
+      username: { type: String, default: '' },
+      linkedAt: { type: Date },
+      linkCode: { type: String, default: '' },
+      linkCodeExpiresAt: { type: Date },
+    },
   },
   { timestamps: true }
+);
+
+userSchema.index({ 'telegram.chatId': 1 }, { unique: true, sparse: true });
+userSchema.index({ 'telegram.linkCode': 1 }, { sparse: true });
+userSchema.index(
+  { phone: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { phone: { $type: 'string', $ne: '' } },
+  }
 );
 
 export const User = mongoose.model('User', userSchema);

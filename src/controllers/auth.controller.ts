@@ -4,6 +4,10 @@ import * as twoFactorService from '../services/twoFactor.service';
 import type { GoogleAuthBody, YandexAuthBody, YandexAccessTokenAuthBody } from '../validators/auth.validator';
 import {
   loginSchema,
+  loginByPhoneSchema,
+  phoneRegisterStartSchema,
+  phoneRegisterStatusSchema,
+  phoneRegisterCompleteSchema,
   registerSchema,
   verifyEmailCodeSchema,
   resendVerificationSchema,
@@ -35,6 +39,62 @@ export async function login(
   try {
     const data = loginSchema.shape.body.parse(req.body);
     const result = await authService.login(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function loginByPhone(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = loginByPhoneSchema.shape.body.parse(req.body);
+    const result = await authService.loginByPhone(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function startPhoneRegistration(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = phoneRegisterStartSchema.shape.body.parse(req.body);
+    const result = await authService.startPhoneRegistration(data);
+    res.status(201).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function phoneRegistrationStatus(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { registrationId } = phoneRegisterStatusSchema.shape.params.parse(req.params);
+    const result = await authService.getPhoneRegistrationStatus(registrationId);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function completePhoneRegistration(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { registrationId } = phoneRegisterCompleteSchema.shape.body.parse(req.body);
+    const result = await authService.completePhoneRegistration(registrationId);
     res.json(result);
   } catch (e) {
     next(e);

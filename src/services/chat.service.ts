@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { User, StudentProfile, UniversityProfile, Chat, Interest, Message } from '../models';
 import * as notificationService from './notification.service';
 import * as emailService from './email.service';
+import * as telegramService from './telegram.service';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
 import { redactStudentForUniversityChat } from '../utils/studentProfilePrivacy';
@@ -556,6 +557,21 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
           notifBody,
           (rec as { role?: string }).role,
         );
+      })
+      .catch(() => {});
+
+    const senderUser = await User.findById(senderId).select('name email').lean();
+    const senderName = String((senderUser as { name?: string; email?: string } | null)?.name || (senderUser as { email?: string } | null)?.email || 'Unknown user');
+    const preview = type === 'voice'
+      ? 'Voice message'
+      : type === 'emotion'
+        ? (msgBody || 'Reaction')
+        : (msgBody || '');
+    telegramService
+      .sendChatMessageToTelegram(recipientId, {
+        chatId: String(chatId),
+        senderName,
+        text: preview,
       })
       .catch(() => {});
   }

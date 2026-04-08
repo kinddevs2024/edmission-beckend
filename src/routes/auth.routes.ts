@@ -7,6 +7,8 @@ import { requireDb } from '../middlewares/requireDb.middleware';
 import {
   registerSchema,
   loginSchema,
+  loginByPhoneSchema,
+  phoneRegisterStartSchema,
   googleAuthSchema,
   yandexAuthSchema,
   yandexAccessTokenAuthSchema,
@@ -32,6 +34,24 @@ router.post(
   '/login',
   validate(loginSchema.shape.body, 'body'),
   authController.login
+);
+router.post(
+  '/login-phone',
+  validate(loginByPhoneSchema.shape.body, 'body'),
+  authController.loginByPhone
+);
+router.post(
+  '/register-phone/start',
+  validate(phoneRegisterStartSchema.shape.body, 'body'),
+  authController.startPhoneRegistration
+);
+router.get(
+  '/register-phone/:registrationId/status',
+  authController.phoneRegistrationStatus
+);
+router.post(
+  '/register-phone/complete',
+  authController.completePhoneRegistration
 );
 router.post(
   '/google',

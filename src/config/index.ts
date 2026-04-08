@@ -103,6 +103,11 @@ export const config = {
       pass: process.env.SMTP_PASS || '',
     },
   },
+  telegram: {
+    botToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
+    botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').trim(),
+    pollingIntervalMs: Math.max(1000, parseInt(process.env.TELEGRAM_POLLING_INTERVAL_MS || '3000', 10)),
+  },
   /** Behind nginx/Cloudflare: set TRUST_PROXY=1 so rate limits use X-Forwarded-For (real client IP). */
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
 };

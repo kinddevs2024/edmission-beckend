@@ -17,6 +17,7 @@ import paymentRoutes from './payment.routes';
 import publicRoutes from './public.routes';
 import searchRoutes from './search.routes';
 import documentsRoutes from './documents.routes';
+import telegramRoutes from './telegram.routes';
 
 const router = Router();
 
@@ -48,5 +49,6 @@ router.use('/payment', paymentRoutes);
 router.use('/public', publicRoutes);
 router.use('/search', searchRoutes);
 router.use('/documents', documentsRoutes);
+router.use('/telegram', telegramRoutes);
 
 export default router;

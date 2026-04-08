@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import { authMiddleware } from '../middlewares/auth.middleware';
+import { requireRole } from '../middlewares/rbac.middleware';
+import * as telegramController from '../controllers/telegram.controller';
+
+const router = Router();
+
+router.use(authMiddleware);
+router.use(requireRole('student', 'university', 'school_counsellor', 'admin'));
+
+router.get('/status', telegramController.getStatus);
+router.post('/link-code', telegramController.createLinkCode);
+router.delete('/link', telegramController.unlink);
+
+export default router;

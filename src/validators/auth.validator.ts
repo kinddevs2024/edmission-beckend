@@ -32,6 +32,43 @@ export const loginSchema = z.object({
   }),
 });
 
+export const phoneSchema = z
+  .string()
+  .min(7, 'Phone is too short')
+  .max(20, 'Phone is too long')
+  .regex(/^\+?[0-9()\-\s]+$/, 'Invalid phone format');
+
+export const phoneRegisterStartSchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    password: passwordSchema,
+    role: z.enum(['student', 'university']),
+    acceptTerms: z.literal(true, { errorMap: () => ({ message: 'You must accept the terms' }) }),
+    firstName: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
+    lastName: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
+    avatarUrl: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  }),
+});
+
+export const phoneRegisterStatusSchema = z.object({
+  params: z.object({
+    registrationId: z.string().length(24, 'Invalid registration id'),
+  }),
+});
+
+export const phoneRegisterCompleteSchema = z.object({
+  body: z.object({
+    registrationId: z.string().length(24, 'Invalid registration id'),
+  }),
+});
+
+export const loginByPhoneSchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    password: z.string(),
+  }),
+});
+
 /** Sign in / sign up with Google Identity Services (JWT credential). */
 export const googleAuthSchema = z.object({
   body: z.object({
@@ -102,6 +139,8 @@ export const changePasswordSchema = z.object({
 
 export type RegisterBody = z.infer<typeof registerSchema>['body'];
 export type LoginBody = z.infer<typeof loginSchema>['body'];
+export type LoginByPhoneBody = z.infer<typeof loginByPhoneSchema>['body'];
+export type PhoneRegisterStartBody = z.infer<typeof phoneRegisterStartSchema>['body'];
 export type GoogleAuthBody = z.infer<typeof googleAuthSchema>['body'];
 export type YandexAuthBody = z.infer<typeof yandexAuthSchema>['body'];
 export type YandexAccessTokenAuthBody = z.infer<typeof yandexAccessTokenAuthSchema>['body'];

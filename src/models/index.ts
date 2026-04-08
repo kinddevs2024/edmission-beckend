@@ -1,5 +1,6 @@
 export { User } from './User';
 export { PendingRegistration } from './PendingRegistration';
+export { PendingPhoneRegistration } from './PendingPhoneRegistration';
 export { RefreshToken } from './RefreshToken';
 export { StudentProfile } from './StudentProfile';
 export { CounsellorProfile } from './CounsellorProfile';
@@ -18,6 +19,8 @@ export { CatalogInterest } from './CatalogInterest';
 export { Offer } from './Offer';
 export { Chat } from './Chat';
 export { Message } from './Message';
+export { TelegramMessageLink } from './TelegramMessageLink';
+export { TelegramChatPreference } from './TelegramChatPreference';
 export { Recommendation } from './Recommendation';
 export { Notification } from './Notification';
 export { ActivityLog } from './ActivityLog';

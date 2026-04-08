@@ -8,6 +8,7 @@ import { startLifecycleWorker } from './workers/lifecycle.worker';
 import { logger } from './utils/logger';
 import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
+import { startTelegramBot } from './services/telegram.service';
 
 const httpServer = http.createServer(app);
 
@@ -57,6 +58,8 @@ function scheduleReconnect() {
 }
 
 async function start() {
+  startTelegramBot();
+
   // Сначала слушаем порт — чтобы бэкенд сразу отвечал на /api/* (в т.ч. /api/health, /api/auth/register).
   // Иначе при долгом или неудачном подключении к MongoDB сервер не слушал бы и фронт получал бы таймаут.
   httpServer.listen(config.port, config.host, () => {
