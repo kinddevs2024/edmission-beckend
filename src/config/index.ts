@@ -104,12 +104,9 @@ export const config = {
     },
   },
   telegram: {
-<<<<<<< Updated upstream
     botToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
     botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').trim(),
     pollingIntervalMs: Math.max(1000, parseInt(process.env.TELEGRAM_POLLING_INTERVAL_MS || '3000', 10)),
-=======
-    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     frontendBaseUrl: process.env.TELEGRAM_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173',
     loginPath: process.env.TELEGRAM_LOGIN_PATH || '/login',
     registerPath: process.env.TELEGRAM_REGISTER_PATH || '/register',
@@ -117,7 +114,6 @@ export const config = {
     maxOtpAttempts: Math.max(1, parseInt(process.env.TELEGRAM_OTP_MAX_ATTEMPTS || '5', 10)),
     notificationsPath: process.env.TELEGRAM_NOTIFICATIONS_PATH || '/notifications',
     forgotPasswordPath: process.env.TELEGRAM_FORGOT_PASSWORD_PATH || '/forgot-password',
->>>>>>> Stashed changes
   },
   /** Behind nginx/Cloudflare: set TRUST_PROXY=1 so rate limits use X-Forwarded-For (real client IP). */
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',

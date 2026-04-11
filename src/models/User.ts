@@ -22,6 +22,8 @@ const userSchema = new mongoose.Schema(
       username: { type: String, default: '' },
       phone: { type: String, default: '' },
       linkedAt: { type: Date },
+      linkCode: { type: String, default: '' },
+      linkCodeExpiresAt: { type: Date },
       authCode: { type: String, default: '' },
       authCodeExpiresAt: { type: Date },
       authCodeAttempts: { type: Number, default: 0 },
@@ -66,13 +68,6 @@ const userSchema = new mongoose.Schema(
         },
       ],
       default: [],
-    },
-    telegram: {
-      chatId: { type: String, default: '' },
-      username: { type: String, default: '' },
-      linkedAt: { type: Date },
-      linkCode: { type: String, default: '' },
-      linkCodeExpiresAt: { type: Date },
     },
   },
   { timestamps: true }

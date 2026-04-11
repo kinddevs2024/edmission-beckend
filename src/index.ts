@@ -8,12 +8,8 @@ import { startLifecycleWorker } from './workers/lifecycle.worker';
 import { logger } from './utils/logger';
 import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
-<<<<<<< Updated upstream
-import { startTelegramBot } from './services/telegram.service';
-=======
 import { startTelegramBotPolling } from './services/telegramBot.service';
 import { PERIMETER_SECURITY_NPM_PACKAGES } from './middlewares/perimeter.middleware';
->>>>>>> Stashed changes
 
 const httpServer = http.createServer(app);
 
@@ -63,7 +59,6 @@ function scheduleReconnect() {
 }
 
 async function start() {
-  startTelegramBot();
 
   // Сначала слушаем порт — чтобы бэкенд сразу отвечал на /api/* (в т.ч. /api/health, /api/auth/register).
   // Иначе при долгом или неудачном подключении к MongoDB сервер не слушал бы и фронт получал бы таймаут.

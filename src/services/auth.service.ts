@@ -1081,15 +1081,6 @@ export async function changePassword(userId: string, currentPassword: string, ne
   return { success: true };
 }
 
-function normalizePhone(raw: string): string {
-  const s = String(raw ?? '').trim();
-  if (!s) return '';
-  const hasPlus = s.startsWith('+');
-  const digits = s.replace(/\D/g, '');
-  if (!digits) return '';
-  return `${hasPlus ? '+' : ''}${digits}`;
-}
-
 function createTelegramCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }

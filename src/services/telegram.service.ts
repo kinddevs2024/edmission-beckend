@@ -1,7 +1,7 @@
-<<<<<<< Updated upstream
 import crypto from 'crypto';
 import { Chat, TelegramChatPreference, TelegramMessageLink, User } from '../models';
 import { config } from '../config';
+import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
 
 type TelegramUpdate = {
@@ -500,9 +500,7 @@ export async function isUserInChat(chatId: string, userId: string): Promise<bool
   const studentUserId = String(((chat as { studentId?: { userId?: unknown } }).studentId?.userId || ''));
   const universityUserId = String(((chat as { universityId?: { userId?: unknown } }).universityId?.userId || ''));
   return [studentUserId, universityUserId].includes(String(userId));
-=======
-import { config } from '../config';
-import { AppError, ErrorCodes } from '../utils/errors';
+}
 
 type TelegramParseMode = 'Markdown' | 'MarkdownV2' | 'HTML';
 
@@ -578,5 +576,4 @@ export async function removeTelegramKeyboard(chatId: string, text: string): Prom
     text,
     reply_markup: { remove_keyboard: true },
   });
->>>>>>> Stashed changes
 }
