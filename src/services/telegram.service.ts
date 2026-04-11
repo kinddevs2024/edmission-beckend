@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 import crypto from 'crypto';
 import { Chat, TelegramChatPreference, TelegramMessageLink, User } from '../models';
 import { config } from '../config';
@@ -499,4 +500,83 @@ export async function isUserInChat(chatId: string, userId: string): Promise<bool
   const studentUserId = String(((chat as { studentId?: { userId?: unknown } }).studentId?.userId || ''));
   const universityUserId = String(((chat as { universityId?: { userId?: unknown } }).universityId?.userId || ''));
   return [studentUserId, universityUserId].includes(String(userId));
+=======
+import { config } from '../config';
+import { AppError, ErrorCodes } from '../utils/errors';
+
+type TelegramParseMode = 'Markdown' | 'MarkdownV2' | 'HTML';
+
+type TelegramKeyboardButton = {
+  text: string;
+  request_contact?: boolean;
+};
+
+type TelegramReplyKeyboard = {
+  keyboard: TelegramKeyboardButton[][];
+  resize_keyboard?: boolean;
+  one_time_keyboard?: boolean;
+};
+
+async function callTelegram(method: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const token = config.telegram.botToken.trim();
+  if (!token) {
+    throw new AppError(500, 'Telegram bot is not configured', ErrorCodes.INTERNAL_ERROR);
+  }
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new AppError(502, `Telegram API error: ${response.status} ${body}`, ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+  const data = (await response.json()) as { ok?: boolean; description?: string; result?: Record<string, unknown> };
+  if (!data.ok) {
+    throw new AppError(502, data.description || 'Telegram API rejected request', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+  return data.result ?? {};
+}
+
+export async function sendTelegramMessage(
+  chatId: string,
+  text: string,
+  parseMode?: TelegramParseMode,
+  replyMarkup?: TelegramReplyKeyboard
+): Promise<void> {
+  const normalizedChatId = String(chatId ?? '').trim();
+  if (!normalizedChatId) {
+    throw new AppError(400, 'Telegram chat id is required', ErrorCodes.VALIDATION);
+  }
+
+  const messageText = String(text ?? '').trim();
+  if (!messageText) {
+    throw new AppError(400, 'Telegram text is required', ErrorCodes.VALIDATION);
+  }
+
+  const payload: Record<string, unknown> = {
+    chat_id: normalizedChatId,
+    text: messageText,
+  };
+  if (parseMode) payload.parse_mode = parseMode;
+  if (replyMarkup) {
+    payload.reply_markup = replyMarkup;
+  }
+  await callTelegram('sendMessage', payload);
+}
+
+export async function sendTelegramKeyboard(chatId: string, text: string, keyboard: TelegramKeyboardButton[][]): Promise<void> {
+  await sendTelegramMessage(chatId, text, undefined, {
+    keyboard,
+    resize_keyboard: true,
+  });
+}
+
+export async function removeTelegramKeyboard(chatId: string, text: string): Promise<void> {
+  await callTelegram('sendMessage', {
+    chat_id: String(chatId),
+    text,
+    reply_markup: { remove_keyboard: true },
+  });
+>>>>>>> Stashed changes
 }

@@ -104,12 +104,57 @@ export const config = {
     },
   },
   telegram: {
+<<<<<<< Updated upstream
     botToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
     botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').trim(),
     pollingIntervalMs: Math.max(1000, parseInt(process.env.TELEGRAM_POLLING_INTERVAL_MS || '3000', 10)),
+=======
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    frontendBaseUrl: process.env.TELEGRAM_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173',
+    loginPath: process.env.TELEGRAM_LOGIN_PATH || '/login',
+    registerPath: process.env.TELEGRAM_REGISTER_PATH || '/register',
+    otpTtlMs: parseInt(process.env.TELEGRAM_OTP_TTL_MS || '300000', 10),
+    maxOtpAttempts: Math.max(1, parseInt(process.env.TELEGRAM_OTP_MAX_ATTEMPTS || '5', 10)),
+    notificationsPath: process.env.TELEGRAM_NOTIFICATIONS_PATH || '/notifications',
+    forgotPasswordPath: process.env.TELEGRAM_FORGOT_PASSWORD_PATH || '/forgot-password',
+>>>>>>> Stashed changes
   },
   /** Behind nginx/Cloudflare: set TRUST_PROXY=1 so rate limits use X-Forwarded-For (real client IP). */
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
+  /** Body size, rate limits (production; dev skips limits unless ENABLE_RATE_LIMIT_IN_DEV=true). */
+  security: {
+    jsonBodyLimit: process.env.JSON_BODY_LIMIT || '1mb',
+    rateLimitGlobalMaxPerMinute: Math.max(50, parseInt(process.env.RATE_LIMIT_GLOBAL_MAX_PER_MINUTE || '400', 10)),
+    rateLimitAuthMaxPer15Min: Math.max(10, parseInt(process.env.RATE_LIMIT_AUTH_MAX_PER_15MIN || '60', 10)),
+    rateLimitSearchPerMinute: Math.max(10, parseInt(process.env.RATE_LIMIT_SEARCH_PER_MINUTE || '60', 10)),
+    rateLimitUploadMaxPer15Min: Math.max(5, parseInt(process.env.RATE_LIMIT_UPLOAD_MAX_PER_15MIN || '40', 10)),
+    /** Authenticated POST /upload (per user id); stricter than global API limit for disk abuse. */
+    rateLimitUploadAuthMaxPer15Min: Math.max(20, parseInt(process.env.RATE_LIMIT_UPLOAD_AUTH_MAX_PER_15MIN || '200', 10)),
+    rateLimitPublicVisitPerMinute: Math.max(5, parseInt(process.env.RATE_LIMIT_PUBLIC_VISIT_PER_MINUTE || '120', 10)),
+    /** express-slow-down: start adding delay after this many /api hits per IP per window. */
+    slowDownDelayAfter: Math.max(50, parseInt(process.env.SLOW_DOWN_DELAY_AFTER || '250', 10)),
+    slowDownDelayStepMs: Math.max(25, parseInt(process.env.SLOW_DOWN_DELAY_STEP_MS || '100', 10)),
+    slowDownMaxDelayMs: Math.max(500, parseInt(process.env.SLOW_DOWN_MAX_DELAY_MS || '10000', 10)),
+    /**
+     * connect-timeout (ms). 0 = off. Production default 120s; skips multipart + webhooks.
+     * Override: API_REQUEST_TIMEOUT_MS=0 or DISABLE_API_REQUEST_TIMEOUT=true
+     */
+    apiRequestTimeoutMs: (() => {
+      const dis = process.env.DISABLE_API_REQUEST_TIMEOUT?.toLowerCase().trim();
+      if (dis === '1' || dis === 'true' || dis === 'yes') return 0;
+      const raw = process.env.API_REQUEST_TIMEOUT_MS;
+      if (raw !== undefined && raw.trim() !== '') {
+        const n = parseInt(raw, 10);
+        return Number.isFinite(n) && n >= 0 ? n : 0;
+      }
+      return (process.env.NODE_ENV || 'development') === 'production' ? 120000 : 0;
+    })(),
+  },
+  /** Gzip/deflate JSON and text in production; lowers bandwidth (small CPU cost). */
+  enableResponseCompression:
+    ((process.env.NODE_ENV || 'development') === 'production' &&
+      process.env.DISABLE_RESPONSE_COMPRESSION !== 'true') ||
+    process.env.ENABLE_RESPONSE_COMPRESSION === 'true',
 };
 
 if (config.nodeEnv === 'production') {

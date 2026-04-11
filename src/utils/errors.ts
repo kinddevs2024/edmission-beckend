@@ -23,6 +23,7 @@ export const ErrorCodes = {
   AI_TIMEOUT: 'AI_TIMEOUT',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  REQUEST_TIMEOUT: 'REQUEST_TIMEOUT',
   /** OAuth sign-in for email not registered — user must complete registration */
   OAUTH_SIGNUP_REQUIRED: 'OAUTH_SIGNUP_REQUIRED',
 } as const;

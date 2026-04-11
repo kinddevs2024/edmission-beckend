@@ -8,7 +8,12 @@ import { startLifecycleWorker } from './workers/lifecycle.worker';
 import { logger } from './utils/logger';
 import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
+<<<<<<< Updated upstream
 import { startTelegramBot } from './services/telegram.service';
+=======
+import { startTelegramBotPolling } from './services/telegramBot.service';
+import { PERIMETER_SECURITY_NPM_PACKAGES } from './middlewares/perimeter.middleware';
+>>>>>>> Stashed changes
 
 const httpServer = http.createServer(app);
 
@@ -64,7 +69,12 @@ async function start() {
   // Иначе при долгом или неудачном подключении к MongoDB сервер не слушал бы и фронт получал бы таймаут.
   httpServer.listen(config.port, config.host, () => {
     logger.info({ port: config.port, host: config.host }, 'Server listening');
+    logger.info(
+      { perimeterNpm: [...PERIMETER_SECURITY_NPM_PACKAGES] },
+      'External HTTP protection: npm packages active (see app.ts + perimeter.middleware.ts)'
+    );
   });
+  startTelegramBotPolling();
 
   try {
     await connectDatabase();

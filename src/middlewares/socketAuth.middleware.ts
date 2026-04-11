@@ -20,26 +20,37 @@ export function socketAuthMiddleware(
     return;
   }
 
-  try {
-    const payload = verifyAccessToken(token as string);
-    const handshakeLanguage =
-      socket.handshake.auth?.language ||
-      socket.handshake.query?.language ||
-      socket.handshake.headers['x-user-language'] ||
-      socket.handshake.headers['accept-language'];
-    const locale = resolveApiLocale(Array.isArray(handshakeLanguage) ? handshakeLanguage[0] : handshakeLanguage);
-    (socket as ExtendedSocket).user = {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.role,
-      language: locale,
-    };
-    User.updateOne(
-      { _id: payload.sub, language: { $ne: locale } },
-      { $set: { language: locale } }
-    ).catch(() => {});
-    next();
-  } catch {
-    next(new Error('Invalid or expired token'));
-  }
+  void (async () => {
+    try {
+      const payload = verifyAccessToken(token as string);
+      const user = await User.findById(payload.sub).select('suspended').lean();
+      if (!user) {
+        next(new Error('Authentication required'));
+        return;
+      }
+      if ((user as { suspended?: boolean }).suspended) {
+        next(new Error('Account suspended'));
+        return;
+      }
+      const handshakeLanguage =
+        socket.handshake.auth?.language ||
+        socket.handshake.query?.language ||
+        socket.handshake.headers['x-user-language'] ||
+        socket.handshake.headers['accept-language'];
+      const locale = resolveApiLocale(Array.isArray(handshakeLanguage) ? handshakeLanguage[0] : handshakeLanguage);
+      (socket as ExtendedSocket).user = {
+        id: payload.sub,
+        email: payload.email,
+        role: payload.role,
+        language: locale,
+      };
+      User.updateOne(
+        { _id: payload.sub, language: { $ne: locale } },
+        { $set: { language: locale } }
+      ).catch(() => {});
+      next();
+    } catch {
+      next(new Error('Invalid or expired token'));
+    }
+  })();
 }

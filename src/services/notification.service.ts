@@ -4,6 +4,7 @@ import { AppError, ErrorCodes } from '../utils/errors';
 import { getIO } from '../socket';
 import { type ApiLocale } from '../i18n/apiMessages';
 import { translateRuntimeText } from '../i18n/runtimeMessages';
+import { sendTelegramMessage } from './telegram.service';
 
 export type CreateNotificationParams = {
   type: string;
@@ -64,6 +65,24 @@ export async function getNotifications(
   };
 }
 
+/** Last N notifications for Telegram bot (plain text lines). */
+export async function getRecentNotificationsForBot(userId: string, limit: number = 5, locale: ApiLocale = 'en') {
+  const cap = Math.min(10, Math.max(1, limit));
+  const rows = await Notification.find({ userId })
+    .sort({ createdAt: -1 })
+    .limit(cap)
+    .lean();
+  return rows.map((n) =>
+    localizeNotificationRecord(
+      {
+        ...n,
+        id: String((n as { _id: unknown })._id),
+      },
+      locale
+    )
+  );
+}
+
 export async function createNotification(userId: string, params: CreateNotificationParams) {
   const doc = await Notification.create({
     userId,
@@ -114,6 +133,11 @@ export async function createNotification(userId: string, params: CreateNotificat
       type: params.type,
       link: link ?? undefined,
     },
+  });
+  void sendTelegramToUser(userId, {
+    title: String(localizedPayload.title ?? ''),
+    body: String(localizedPayload.body ?? ''),
+    link: typeof localizedPayload.link === 'string' ? localizedPayload.link : undefined,
   });
 
   return { ...plain, id };
@@ -172,6 +196,26 @@ async function sendExpoPushToUser(
     } catch (e) {
       console.warn('[push] Expo send error', e);
     }
+  }
+}
+
+async function sendTelegramToUser(
+  userId: string,
+  payload: { title: string; body: string; link?: string }
+) {
+  const doc = await User.findById(userId).select('telegram.chatId socialLinks.telegram').lean();
+  const chatId =
+    (doc as { telegram?: { chatId?: string } } | null)?.telegram?.chatId
+    || (doc as { socialLinks?: { telegram?: string } } | null)?.socialLinks?.telegram
+    || '';
+  const normalized = String(chatId).trim();
+  if (!normalized) return;
+  const text = [payload.title, payload.body, payload.link].filter(Boolean).join('\n');
+  if (!text.trim()) return;
+  try {
+    await sendTelegramMessage(normalized, text);
+  } catch (e) {
+    console.warn('[telegram] send failed', e);
   }
 }
 

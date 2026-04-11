@@ -38,6 +38,7 @@ import * as ticketService from './ticket.service';
 import * as studentDocumentService from './studentDocument.service';
 import type { AdminDocumentListStatus } from './studentDocument.service';
 import * as emailService from './email.service';
+import * as telegramService from './telegram.service';
 import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -523,6 +524,65 @@ export async function sendChatMessageAsUniversity(chatId: string, adminUserId: s
   const chatService = await import('./chat.service');
   const result = await chatService.saveMessage(chatId, universityUserId, { text: text.trim(), type: 'text' });
   return result;
+}
+
+type SendTelegramPayload = {
+  userIds?: string[];
+  chatIds?: string[];
+  text: string;
+  parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
+};
+
+export async function sendTelegramMessage(payload: SendTelegramPayload) {
+  const text = String(payload.text ?? '').trim();
+  if (!text) throw new AppError(400, 'Text is required', ErrorCodes.VALIDATION);
+
+  const userIds = Array.isArray(payload.userIds) ? [...new Set(payload.userIds.map((x) => String(x).trim()).filter(Boolean))] : [];
+  const directChatIds = Array.isArray(payload.chatIds) ? [...new Set(payload.chatIds.map((x) => String(x).trim()).filter(Boolean))] : [];
+
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select('_id socialLinks.telegram telegram.chatId').lean()
+    : [];
+
+  const userChatIds = users
+    .map((u) => {
+      const raw = (u as { telegram?: { chatId?: string }; socialLinks?: { telegram?: string } }).telegram?.chatId
+        || (u as { socialLinks?: { telegram?: string } }).socialLinks?.telegram;
+      return String(raw ?? '').trim();
+    })
+    .filter(Boolean);
+
+  const chatIds = [...new Set([...directChatIds, ...userChatIds])];
+  if (!chatIds.length) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: userIds.length,
+      details: [] as Array<{ chatId: string; ok: boolean; error?: string }>,
+    };
+  }
+
+  const details: Array<{ chatId: string; ok: boolean; error?: string }> = [];
+  let sent = 0;
+  let failed = 0;
+
+  for (const chatId of chatIds) {
+    try {
+      await telegramService.sendTelegramMessage(chatId, text, payload.parseMode);
+      sent += 1;
+      details.push({ chatId, ok: true });
+    } catch (e: unknown) {
+      failed += 1;
+      details.push({ chatId, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return {
+    sent,
+    failed,
+    skipped: Math.max(0, userIds.length - userChatIds.length),
+    details,
+  };
 }
 
 export async function suspendUser(userId: string, suspend: boolean) {

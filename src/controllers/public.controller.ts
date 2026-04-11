@@ -21,12 +21,9 @@ export async function getStats(_req: Request, res: Response, next: NextFunction)
 
 export async function getTrustedUniversityLogos(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const rawLimit = req.query.limit;
-    const parsedLimit = rawLimit !== undefined && rawLimit !== null && String(rawLimit) !== '' ? Number(rawLimit) : 25;
-    const limit = Number.isFinite(parsedLimit) ? parsedLimit : 25;
-    const rawOffset = req.query.offset;
-    const parsedOffset = rawOffset !== undefined && rawOffset !== null && String(rawOffset) !== '' ? Number(rawOffset) : 0;
-    const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+    const q = req.query as { limit?: number; offset?: number };
+    const limit = q.limit ?? 25;
+    const offset = q.offset ?? 0;
     const logos = await publicService.getTrustedUniversityLogos({ limit, offset });
     res.json(logos);
   } catch (e) {
@@ -36,9 +33,9 @@ export async function getTrustedUniversityLogos(req: Request, res: Response, nex
 
 export async function trackSiteVisit(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const body = (req.body ?? {}) as { visitorId?: string; path?: string };
+    const body = req.body as { visitorId: string; path?: string };
     await publicService.recordSiteVisit({
-      visitorId: String(body.visitorId ?? ''),
+      visitorId: body.visitorId,
       path: body.path,
       user: req.user ? { id: req.user.id, role: req.user.role } : null,
     });

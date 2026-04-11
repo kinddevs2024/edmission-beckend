@@ -236,6 +236,26 @@ export async function sendChatMessage(req: Request, res: Response, next: NextFun
   }
 }
 
+export async function sendTelegramMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = (req.body || {}) as {
+      userIds?: string[];
+      chatIds?: string[];
+      text?: string;
+      parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
+    };
+    const result = await adminService.sendTelegramMessage({
+      userIds: body.userIds,
+      chatIds: body.chatIds,
+      text: String(body.text ?? ''),
+      parseMode: body.parseMode,
+    });
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function suspendUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const suspend = req.body.suspend !== false;

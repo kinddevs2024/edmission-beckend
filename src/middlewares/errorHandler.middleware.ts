@@ -37,6 +37,15 @@ export function errorHandler(
     return;
   }
 
+  const maybeHttp = err as Error & { statusCode?: number; code?: string; message?: string };
+  if (maybeHttp.code === 'ETIMEDOUT' || (maybeHttp.statusCode === 503 && /timeout/i.test(maybeHttp.message || ''))) {
+    sendErrorResponse(res, 504, {
+      message: 'Request timeout',
+      code: ErrorCodes.REQUEST_TIMEOUT,
+    });
+    return;
+  }
+
   if (err instanceof ZodError) {
     const errors = err.errors.map((e) => ({
       field: e.path.join('.'),

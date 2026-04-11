@@ -17,6 +17,17 @@ const userSchema = new mongoose.Schema(
       facebook: { type: String, default: '' },
       whatsapp: { type: String, default: '' },
     },
+    telegram: {
+      chatId: { type: String, default: '' },
+      username: { type: String, default: '' },
+      phone: { type: String, default: '' },
+      linkedAt: { type: Date },
+      authCode: { type: String, default: '' },
+      authCodeExpiresAt: { type: Date },
+      authCodeAttempts: { type: Number, default: 0 },
+      authState: { type: String, default: '' },
+      pendingFullName: { type: String, default: '' },
+    },
     passwordHash: { type: String, required: true },
     /** Google account subject (OpenID); set when user signs in with Google */
     googleSub: { type: String, sparse: true, unique: true },
