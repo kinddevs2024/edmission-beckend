@@ -713,6 +713,9 @@ export async function completePhoneRegistration(registrationId: string) {
     throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
   }
 
+  const normalizedTelegramChatId = String(pending.telegramChatId ?? '').trim();
+  const normalizedTelegramUsername = String(pending.telegramUsername ?? '').trim();
+
   const user = await User.create({
     email,
     name: pending.name || '',
@@ -722,8 +725,8 @@ export async function completePhoneRegistration(registrationId: string) {
     emailVerified: true,
     localPasswordConfigured: true,
     telegram: {
-      chatId: pending.telegramChatId || '',
-      username: pending.telegramUsername || '',
+      ...(normalizedTelegramChatId ? { chatId: normalizedTelegramChatId } : {}),
+      username: normalizedTelegramUsername,
       linkedAt: pending.verifiedAt || new Date(),
     },
   });
@@ -1148,10 +1151,12 @@ export async function unlinkTelegramByChatId(chatId: string): Promise<boolean> {
   await User.findByIdAndUpdate(user._id, {
     $set: {
       'socialLinks.telegram': '',
-      'telegram.chatId': '',
       'telegram.username': '',
       'telegram.phone': '',
       'telegram.linkedAt': null,
+    },
+    $unset: {
+      'telegram.chatId': 1,
     },
   });
   return true;

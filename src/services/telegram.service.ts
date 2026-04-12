@@ -456,11 +456,13 @@ export async function unlinkTelegram(userId: string): Promise<void> {
     { _id: userId },
     {
       $set: {
-        'telegram.chatId': '',
         'telegram.username': '',
         'telegram.linkCode': '',
         'telegram.linkCodeExpiresAt': null,
         'telegram.linkedAt': null,
+      },
+      $unset: {
+        'telegram.chatId': 1,
       },
     }
   );

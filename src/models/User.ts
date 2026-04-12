@@ -18,7 +18,14 @@ const userSchema = new mongoose.Schema(
       whatsapp: { type: String, default: '' },
     },
     telegram: {
-      chatId: { type: String, default: '' },
+      chatId: {
+        type: String,
+        default: undefined,
+        set: (value: string | null | undefined) => {
+          const normalized = String(value ?? '').trim();
+          return normalized || undefined;
+        },
+      },
       username: { type: String, default: '' },
       phone: { type: String, default: '' },
       linkedAt: { type: Date },
@@ -73,7 +80,13 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-userSchema.index({ 'telegram.chatId': 1 }, { unique: true, sparse: true });
+userSchema.index(
+  { 'telegram.chatId': 1 },
+  {
+    unique: true,
+    partialFilterExpression: { 'telegram.chatId': { $type: 'string', $ne: '' } },
+  }
+);
 userSchema.index({ 'telegram.linkCode': 1 }, { sparse: true });
 userSchema.index(
   { phone: 1 },
