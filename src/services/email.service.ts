@@ -151,7 +151,11 @@ export function newMessageHtml(messagePreview: string, chatLink: string): string
 
 export async function sendNewMessageEmail(to: string, messagePreview: string, recipientRole?: string): Promise<boolean> {
   const baseUrl = getFrontendUrl();
-  const path = recipientRole === 'university' ? '/university/chat' : recipientRole === 'admin' ? '/admin/chats' : '/student/chat';
+  const path = recipientRole === 'university'
+    ? '/university/chat'
+    : ['admin', 'manager', 'counsellor_coordinator', 'school_counsellor'].includes(String(recipientRole ?? ''))
+      ? '/admin/chats'
+      : '/student/chat';
   const chatLink = `${baseUrl}${path}`;
   return sendMail(to, 'New message – Edmission', newMessageHtml(messagePreview, chatLink));
 }

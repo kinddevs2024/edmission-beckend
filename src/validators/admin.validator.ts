@@ -30,7 +30,7 @@ const passwordSchema = z
 
 export const createUserSchema = z.object({
   body: z.object({
-    role: z.enum(['student', 'university', 'admin', 'school_counsellor']),
+    role: z.enum(['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager']),
     email: z.string().email(),
     password: passwordSchema.optional(),
     name: z.string().max(200).optional(),
@@ -40,7 +40,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   body: z.object({
     name: z.string().max(200).optional(),
-    role: z.enum(['student', 'university', 'admin', 'school_counsellor']).optional(),
+    role: z.enum(['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager']).optional(),
     emailVerified: z.boolean().optional(),
     suspended: z.boolean().optional(),
   }).strict(),
@@ -223,6 +223,7 @@ export const usersQuerySchema = z.object({
   page: z.coerce.number().min(1).max(500).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   role: z.string().optional(),
+  status: z.enum(['active', 'suspended']).optional(),
 });
 
 export const catalogUniversitiesQuerySchema = z.object({

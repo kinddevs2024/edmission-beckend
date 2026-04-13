@@ -9,6 +9,8 @@ const schema = new mongoose.Schema(
     verifyToken: { type: String, required: true },
     verifyTokenExpires: { type: Date, required: true },
     verifyTokenSentAt: { type: Date, required: true },
+    verifyFailedAttempts: { type: Number, default: 0 },
+    verifyLockedUntil: { type: Date, default: null },
   },
   { timestamps: true }
 );

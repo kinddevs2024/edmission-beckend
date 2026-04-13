@@ -134,7 +134,7 @@ export async function globalSearch(q: string, role: string, userId?: string): Pr
 
   const isStudent = role === 'student';
   const isUniversity = role === 'university';
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'admin' || role === 'manager' || role === 'counsellor_coordinator';
   const isSchool = role === 'school_counsellor';
 
   const chatPromise = (isStudent || isUniversity) && userId ? searchChatMessages(userId, trimmed) : Promise.resolve([]);

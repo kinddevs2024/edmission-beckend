@@ -107,7 +107,10 @@ export const config = {
     botToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
     botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').trim(),
     pollingIntervalMs: Math.max(1000, parseInt(process.env.TELEGRAM_POLLING_INTERVAL_MS || '3000', 10)),
-    frontendBaseUrl: process.env.TELEGRAM_FRONTEND_URL || process.env.FRONTEND_URL || 'http://localhost:5173',
+    frontendBaseUrl:
+      (process.env.TELEGRAM_FRONTEND_URL && process.env.TELEGRAM_FRONTEND_URL.trim()) ||
+      (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim()) ||
+      ((process.env.NODE_ENV || 'development') === 'production' ? 'https://edmission.uz' : 'http://localhost:5173'),
     loginPath: process.env.TELEGRAM_LOGIN_PATH || '/login',
     registerPath: process.env.TELEGRAM_REGISTER_PATH || '/register',
     otpTtlMs: parseInt(process.env.TELEGRAM_OTP_TTL_MS || '300000', 10),

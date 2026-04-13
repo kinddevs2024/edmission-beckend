@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const ROLES = ['student', 'university', 'admin', 'school_counsellor'] as const;
+const ROLES = ['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'] as const;
 const LANGUAGES = ['en', 'ru', 'uz'] as const;
 
 const userSchema = new mongoose.Schema(

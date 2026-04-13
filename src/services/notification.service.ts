@@ -5,6 +5,7 @@ import { getIO } from '../socket';
 import { type ApiLocale } from '../i18n/apiMessages';
 import { translateRuntimeText } from '../i18n/runtimeMessages';
 import { sendTelegramMessage } from './telegram.service';
+import { toPublicSiteUrl } from '../utils/publicSiteUrl';
 
 export type CreateNotificationParams = {
   type: string;
@@ -134,11 +135,13 @@ export async function createNotification(userId: string, params: CreateNotificat
       link: link ?? undefined,
     },
   });
-  void sendTelegramToUser(userId, {
-    title: String(localizedPayload.title ?? ''),
-    body: String(localizedPayload.body ?? ''),
-    link: typeof localizedPayload.link === 'string' ? localizedPayload.link : undefined,
-  });
+  if (params.type !== 'message') {
+    void sendTelegramToUser(userId, {
+      title: String(localizedPayload.title ?? ''),
+      body: String(localizedPayload.body ?? ''),
+      link: typeof localizedPayload.link === 'string' ? localizedPayload.link : undefined,
+    });
+  }
 
   return { ...plain, id };
 }
@@ -210,7 +213,12 @@ async function sendTelegramToUser(
     || '';
   const normalized = String(chatId).trim();
   if (!normalized) return;
-  const text = [payload.title, payload.body, payload.link].filter(Boolean).join('\n');
+  const normalizedLink = (() => {
+    const link = String(payload.link ?? '').trim();
+    if (!link) return '';
+    return toPublicSiteUrl(link);
+  })();
+  const text = [payload.title, payload.body, normalizedLink].filter(Boolean).join('\n');
   if (!text.trim()) return;
   try {
     await sendTelegramMessage(normalized, text);
@@ -231,7 +239,12 @@ function buildNotificationLink(
       if (!referenceId) return null;
       if (recipientRole === 'student') return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
       if (recipientRole === 'university') return `/university/chat?chatId=${encodeURIComponent(referenceId)}`;
-      if (recipientRole === 'admin' || recipientRole === 'school_counsellor') {
+      if (
+        recipientRole === 'admin'
+        || recipientRole === 'school_counsellor'
+        || recipientRole === 'counsellor_coordinator'
+        || recipientRole === 'manager'
+      ) {
         return `/admin/chats?chatId=${encodeURIComponent(referenceId)}`;
       }
       return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;

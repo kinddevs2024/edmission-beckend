@@ -3,6 +3,7 @@ import { Chat, TelegramChatPreference, TelegramMessageLink, User } from '../mode
 import { config } from '../config';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { toPublicSiteUrl } from '../utils/publicSiteUrl';
 
 type TelegramUpdate = {
   update_id: number;
@@ -166,21 +167,8 @@ function tr(lang: BotLang, key: string): string {
 }
 
 async function linkUserByCode(chatId: string, username: string, code: string): Promise<boolean> {
-  const user = await User.findOne({
-    'telegram.linkCode': code,
-    'telegram.linkCodeExpiresAt': { $gt: new Date() },
-  });
-  if (!user) return false;
-
-  user.set({
-    'telegram.chatId': chatId,
-    'telegram.username': username || '',
-    'telegram.linkedAt': new Date(),
-    'telegram.linkCode': '',
-    'telegram.linkCodeExpiresAt': null,
-  });
-  await user.save();
-  return true;
+  const authService = await import('./auth.service');
+  return authService.linkTelegramByCode(code, { chatId, username });
 }
 
 async function handleReplyCommand(appUserId: string, text: string): Promise<{ ok: boolean; text: string }> {
@@ -470,14 +458,23 @@ export async function unlinkTelegram(userId: string): Promise<void> {
 
 export async function sendChatMessageToTelegram(recipientUserId: string, payload: { chatId: string; senderName: string; text: string }): Promise<void> {
   if (!hasTelegramConfigured()) return;
-  const user = await User.findById(recipientUserId).select('telegram.chatId').lean();
+  const user = await User.findById(recipientUserId).select('telegram.chatId role').lean();
   const chatId = ((user as { telegram?: { chatId?: string } } | null)?.telegram?.chatId || '').trim();
   if (!chatId) return;
+  const role = String((user as { role?: string } | null)?.role ?? '');
+  const appChatId = String(payload.chatId ?? '').trim();
+  const siteLink =
+    role === 'student'
+      ? toPublicSiteUrl(`/student/chat?chatId=${encodeURIComponent(appChatId)}`)
+      : role === 'university'
+        ? toPublicSiteUrl(`/university/chat?chatId=${encodeURIComponent(appChatId)}`)
+        : '';
 
   const text = [
     `New message from ${payload.senderName}`,
     '',
     payload.text || '(empty message)',
+    siteLink ? `Open in Edmission: ${siteLink}` : '',
   ].join('\n');
 
   const sent = await sendTelegramText(chatId, text.slice(0, 3900));
