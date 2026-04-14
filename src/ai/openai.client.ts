@@ -27,13 +27,14 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 const { apiKey, model: defaultModel, chatTimeoutMs } = config.openai
 const MAX_TOOL_ITERATIONS = 5
 
-export async function chat(messages: ChatMessage[], _model?: string): Promise<string> {
+export async function chat(messages: ChatMessage[], modelOverride?: string): Promise<string> {
   if (!apiKey?.trim()) {
     throw new Error('OPENAI_API_KEY is not set')
   }
+  const model = modelOverride?.trim() || defaultModel
 
   const body = {
-    model: defaultModel,
+    model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     stream: false,
   }
@@ -91,14 +92,15 @@ export type StreamChunk = { type: 'content' | 'thinking'; text: string }
 /** Stream chat: yields content chunks. */
 export async function* chatStream(
   messages: ChatMessage[],
-  _model?: string
+  modelOverride?: string
 ): AsyncGenerator<StreamChunk, void, unknown> {
   if (!apiKey?.trim()) {
     throw new Error('OPENAI_API_KEY is not set')
   }
+  const model = modelOverride?.trim() || defaultModel
 
   const body = {
-    model: defaultModel,
+    model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     stream: true,
   }

@@ -54,16 +54,19 @@ const OFFER_LIMITS: Record<string, number | null> = {
   [UNIVERSITY_PLAN.PREMIUM]: null,
 };
 
-/** Chat model per plan. All use OLLAMA_MODEL (e.g. deepseek-r1:8b) from env; one Ollama instance for all. */
-function getOllamaModel(): string {
+/** Chat model per plan follows the active AI provider priority: OpenAI -> Gemini -> DeepSeek -> Ollama. */
+function getDefaultChatModel(): string {
+  if (config.openai.apiKey?.trim()) return config.openai.model;
+  if (config.gemini.apiKey?.trim()) return config.gemini.model;
+  if (config.deepseek.apiKey?.trim()) return config.deepseek.model;
   return config.ollama.model;
 }
 const CHAT_MODELS: Record<string, string> = {
-  [STUDENT_PLAN.FREE_TRIAL]: getOllamaModel(),
-  [STUDENT_PLAN.STANDARD]: getOllamaModel(),
-  [STUDENT_PLAN.MAX_PREMIUM]: getOllamaModel(),
-  [UNIVERSITY_PLAN.FREE]: getOllamaModel(),
-  [UNIVERSITY_PLAN.PREMIUM]: getOllamaModel(),
+  [STUDENT_PLAN.FREE_TRIAL]: getDefaultChatModel(),
+  [STUDENT_PLAN.STANDARD]: getDefaultChatModel(),
+  [STUDENT_PLAN.MAX_PREMIUM]: getDefaultChatModel(),
+  [UNIVERSITY_PLAN.FREE]: getDefaultChatModel(),
+  [UNIVERSITY_PLAN.PREMIUM]: getDefaultChatModel(),
 };
 
 const TRIAL_DAYS = 14;
@@ -206,7 +209,7 @@ export async function getChatModel(userId: string, role: Role): Promise<string> 
   const sub = await getSubscription(userId);
   const effectivePlan = getEffectivePlan(sub);
   const plan = effectivePlan ?? (role === 'student' ? STUDENT_PLAN.FREE_TRIAL : UNIVERSITY_PLAN.FREE);
-  return CHAT_MODELS[plan] ?? getOllamaModel();
+  return CHAT_MODELS[plan] ?? getDefaultChatModel();
 }
 
 /** Send trial reminder email if trial ends in 2 days and not yet sent. */
