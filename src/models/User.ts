@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const ROLES = ['student', 'university', 'admin', 'school_counsellor'] as const;
+const ROLES = ['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'] as const;
 const LANGUAGES = ['en', 'ru', 'uz'] as const;
 
 const userSchema = new mongoose.Schema(
@@ -16,6 +16,26 @@ const userSchema = new mongoose.Schema(
       linkedin: { type: String, default: '' },
       facebook: { type: String, default: '' },
       whatsapp: { type: String, default: '' },
+    },
+    telegram: {
+      chatId: {
+        type: String,
+        default: undefined,
+        set: (value: string | null | undefined) => {
+          const normalized = String(value ?? '').trim();
+          return normalized || undefined;
+        },
+      },
+      username: { type: String, default: '' },
+      phone: { type: String, default: '' },
+      linkedAt: { type: Date },
+      linkCode: { type: String, default: '' },
+      linkCodeExpiresAt: { type: Date },
+      authCode: { type: String, default: '' },
+      authCodeExpiresAt: { type: Date },
+      authCodeAttempts: { type: Number, default: 0 },
+      authState: { type: String, default: '' },
+      pendingFullName: { type: String, default: '' },
     },
     passwordHash: { type: String, required: true },
     /** Google account subject (OpenID); set when user signs in with Google */
@@ -56,18 +76,17 @@ const userSchema = new mongoose.Schema(
       ],
       default: [],
     },
-    telegram: {
-      chatId: { type: String, default: '' },
-      username: { type: String, default: '' },
-      linkedAt: { type: Date },
-      linkCode: { type: String, default: '' },
-      linkCodeExpiresAt: { type: Date },
-    },
   },
   { timestamps: true }
 );
 
-userSchema.index({ 'telegram.chatId': 1 }, { unique: true, sparse: true });
+userSchema.index(
+  { 'telegram.chatId': 1 },
+  {
+    unique: true,
+    partialFilterExpression: { 'telegram.chatId': { $type: 'string', $ne: '' } },
+  }
+);
 userSchema.index({ 'telegram.linkCode': 1 }, { sparse: true });
 userSchema.index(
   { phone: 1 },

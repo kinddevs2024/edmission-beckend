@@ -39,7 +39,7 @@ export async function maintenanceMiddleware(
   if (token) {
     try {
       const payload = verifyAccessToken(token);
-      if (payload.role === 'admin') {
+      if (payload.role === 'admin' || payload.role === 'manager' || payload.role === 'counsellor_coordinator') {
         next();
         return;
       }

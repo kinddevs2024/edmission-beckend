@@ -1,4 +1,8 @@
-import { UniversityCatalog, UniversityProfile, StudentProfile, Scholarship, LandingCertificate, SiteVisit } from '../models';
+import { UniversityCatalog, UniversityProfile, StudentProfile, Scholarship, LandingCertificate, SiteVisit, StudentDocument } from '../models';
+import { config } from '../config';
+import { AppError, ErrorCodes } from '../utils/errors';
+import { toObjectIdString } from '../utils/objectId';
+import { effectiveProfileVisibility } from '../utils/studentProfilePrivacy';
 
 function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -28,6 +32,13 @@ type TrustedUniversityLogoAggregateResult = {
   meta?: Array<{
     total?: unknown;
   }>;
+};
+
+export type SharePreviewPayload = {
+  title: string;
+  description: string;
+  imageUrl?: string;
+  redirectUrl: string;
 };
 
 export async function getLandingCertificates(): Promise<Array<{ id: string; type: string; title: string; imageUrl: string; order: number }>> {
@@ -168,7 +179,7 @@ export async function recordSiteVisit(input: {
     if (!raw) return '/';
     return raw.startsWith('/') ? raw.slice(0, 300) : `/${raw.slice(0, 299)}`;
   })();
-  const role = input.user?.role && ['student', 'university', 'admin', 'school_counsellor'].includes(input.user.role)
+  const role = input.user?.role && ['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(input.user.role)
     ? input.user.role
     : 'anonymous';
 
@@ -191,4 +202,246 @@ export async function recordSiteVisit(input: {
       setDefaultsOnInsert: true,
     }
   );
+}
+
+function getFrontendBaseUrl(): string {
+  return (config.frontendUrl || 'http://localhost:5173').replace(/\/+$/, '');
+}
+
+function buildFrontendUrl(path: string): string {
+  const base = getFrontendBaseUrl();
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+
+function toText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function firstText(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const text = toText(value);
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function truncateText(input: string, maxLen = 180): string {
+  const normalized = input.trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+  if (normalized.length <= maxLen) return normalized;
+  return `${normalized.slice(0, maxLen - 1).trimEnd()}…`;
+}
+
+function degreeLabel(value: unknown): string | undefined {
+  const normalized = toText(value).toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized === 'bachelor') return 'Bachelor';
+  if (normalized === 'master') return 'Master';
+  if (normalized === 'phd') return 'PhD';
+  return undefined;
+}
+
+function isImageUrl(value: string): boolean {
+  return /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(value);
+}
+
+type StudentCertificateCandidate = {
+  type?: unknown;
+  certificateType?: unknown;
+  name?: unknown;
+  score?: unknown;
+  previewImageUrl?: unknown;
+  fileUrl?: unknown;
+};
+
+function certificatePriority(doc: StudentCertificateCandidate): number {
+  const type = toText(doc.type);
+  if (type === 'language_certificate') return 0;
+  if (type === 'course_certificate') return 1;
+  return 2;
+}
+
+function pickStudentCertificate(
+  documents: StudentCertificateCandidate[]
+): StudentCertificateCandidate | null {
+  if (!documents.length) return null;
+  const sorted = [...documents].sort((left, right) => certificatePriority(left) - certificatePriority(right));
+  for (const doc of sorted) {
+    const type = toText(doc.type);
+    const hasName = !!firstText(doc.certificateType, doc.name);
+    if (type === 'language_certificate' || type === 'course_certificate') return doc;
+    if (type === 'other' && hasName) return doc;
+  }
+  return null;
+}
+
+function formatCertificateLine(doc: StudentCertificateCandidate): string | undefined {
+  const rawName = firstText(doc.certificateType, doc.name, 'Certificate');
+  if (!rawName) return undefined;
+  const score = firstText(doc.score);
+  const line = score ? `${rawName}: ${score}` : rawName;
+  return truncateText(line, 80);
+}
+
+function pickCertificateImage(doc: StudentCertificateCandidate | null): string | undefined {
+  if (!doc) return undefined;
+  const preview = firstText(doc.previewImageUrl);
+  if (preview) return preview;
+  const fileUrl = firstText(doc.fileUrl);
+  if (fileUrl && isImageUrl(fileUrl)) return fileUrl;
+  return undefined;
+}
+
+async function getCatalogUniversitySharePreview(catalogId: string): Promise<SharePreviewPayload> {
+  const catalog = await UniversityCatalog.findById(catalogId).lean();
+  if (!catalog) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+
+  const linkedProfileId = toObjectIdString((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId);
+  if (linkedProfileId) {
+    return getUniversitySharePreview(linkedProfileId);
+  }
+
+  const shareId = `catalog-${String((catalog as { _id: unknown })._id)}`;
+  const name = firstText((catalog as { universityName?: unknown }).universityName, 'University');
+  const tagline = firstText((catalog as { tagline?: unknown }).tagline);
+  const description = firstText((catalog as { description?: unknown }).description);
+  const city = firstText((catalog as { city?: unknown }).city);
+  const country = firstText((catalog as { country?: unknown }).country);
+  const location = [city, country].filter(Boolean).join(', ');
+  const fallbackDescription = [tagline, description, location].filter(Boolean).join(' • ');
+  const imageUrl = firstText((catalog as { logoUrl?: unknown }).logoUrl);
+
+  return {
+    title: truncateText(name ?? 'University', 90),
+    description: truncateText(fallbackDescription || 'Explore this university profile on Edmission.', 180),
+    imageUrl,
+    redirectUrl: buildFrontendUrl(`/student/universities/${encodeURIComponent(shareId)}`),
+  };
+}
+
+export async function getUniversitySharePreview(universityId: string): Promise<SharePreviewPayload> {
+  const idStr = String(universityId ?? '').trim();
+  if (!idStr) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+
+  if (idStr.startsWith('catalog-')) {
+    const catalogId = toObjectIdString(idStr.replace(/^catalog-/, ''));
+    if (!catalogId) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+    return getCatalogUniversitySharePreview(catalogId);
+  }
+
+  const uid = toObjectIdString(idStr);
+  if (!uid) throw new AppError(404, 'University not found', ErrorCodes.NOT_FOUND);
+
+  const profile = await UniversityProfile.findById(uid).lean();
+  if (!profile) {
+    return getCatalogUniversitySharePreview(uid);
+  }
+
+  const linkedCatalog = await UniversityCatalog.findOne({ linkedUniversityProfileId: uid }).lean();
+  const name = firstText(
+    (profile as { universityName?: unknown }).universityName,
+    (linkedCatalog as { universityName?: unknown } | null)?.universityName,
+    'University'
+  );
+  const tagline = firstText(
+    (profile as { tagline?: unknown }).tagline,
+    (linkedCatalog as { tagline?: unknown } | null)?.tagline
+  );
+  const description = firstText(
+    (profile as { description?: unknown }).description,
+    (linkedCatalog as { description?: unknown } | null)?.description
+  );
+  const city = firstText((profile as { city?: unknown }).city, (linkedCatalog as { city?: unknown } | null)?.city);
+  const country = firstText((profile as { country?: unknown }).country, (linkedCatalog as { country?: unknown } | null)?.country);
+  const foundedYear = firstFiniteNumber(
+    (profile as { establishedYear?: unknown }).establishedYear,
+    (linkedCatalog as { establishedYear?: unknown } | null)?.establishedYear
+  );
+  const location = [city, country].filter(Boolean).join(', ');
+  const yearPart = foundedYear != null ? `Founded ${foundedYear}` : '';
+  const descriptionParts = [tagline, description, location, yearPart].filter(Boolean);
+  const imageUrl = firstText(
+    (profile as { logoUrl?: unknown }).logoUrl,
+    (profile as { coverImageUrl?: unknown }).coverImageUrl,
+    (linkedCatalog as { logoUrl?: unknown } | null)?.logoUrl
+  );
+
+  return {
+    title: truncateText(name ?? 'University', 90),
+    description: truncateText(descriptionParts.join(' • ') || 'Explore this university profile on Edmission.', 180),
+    imageUrl,
+    redirectUrl: buildFrontendUrl(`/student/universities/${encodeURIComponent(uid)}`),
+  };
+}
+
+export async function getStudentSharePreview(studentId: string): Promise<SharePreviewPayload> {
+  const sid = toObjectIdString(studentId);
+  if (!sid) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+
+  let student = await StudentProfile.findById(sid).lean();
+  if (!student) {
+    student = await StudentProfile.findOne({ userId: sid }).lean();
+  }
+  if (!student) throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+
+  const studentProfileId = String((student as { _id: unknown })._id);
+  const visibility = effectiveProfileVisibility((student as { profileVisibility?: unknown }).profileVisibility);
+  if (visibility === 'private') {
+    return {
+      title: 'Private student profile',
+      description: 'This student profile is private on Edmission.',
+      redirectUrl: buildFrontendUrl(`/university/students/${encodeURIComponent(studentProfileId)}`),
+    };
+  }
+
+  const documents = await StudentDocument.find({
+    studentId: studentProfileId,
+    status: 'approved',
+  })
+    .select('type certificateType name score previewImageUrl fileUrl')
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(8)
+    .lean();
+
+  const certificate = pickStudentCertificate(documents as StudentCertificateCandidate[]);
+  const certificateLine = certificate ? formatCertificateLine(certificate) : undefined;
+  const firstName = firstText((student as { firstName?: unknown }).firstName);
+  const lastName = firstText((student as { lastName?: unknown }).lastName);
+  const title = truncateText([firstName, lastName].filter(Boolean).join(' ') || 'Student profile', 90);
+
+  const city = firstText((student as { city?: unknown }).city);
+  const country = firstText((student as { country?: unknown }).country);
+  const location = [city, country].filter(Boolean).join(', ');
+  const targetDegree = degreeLabel((student as { targetDegreeLevel?: unknown }).targetDegreeLevel);
+  const graduationYear = firstFiniteNumber((student as { graduationYear?: unknown }).graduationYear);
+  const summaryParts = [
+    location,
+    targetDegree ? `Target degree: ${targetDegree}` : '',
+    graduationYear != null ? `Graduation: ${graduationYear}` : '',
+  ].filter(Boolean);
+  const summary = summaryParts.slice(0, 2).join(' • ');
+  const description = truncateText(
+    [certificateLine, summary].filter(Boolean).join(' • ') || 'Student profile on Edmission.',
+    180
+  );
+
+  const imageUrl = firstText(
+    pickCertificateImage(certificate),
+    (student as { avatarUrl?: unknown }).avatarUrl
+  );
+
+  return {
+    title,
+    description,
+    imageUrl,
+    redirectUrl: buildFrontendUrl(`/university/students/${encodeURIComponent(studentProfileId)}`),
+  };
 }

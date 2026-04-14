@@ -22,6 +22,8 @@ import type {
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
 const BCRYPT_ROUNDS = 12;
+const TELEGRAM_DUMMY_PASSWORD_HASH =
+  '$2b$12$DLYYjMrl4MQYMjLOVAJATuS5AHqMc/B/AJGWISclNx4FPkvJc2scG';
 
 function normalizePhone(raw: string): string {
   const trimmed = String(raw || '').trim();
@@ -214,7 +216,7 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
   }
 
   if (user) {
-    if (['admin', 'school_counsellor'].includes(user.role)) {
+    if (['admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
       throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
     }
     if (user.suspended) {
@@ -411,7 +413,7 @@ async function finalizeYandexOAuthProfile(
   }
 
   if (user) {
-    if (['admin', 'school_counsellor'].includes(user.role)) {
+    if (['admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
       throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
     }
     if (user.suspended) {
@@ -522,6 +524,8 @@ export async function register(data: RegisterBody) {
       verifyToken: verifyCode,
       verifyTokenExpires,
       verifyTokenSentAt: new Date(),
+      verifyFailedAttempts: 0,
+      verifyLockedUntil: null,
     },
     { upsert: true, new: true }
   );
@@ -544,6 +548,8 @@ export async function register(data: RegisterBody) {
 
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 min
 const CODE_VALIDITY_MS = 5 * 60 * 1000; // 5 min
+const VERIFY_CODE_MAX_ATTEMPTS = 5;
+const VERIFY_CODE_LOCK_MS = 15 * 60 * 1000;
 
 /** Resend 6-digit verification code. Cooldown: 60s. Code validity: 5 min. */
 export async function resendVerificationCode(email: string) {
@@ -563,7 +569,13 @@ export async function resendVerificationCode(email: string) {
   const verifyTokenExpires = new Date(Date.now() + CODE_VALIDITY_MS);
   await PendingRegistration.updateOne(
     { email: normalized },
-    { verifyToken: newCode, verifyTokenExpires, verifyTokenSentAt: new Date() }
+    {
+      verifyToken: newCode,
+      verifyTokenExpires,
+      verifyTokenSentAt: new Date(),
+      verifyFailedAttempts: 0,
+      verifyLockedUntil: null,
+    }
   );
 
   const sent = await emailService.sendVerificationCodeEmail(normalized, newCode);
@@ -598,6 +610,80 @@ export async function login(data: LoginBody) {
   }
 
   return issueTokensAfterLoginChecks(user);
+}
+
+function normalizeTelegramChatId(raw: string): string {
+  const value = String(raw ?? '').trim();
+  if (!/^-?\d{1,20}$/.test(value)) return '';
+  return value;
+}
+
+async function unlinkTelegramFromOtherUsers(chatId: string, exceptUserId?: string): Promise<void> {
+  const where: Record<string, unknown> = {
+    $or: [{ 'telegram.chatId': chatId }, { 'socialLinks.telegram': chatId }],
+  };
+  if (exceptUserId) {
+    where._id = { $ne: exceptUserId };
+  }
+
+  await User.updateMany(where, {
+    $set: {
+      'socialLinks.telegram': '',
+      'telegram.username': '',
+      'telegram.phone': '',
+      'telegram.linkedAt': null,
+    },
+    $unset: {
+      'telegram.chatId': 1,
+    },
+  });
+}
+
+export async function authenticateTelegramCredentials(email: string, password: string) {
+  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+  const rawPassword = String(password ?? '');
+  if (!normalizedEmail || !rawPassword.trim()) {
+    throw new AppError(400, 'Email and password are required', ErrorCodes.VALIDATION);
+  }
+  if (normalizedEmail.length > 254 || rawPassword.length > 256) {
+    throw new AppError(400, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+
+  const user = await User.findOne({ email: normalizedEmail });
+  if (!user) {
+    await bcrypt.compare(rawPassword, TELEGRAM_DUMMY_PASSWORD_HASH).catch(() => false);
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+  if (user.suspended) {
+    throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
+  }
+
+  const valid = await bcrypt.compare(rawPassword, user.passwordHash);
+  if (!valid) {
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+
+  if (user.localPasswordConfigured === false) {
+    throw new AppError(
+      400,
+      'This account has no local password yet. Set a password on the website first.',
+      ErrorCodes.VALIDATION
+    );
+  }
+
+  if (user.localPasswordConfigured !== true) {
+    user.localPasswordConfigured = true;
+    await user.save();
+  }
+
+  await assertLoginAllowed(user);
+
+  return {
+    id: String(user._id),
+    email: String(user.email ?? ''),
+    name: String(user.name ?? '').trim(),
+    role: user.role as Role,
+  };
 }
 
 export async function loginByPhone(data: LoginByPhoneBody) {
@@ -713,6 +799,9 @@ export async function completePhoneRegistration(registrationId: string) {
     throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
   }
 
+  const normalizedTelegramChatId = normalizeTelegramChatId(String(pending.telegramChatId ?? ''));
+  const normalizedTelegramUsername = String(pending.telegramUsername ?? '').trim();
+
   const user = await User.create({
     email,
     name: pending.name || '',
@@ -722,8 +811,8 @@ export async function completePhoneRegistration(registrationId: string) {
     emailVerified: true,
     localPasswordConfigured: true,
     telegram: {
-      chatId: pending.telegramChatId || '',
-      username: pending.telegramUsername || '',
+      ...(normalizedTelegramChatId ? { chatId: normalizedTelegramChatId } : {}),
+      username: normalizedTelegramUsername,
       linkedAt: pending.verifiedAt || new Date(),
     },
   });
@@ -744,8 +833,14 @@ export async function verifyPhoneRegistrationByTelegram(
   telegramChatId: string,
   telegramUsername: string
 ): Promise<{ ok: boolean; message: string }> {
+  const normalizedVerifyCode = String(verifyCode ?? '').trim();
+  const normalizedChatId = normalizeTelegramChatId(telegramChatId);
+  if (!/^reg_[a-f0-9]{24}$/i.test(normalizedVerifyCode) || !normalizedChatId) {
+    return { ok: false, message: 'Registration code is invalid or expired.' };
+  }
+
   const pending = await PendingPhoneRegistration.findOne({
-    verifyCode,
+    verifyCode: normalizedVerifyCode,
     verifyCodeExpires: { $gt: new Date() },
   });
 
@@ -754,8 +849,8 @@ export async function verifyPhoneRegistrationByTelegram(
   }
 
   pending.verifiedViaTelegram = true;
-  pending.telegramChatId = telegramChatId;
-  pending.telegramUsername = telegramUsername || '';
+  pending.telegramChatId = normalizedChatId;
+  pending.telegramUsername = String(telegramUsername ?? '').trim().slice(0, 120);
   pending.verifiedAt = new Date();
   await pending.save();
 
@@ -944,23 +1039,75 @@ export async function verifyEmail(token: string) {
 /** Verify by 6-digit code (sent after register). Creates User and returns tokens. */
 export async function verifyEmailByCode(email: string, code: string) {
   const normalized = email.toLowerCase().trim();
-  const pending = await PendingRegistration.findOne({
-    email: normalized,
-    verifyToken: code.trim(),
-    verifyTokenExpires: { $gt: new Date() },
-  });
+  const normalizedCode = String(code ?? '').trim();
+  if (!/^\d{6}$/.test(normalizedCode)) {
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  const pending = await PendingRegistration.findOne({ email: normalized });
   if (!pending) {
     throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
   }
 
-  const user = await User.create({
-    email: pending.email,
-    name: '',
-    passwordHash: pending.passwordHash,
-    role: pending.role as Role,
-    emailVerified: true,
-    localPasswordConfigured: true,
-  });
+  const now = Date.now();
+  const expiresAt = new Date((pending as { verifyTokenExpires?: Date }).verifyTokenExpires ?? 0).getTime();
+  if (!expiresAt || expiresAt <= now) {
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  const lockedUntil = new Date((pending as { verifyLockedUntil?: Date | null }).verifyLockedUntil ?? 0).getTime();
+  if (lockedUntil > now) {
+    const waitSec = Math.ceil((lockedUntil - now) / 1000);
+    throw new AppError(
+      429,
+      `Too many invalid attempts. Please wait ${waitSec} seconds or request a new code.`,
+      ErrorCodes.RATE_LIMIT
+    );
+  }
+
+  if (String((pending as { verifyToken?: string }).verifyToken ?? '') !== normalizedCode) {
+    const failedAttempts = Number((pending as { verifyFailedAttempts?: number }).verifyFailedAttempts ?? 0) + 1;
+    const nextLockedUntil = failedAttempts >= VERIFY_CODE_MAX_ATTEMPTS
+      ? new Date(Date.now() + VERIFY_CODE_LOCK_MS)
+      : null;
+
+    await PendingRegistration.updateOne(
+      { _id: pending._id },
+      {
+        verifyFailedAttempts: failedAttempts,
+        verifyLockedUntil: nextLockedUntil,
+      }
+    );
+
+    if (nextLockedUntil) {
+      const waitSec = Math.ceil((nextLockedUntil.getTime() - Date.now()) / 1000);
+      throw new AppError(
+        429,
+        `Too many invalid attempts. Please wait ${waitSec} seconds or request a new code.`,
+        ErrorCodes.RATE_LIMIT
+      );
+    }
+
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  let user: InstanceType<typeof User>;
+  try {
+    user = await User.create({
+      email: pending.email,
+      name: '',
+      passwordHash: pending.passwordHash,
+      role: pending.role as Role,
+      emailVerified: true,
+      localPasswordConfigured: true,
+    });
+  } catch (error: unknown) {
+    if ((error as { code?: number }).code === 11000) {
+      await PendingRegistration.deleteOne({ email: normalized }).catch(() => {});
+      throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
+    }
+    throw error;
+  }
 
   if (pending.role === 'student') {
     await StudentProfile.create({
@@ -1079,4 +1226,194 @@ export async function changePassword(userId: string, currentPassword: string, ne
   });
   await RefreshToken.deleteMany({ userId });
   return { success: true };
+}
+
+function createTelegramCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+export async function findUserByPhone(phone: string) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+  return User.findOne({ phone: normalized });
+}
+
+export async function issueTelegramPhoneCode(phone: string) {
+  const user = await findUserByPhone(phone);
+  if (!user) return null;
+  const code = createTelegramCode();
+  user.set('telegram.authCode', code);
+  user.set('telegram.authCodeExpiresAt', new Date(Date.now() + config.telegram.otpTtlMs));
+  user.set('telegram.authCodeAttempts', 0);
+  user.set('telegram.authState', 'otp_pending');
+  await user.save();
+  return { userId: String(user._id), code };
+}
+
+export async function verifyTelegramPhoneCode(phone: string, code: string) {
+  const user = await findUserByPhone(phone);
+  if (!user) return null;
+  const now = Date.now();
+  const expires = user.telegram?.authCodeExpiresAt ? new Date(user.telegram.authCodeExpiresAt).getTime() : 0;
+  if (!user.telegram?.authCode || !expires || expires < now) {
+    throw new AppError(400, 'Code expired. Request a new code.', ErrorCodes.VALIDATION);
+  }
+  const attempts = Number(user.telegram?.authCodeAttempts ?? 0);
+  if (attempts >= config.telegram.maxOtpAttempts) {
+    throw new AppError(429, 'Too many attempts. Request a new code.', ErrorCodes.RATE_LIMIT);
+  }
+  if (String(code).trim() !== String(user.telegram.authCode).trim()) {
+    user.set('telegram.authCodeAttempts', attempts + 1);
+    await user.save();
+    throw new AppError(400, 'Invalid code', ErrorCodes.VALIDATION);
+  }
+  user.set('telegram.authCode', '');
+  user.set('telegram.authCodeAttempts', 0);
+  user.set('telegram.authCodeExpiresAt', null);
+  user.set('telegram.authState', '');
+  await user.save();
+  return user;
+}
+
+export async function findUserByTelegramChatId(chatId: string) {
+  const id = normalizeTelegramChatId(chatId);
+  if (!id) return null;
+  return User.findOne({
+    $or: [{ 'telegram.chatId': id }, { 'socialLinks.telegram': id }],
+  })
+    .select('name email role phone language telegram localPasswordConfigured')
+    .lean();
+}
+
+export async function unlinkTelegramByChatId(chatId: string): Promise<boolean> {
+  const id = normalizeTelegramChatId(chatId);
+  if (!id) return false;
+  const user = await User.findOne({
+    $or: [{ 'telegram.chatId': id }, { 'socialLinks.telegram': id }],
+  });
+  if (!user) return false;
+  await User.findByIdAndUpdate(user._id, {
+    $set: {
+      'socialLinks.telegram': '',
+      'telegram.username': '',
+      'telegram.phone': '',
+      'telegram.linkedAt': null,
+    },
+    $unset: {
+      'telegram.chatId': 1,
+    },
+  });
+  return true;
+}
+
+export async function linkTelegramToUser(
+  userId: string,
+  payload: { chatId: string; username?: string; phone?: string }
+): Promise<void> {
+  const chatId = normalizeTelegramChatId(payload.chatId);
+  if (!chatId) throw new AppError(400, 'Telegram chat id is required', ErrorCodes.VALIDATION);
+  const phone = payload.phone ? normalizePhone(payload.phone) : '';
+  await unlinkTelegramFromOtherUsers(chatId, userId);
+  await User.findByIdAndUpdate(userId, {
+    $set: {
+      'socialLinks.telegram': chatId,
+      'telegram.chatId': chatId,
+      'telegram.username': String(payload.username ?? '').trim(),
+      'telegram.phone': phone || undefined,
+      'telegram.linkedAt': new Date(),
+      'telegram.authState': '',
+      'telegram.authCode': '',
+      'telegram.authCodeAttempts': 0,
+      'telegram.authCodeExpiresAt': null,
+    },
+  });
+}
+
+export async function linkTelegramByCode(
+  code: string,
+  payload: { chatId: string; username?: string }
+): Promise<boolean> {
+  const normalizedCode = String(code ?? '').trim();
+  if (!/^[a-f0-9]{32}$/i.test(normalizedCode)) return false;
+  const normalizedChatId = normalizeTelegramChatId(payload.chatId);
+  if (!normalizedChatId) {
+    throw new AppError(400, 'Telegram chat id is required', ErrorCodes.VALIDATION);
+  }
+  const user = await User.findOne({
+    'telegram.linkCode': normalizedCode,
+    'telegram.linkCodeExpiresAt': { $gt: new Date() },
+  })
+    .select('_id')
+    .lean();
+  if (!user) return false;
+  const userId = String((user as { _id: unknown })._id);
+  await unlinkTelegramFromOtherUsers(normalizedChatId, userId);
+
+  const updated = await User.updateOne(
+    {
+      _id: userId,
+      'telegram.linkCode': normalizedCode,
+      'telegram.linkCodeExpiresAt': { $gt: new Date() },
+    },
+    {
+      $set: {
+        'socialLinks.telegram': normalizedChatId,
+        'telegram.chatId': normalizedChatId,
+        'telegram.username': String(payload.username ?? '').trim(),
+        'telegram.linkedAt': new Date(),
+        'telegram.linkCode': '',
+        'telegram.linkCodeExpiresAt': null,
+        'telegram.authState': '',
+        'telegram.authCode': '',
+        'telegram.authCodeAttempts': 0,
+        'telegram.authCodeExpiresAt': null,
+      },
+    }
+  );
+  return updated.modifiedCount === 1;
+}
+
+export async function registerFromTelegram(payload: {
+  chatId: string;
+  phone: string;
+  fullName: string;
+  username?: string;
+}) {
+  const chatId = normalizeTelegramChatId(payload.chatId);
+  if (!chatId) throw new AppError(400, 'Telegram chat id is required', ErrorCodes.VALIDATION);
+  const phone = normalizePhone(payload.phone);
+  if (!phone) throw new AppError(400, 'Phone is required', ErrorCodes.VALIDATION);
+  const existing = await findUserByPhone(phone);
+  if (existing) {
+    await linkTelegramToUser(String(existing._id), {
+      chatId,
+      username: payload.username,
+      phone,
+    });
+    return { userId: String(existing._id), created: false };
+  }
+  const passwordHash = await bcrypt.hash(`tg:${chatId}:${uuidv4()}`, BCRYPT_ROUNDS);
+  const email = `tg_${chatId}_${Date.now()}@telegram.local`;
+  const user = await User.create({
+    role: 'student',
+    language: 'en',
+    email,
+    name: String(payload.fullName ?? '').trim(),
+    phone,
+    passwordHash,
+    emailVerified: true,
+    localPasswordConfigured: false,
+    telegram: {
+      chatId,
+      username: String(payload.username ?? '').trim(),
+      phone,
+      linkedAt: new Date(),
+    },
+    socialLinks: {
+      telegram: chatId,
+    },
+  });
+  await StudentProfile.create({ userId: user._id });
+  await subscriptionService.createForNewUser(String(user._id), 'student');
+  return { userId: String(user._id), created: true };
 }

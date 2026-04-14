@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { objectIdZod } from '../utils/validators';
+import { updateProfileSchema as studentUserUpdateProfileSchema } from './student.validator';
+import { updateProfileSchema as universityUserUpdateProfileSchema } from './university.validator';
 
 /** Accepts full URLs (http/https) or relative paths (/api/uploads/...) from file uploads */
 const absoluteOrRelativeUrlSchema = z.string().min(1).refine(
@@ -28,7 +30,7 @@ const passwordSchema = z
 
 export const createUserSchema = z.object({
   body: z.object({
-    role: z.enum(['student', 'university', 'admin', 'school_counsellor']),
+    role: z.enum(['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager']),
     email: z.string().email(),
     password: passwordSchema.optional(),
     name: z.string().max(200).optional(),
@@ -38,7 +40,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   body: z.object({
     name: z.string().max(200).optional(),
-    role: z.enum(['student', 'university', 'admin', 'school_counsellor']).optional(),
+    role: z.enum(['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager']).optional(),
     emailVerified: z.boolean().optional(),
     suspended: z.boolean().optional(),
   }).strict(),
@@ -221,6 +223,7 @@ export const usersQuerySchema = z.object({
   page: z.coerce.number().min(1).max(500).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   role: z.string().optional(),
+  status: z.enum(['active', 'suspended']).optional(),
 });
 
 export const catalogUniversitiesQuerySchema = z.object({
@@ -255,6 +258,20 @@ export const sendChatMessageSchema = z.object({
   body: z.object({
     text: z.string().min(1, 'Text is required'),
   }),
+});
+
+export const sendTelegramMessageSchema = z.object({
+  body: z
+    .object({
+      userIds: z.array(objectIdZod).max(500).optional(),
+      chatIds: z.array(z.string().min(1).max(100)).max(500).optional(),
+      text: z.string().min(1).max(4096),
+      parseMode: z.enum(['Markdown', 'MarkdownV2', 'HTML']).optional(),
+    })
+    .strict()
+    .refine((value) => Boolean(value.userIds?.length || value.chatIds?.length), {
+      message: 'Either userIds or chatIds is required',
+    }),
 });
 
 export const ticketsQuerySchema = z.object({
@@ -326,3 +343,29 @@ export const updateLandingCertificateSchema = z.object({
     order: z.number().optional(),
   }).strict(),
 });
+
+/** Admin PATCH body: same as student self-update minus `profileVisibility` (not admin-editable). */
+export const adminPatchStudentProfileBodySchema = studentUserUpdateProfileSchema.shape.body
+  .omit({ profileVisibility: true })
+  .strict();
+
+/** Admin PATCH body: subset matching UNIVERSITY_PROFILE_WHITELIST in admin.service. */
+export const adminPatchUniversityProfileBodySchema = universityUserUpdateProfileSchema.shape.body
+  .pick({
+    universityName: true,
+    tagline: true,
+    establishedYear: true,
+    studentCount: true,
+    country: true,
+    city: true,
+    description: true,
+    logoUrl: true,
+    onboardingCompleted: true,
+    facultyCodes: true,
+    facultyItems: true,
+    targetStudentCountries: true,
+    minLanguageLevel: true,
+    tuitionPrice: true,
+  })
+  .extend({ verified: z.boolean().optional() })
+  .strict();

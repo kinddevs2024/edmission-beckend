@@ -38,11 +38,66 @@ import * as ticketService from './ticket.service';
 import * as studentDocumentService from './studentDocument.service';
 import type { AdminDocumentListStatus } from './studentDocument.service';
 import * as emailService from './email.service';
+import * as telegramService from './telegram.service';
 import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
 
 const BCRYPT_ROUNDS = 12;
 const INVITE_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
+const MANAGER_VISIBLE_ROLES = ['school_counsellor', 'counsellor_coordinator'] as const;
+const COORDINATOR_VISIBLE_ROLES = ['school_counsellor'] as const;
+
+type ManagementRole = 'admin' | 'manager' | 'counsellor_coordinator' | 'school_counsellor';
+type ManagedRole = 'student' | 'university' | 'admin' | 'school_counsellor' | 'counsellor_coordinator' | 'manager';
+type ManagementActor = { id: string; role: string } | undefined;
+
+function getManagementRole(role: string | undefined): ManagementRole | null {
+  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator' || role === 'school_counsellor') {
+    return role;
+  }
+  return null;
+}
+
+function getVisibleRolesForManagementRole(role: ManagementRole): ReadonlyArray<string> | null {
+  if (role === 'admin') return null;
+  if (role === 'manager') return MANAGER_VISIBLE_ROLES;
+  if (role === 'counsellor_coordinator') return COORDINATOR_VISIBLE_ROLES;
+  return ['school_counsellor'];
+}
+
+function canManageTargetRole(actorRole: ManagementRole, targetRole: string): boolean {
+  if (actorRole === 'admin') return true;
+  if (actorRole === 'manager') return targetRole === 'school_counsellor' || targetRole === 'counsellor_coordinator';
+  if (actorRole === 'counsellor_coordinator') return targetRole === 'school_counsellor';
+  return false;
+}
+
+function assertRoleManageAllowed(actor: ManagementActor, targetRole: string): void {
+  if (!actor) {
+    throw new AppError(401, 'Authorization required', ErrorCodes.UNAUTHORIZED);
+  }
+  const actorRole = getManagementRole(actor.role);
+  if (!actorRole || !canManageTargetRole(actorRole, targetRole)) {
+    throw new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN);
+  }
+}
+
+function restrictRoleByVisibility(requestedRole: string | undefined, visibleRoles: ReadonlyArray<string> | null): string | undefined {
+  if (!requestedRole) return undefined;
+  if (visibleRoles == null) return requestedRole;
+  return visibleRoles.includes(requestedRole) ? requestedRole : '__no_visible_role__';
+}
+
+function mergeUserRoleFilters(
+  visibleRoles: ReadonlyArray<string> | null,
+  requestedRole: string | undefined
+): Record<string, unknown> {
+  const roleFromQuery = restrictRoleByVisibility(requestedRole, visibleRoles);
+  if (roleFromQuery === '__no_visible_role__') return { role: '__no_visible_role__' };
+  if (visibleRoles == null) return roleFromQuery ? { role: roleFromQuery } : {};
+  if (roleFromQuery) return { role: roleFromQuery };
+  return { role: { $in: [...visibleRoles] } };
+}
 
 function parseDateOnlyInput(value: string | undefined, endOfDay: boolean = false): Date | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -158,11 +213,19 @@ export async function getAnalyticsOverview(query: { from?: string; to?: string }
   };
 }
 
-export async function getUsers(query: { page?: number; limit?: number; role?: string }) {
+export async function getUsers(
+  query: { page?: number; limit?: number; role?: string; status?: string },
+  actor?: { id: string; role: string }
+) {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
-  const where = query.role ? { role: query.role } : {};
+  const actorRole = getManagementRole(actor?.role);
+  const visibleRoles = actorRole ? getVisibleRolesForManagementRole(actorRole) : null;
+  const where: Record<string, unknown> = mergeUserRoleFilters(visibleRoles, query.role);
+  if (query.status === 'active') where.suspended = false;
+  if (query.status === 'suspended') where.suspended = true;
+
   const [list, total] = await Promise.all([
     User.find(where).skip(skip).limit(limit).select('email name role emailVerified suspended createdAt').lean(),
     User.countDocuments(where),
@@ -266,14 +329,27 @@ export async function getUsers(query: { page?: number; limit?: number; role?: st
   };
 }
 
-export async function createUser(payload: { role: 'student' | 'university' | 'admin'; email: string; password?: string; name?: string }) {
+export async function createUser(
+  payload: {
+    role: ManagedRole;
+    email: string;
+    password?: string;
+    name?: string;
+  },
+  actor?: { id: string; role: string }
+) {
   const email = String(payload.email || '').trim().toLowerCase();
   const password = payload.password != null ? String(payload.password) : undefined;
   const role = payload.role;
   const name = payload.name != null ? String(payload.name) : '';
 
   if (!email) throw new AppError(400, 'Email is required', ErrorCodes.VALIDATION);
-  if (!['student', 'university', 'admin'].includes(role)) throw new AppError(400, 'Invalid role', ErrorCodes.VALIDATION);
+  if (!['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(role)) {
+    throw new AppError(400, 'Invalid role', ErrorCodes.VALIDATION);
+  }
+  if (actor && actor.role !== 'admin') {
+    assertRoleManageAllowed(actor, role);
+  }
 
   const existing = await User.findOne({ email });
   if (existing) throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
@@ -307,9 +383,16 @@ export async function createUser(payload: { role: 'student' | 'university' | 'ad
       verified: true,
       onboardingCompleted: false,
     });
+  } else if (role === 'school_counsellor') {
+    await CounsellorProfile.create({
+      userId: user._id,
+      schoolName: name?.trim() ? name.trim() : '',
+    });
   }
 
-  await subscriptionService.createForNewUser(String(user._id), role);
+  if (role === 'student' || role === 'university') {
+    await subscriptionService.createForNewUser(String(user._id), role);
+  }
 
   if (isInvite && inviteToken && (config.email?.enabled || config.email?.sendgridApiKey)) {
     await emailService.sendInviteSetPasswordEmail(user.email, inviteToken);
@@ -319,15 +402,38 @@ export async function createUser(payload: { role: 'student' | 'university' | 'ad
   return { ...plain, id: String(user._id) };
 }
 
-export async function getUserById(userId: string) {
+export async function getUserById(userId: string, actor?: { id: string; role: string }) {
   const u = await User.findById(userId).select('email name role emailVerified suspended createdAt').lean();
   if (!u) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (actor && actor.role !== 'admin') {
+    const actorRole = getManagementRole(actor.role);
+    const visibleRoles = actorRole ? getVisibleRolesForManagementRole(actorRole) : null;
+    if (visibleRoles != null && !visibleRoles.includes(String((u as { role?: string }).role ?? ''))) {
+      throw new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN);
+    }
+  }
   return { ...u, id: String((u as { _id: unknown })._id) };
 }
 
-export async function updateUser(userId: string, patch: { name?: string; role?: 'student' | 'university' | 'admin' | 'school_counsellor'; emailVerified?: boolean; suspended?: boolean }) {
+export async function updateUser(
+  userId: string,
+  patch: {
+    name?: string;
+    role?: ManagedRole;
+    emailVerified?: boolean;
+    suspended?: boolean;
+  },
+  actor?: { id: string; role: string }
+) {
   const user = await User.findById(userId);
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (actor && actor.role !== 'admin') {
+    assertRoleManageAllowed(actor, user.role);
+    if (patch.role !== undefined) assertRoleManageAllowed(actor, patch.role);
+    if (patch.emailVerified !== undefined) {
+      throw new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN);
+    }
+  }
   if (user.email === DEFAULT_ADMIN_EMAIL) {
     if (patch.suspended !== undefined) throw new AppError(403, 'Cannot modify default admin', ErrorCodes.FORBIDDEN);
     if (patch.role !== undefined) throw new AppError(403, 'Cannot change default admin role', ErrorCodes.FORBIDDEN);
@@ -347,9 +453,16 @@ export async function updateUser(userId: string, patch: { name?: string; role?: 
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 
-export async function resetUserPassword(userId: string, newPassword: string) {
+export async function resetUserPassword(
+  userId: string,
+  newPassword: string,
+  actor?: { id: string; role: string }
+) {
   const user = await User.findById(userId);
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (actor && actor.role !== 'admin') {
+    assertRoleManageAllowed(actor, user.role);
+  }
   if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot reset default admin password', ErrorCodes.FORBIDDEN);
   const passwordHash = await bcrypt.hash(String(newPassword || ''), BCRYPT_ROUNDS);
   await User.findByIdAndUpdate(
@@ -434,7 +547,23 @@ export async function updateOfferStatus(offerId: string, status: 'pending' | 'ac
   return { ...updated, id: String((updated as { _id: unknown })._id) };
 }
 
-export async function listInterests(query: { page?: number; limit?: number; status?: string }) {
+async function getManagedStudentProfileIds(actor?: { id: string; role: string }): Promise<mongoose.Types.ObjectId[] | null> {
+  const actorRole = getManagementRole(actor?.role);
+  if (!actorRole || actorRole === 'admin') return null;
+  if (actorRole !== 'manager' && actorRole !== 'counsellor_coordinator') return [];
+
+  const counsellors = await User.find({ role: 'school_counsellor' }).select('_id').lean();
+  const counsellorIds = counsellors.map((row) => (row as { _id: mongoose.Types.ObjectId })._id);
+  if (counsellorIds.length === 0) return [];
+
+  const students = await StudentProfile.find({ counsellorUserId: { $in: counsellorIds } }).select('_id').lean();
+  return students.map((row) => (row as { _id: mongoose.Types.ObjectId })._id);
+}
+
+export async function listInterests(
+  query: { page?: number; limit?: number; status?: string },
+  actor?: { id: string; role: string }
+) {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
@@ -443,6 +572,14 @@ export async function listInterests(query: { page?: number; limit?: number; stat
   if (query.status) {
     whereProfile.status = query.status;
     whereCatalog.status = query.status;
+  }
+  const managedStudentIds = await getManagedStudentProfileIds(actor);
+  if (managedStudentIds != null) {
+    if (managedStudentIds.length === 0) {
+      return { data: [], total: 0, page, limit, totalPages: 0 };
+    }
+    whereProfile.studentId = { $in: managedStudentIds };
+    whereCatalog.studentId = { $in: managedStudentIds };
   }
   const fetchLimit = skip + limit;
   const [profileList, profileTotal, catalogList, catalogTotal] = await Promise.all([
@@ -525,9 +662,75 @@ export async function sendChatMessageAsUniversity(chatId: string, adminUserId: s
   return result;
 }
 
-export async function suspendUser(userId: string, suspend: boolean) {
+type SendTelegramPayload = {
+  userIds?: string[];
+  chatIds?: string[];
+  text: string;
+  parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
+};
+
+export async function sendTelegramMessage(payload: SendTelegramPayload) {
+  const text = String(payload.text ?? '').trim();
+  if (!text) throw new AppError(400, 'Text is required', ErrorCodes.VALIDATION);
+
+  const userIds = Array.isArray(payload.userIds) ? [...new Set(payload.userIds.map((x) => String(x).trim()).filter(Boolean))] : [];
+  const directChatIds = Array.isArray(payload.chatIds) ? [...new Set(payload.chatIds.map((x) => String(x).trim()).filter(Boolean))] : [];
+
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select('_id socialLinks.telegram telegram.chatId').lean()
+    : [];
+
+  const userChatIds = users
+    .map((u) => {
+      const raw = (u as { telegram?: { chatId?: string }; socialLinks?: { telegram?: string } }).telegram?.chatId
+        || (u as { socialLinks?: { telegram?: string } }).socialLinks?.telegram;
+      return String(raw ?? '').trim();
+    })
+    .filter(Boolean);
+
+  const chatIds = [...new Set([...directChatIds, ...userChatIds])];
+  if (!chatIds.length) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: userIds.length,
+      details: [] as Array<{ chatId: string; ok: boolean; error?: string }>,
+    };
+  }
+
+  const details: Array<{ chatId: string; ok: boolean; error?: string }> = [];
+  let sent = 0;
+  let failed = 0;
+
+  for (const chatId of chatIds) {
+    try {
+      await telegramService.sendTelegramMessage(chatId, text, payload.parseMode);
+      sent += 1;
+      details.push({ chatId, ok: true });
+    } catch (e: unknown) {
+      failed += 1;
+      details.push({ chatId, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return {
+    sent,
+    failed,
+    skipped: Math.max(0, userIds.length - userChatIds.length),
+    details,
+  };
+}
+
+export async function suspendUser(
+  userId: string,
+  suspend: boolean,
+  actor?: { id: string; role: string }
+) {
   const user = await User.findById(userId);
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (actor && actor.role !== 'admin') {
+    assertRoleManageAllowed(actor, user.role);
+  }
   if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot suspend default admin', ErrorCodes.FORBIDDEN);
   if (user.role === 'admin') throw new AppError(403, 'Cannot suspend admin', ErrorCodes.FORBIDDEN);
   const updated = await User.findByIdAndUpdate(userId, { suspended: suspend }, { new: true }).lean();
@@ -535,9 +738,12 @@ export async function suspendUser(userId: string, suspend: boolean) {
 }
 
 /** Delete a user and all related data. Cannot delete default admin or other admins. */
-export async function deleteUser(userId: string) {
+export async function deleteUser(userId: string, actor?: { id: string; role: string }) {
   const user = await User.findById(userId);
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (actor && actor.role !== 'admin') {
+    assertRoleManageAllowed(actor, user.role);
+  }
   if (user.email === DEFAULT_ADMIN_EMAIL) throw new AppError(403, 'Cannot delete default admin', ErrorCodes.FORBIDDEN);
   if (user.role === 'admin') throw new AppError(403, 'Cannot delete admin users', ErrorCodes.FORBIDDEN);
 

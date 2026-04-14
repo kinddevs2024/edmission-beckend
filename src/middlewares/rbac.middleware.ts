@@ -28,3 +28,16 @@ export function requireAdminOnly(req: Request, _res: Response, next: NextFunctio
   }
   next();
 }
+
+/** Allow admin-like account managers to modify user accounts. */
+export function requireUserManager(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.user) {
+    next(new AppError(401, 'Authorization required', ErrorCodes.UNAUTHORIZED));
+    return;
+  }
+  if (!['admin', 'manager', 'counsellor_coordinator'].includes(req.user.role)) {
+    next(new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN));
+    return;
+  }
+  next();
+}

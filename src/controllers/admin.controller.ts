@@ -38,12 +38,13 @@ export async function getAnalyticsOverview(req: Request, res: Response, next: Ne
 
 export async function getUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit, role } = req.query;
+    const { page, limit, role, status } = req.query;
     const data = await adminService.getUsers({
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       role: role as string,
-    });
+      status: status as string,
+    }, req.user);
     res.json(data);
   } catch (e) {
     next(e);
@@ -54,11 +55,11 @@ export async function createUser(req: Request, res: Response, next: NextFunction
   try {
     const body = req.body as { role?: string; email?: string; password?: string; name?: string };
     const data = await adminService.createUser({
-      role: body.role as 'student' | 'university' | 'admin',
+      role: body.role as 'student' | 'university' | 'admin' | 'school_counsellor' | 'counsellor_coordinator' | 'manager',
       email: body.email ?? '',
       password: body.password ?? '',
       name: body.name,
-    });
+    }, req.user);
     res.status(201).json(data);
   } catch (e) {
     next(e);
@@ -67,7 +68,7 @@ export async function createUser(req: Request, res: Response, next: NextFunction
 
 export async function getUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const data = await adminService.getUserById(req.params.id);
+    const data = await adminService.getUserById(req.params.id, req.user);
     res.json(data);
   } catch (e) {
     next(e);
@@ -76,8 +77,13 @@ export async function getUser(req: Request, res: Response, next: NextFunction): 
 
 export async function updateUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const body = req.body as { name?: string; role?: 'student' | 'university' | 'admin' | 'school_counsellor'; emailVerified?: boolean; suspended?: boolean };
-    const data = await adminService.updateUser(req.params.id, body);
+    const body = req.body as {
+      name?: string;
+      role?: 'student' | 'university' | 'admin' | 'school_counsellor' | 'counsellor_coordinator' | 'manager';
+      emailVerified?: boolean;
+      suspended?: boolean;
+    };
+    const data = await adminService.updateUser(req.params.id, body, req.user);
     res.json(data);
   } catch (e) {
     next(e);
@@ -86,7 +92,7 @@ export async function updateUser(req: Request, res: Response, next: NextFunction
 
 export async function deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const data = await adminService.deleteUser(req.params.id);
+    const data = await adminService.deleteUser(req.params.id, req.user);
     res.json(data);
   } catch (e) {
     next(e);
@@ -97,7 +103,7 @@ export async function resetUserPassword(req: Request, res: Response, next: NextF
   try {
     const body = req.body as { password?: string };
     const pwd = body.password ?? '';
-    const data = await adminService.resetUserPassword(req.params.id, pwd);
+    const data = await adminService.resetUserPassword(req.params.id, pwd, req.user);
     res.json(data);
   } catch (e) {
     next(e);
@@ -171,7 +177,7 @@ export async function getInterests(req: Request, res: Response, next: NextFuncti
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       status: status as string,
-    });
+    }, req.user);
     res.json(data);
   } catch (e) {
     next(e);
@@ -236,10 +242,30 @@ export async function sendChatMessage(req: Request, res: Response, next: NextFun
   }
 }
 
+export async function sendTelegramMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = (req.body || {}) as {
+      userIds?: string[];
+      chatIds?: string[];
+      text?: string;
+      parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML';
+    };
+    const result = await adminService.sendTelegramMessage({
+      userIds: body.userIds,
+      chatIds: body.chatIds,
+      text: String(body.text ?? ''),
+      parseMode: body.parseMode,
+    });
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function suspendUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const suspend = req.body.suspend !== false;
-    const data = await adminService.suspendUser(req.params.id, suspend);
+    const data = await adminService.suspendUser(req.params.id, suspend, req.user);
     res.json(data);
   } catch (e) {
     next(e);

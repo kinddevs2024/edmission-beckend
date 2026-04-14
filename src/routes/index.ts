@@ -23,8 +23,14 @@ const router = Router();
 
 router.use(maintenanceMiddleware);
 
-/** Static uploads - filenames are UUIDs (unguessable). TODO: add auth for sensitive files. */
-router.use('/uploads', express.static(path.resolve(config.uploadDir)));
+/** Static uploads - filenames are UUIDs (unguessable). Harden static serving (no directory indexes / dotfiles). */
+router.use(
+  '/uploads',
+  express.static(path.resolve(config.uploadDir), {
+    dotfiles: 'deny',
+    index: false,
+  })
+);
 
 /** Health check под /api/health — для проверки доступности API с фронта */
 router.get('/health', (_req: Request, res: Response) => {

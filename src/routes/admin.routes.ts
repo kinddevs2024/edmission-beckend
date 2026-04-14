@@ -2,7 +2,7 @@ import multer from 'multer';
 import { Router } from 'express';
 import * as adminController from '../controllers/admin.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { requireRole, requireAdminOnly } from '../middlewares/rbac.middleware';
+import { requireRole, requireAdminOnly, requireUserManager } from '../middlewares/rbac.middleware';
 import { validate } from '../middlewares/validate.middleware';
 import { validateObjectId } from '../middlewares/validateObjectId.middleware';
 import * as adminValidator from '../validators/admin.validator';
@@ -22,22 +22,34 @@ const uploadExcel = multer({
 });
 
 router.use(authMiddleware);
-router.use(requireRole('admin', 'school_counsellor'));
+router.use(requireRole('admin', 'school_counsellor', 'counsellor_coordinator', 'manager'));
 
 router.get('/dashboard', adminController.getDashboard);
 router.get('/analytics/overview', validate(adminValidator.analyticsOverviewQuerySchema, 'query'), adminController.getAnalyticsOverview);
 router.get('/analytics/university-interests', adminController.getUniversityInterestAnalytics);
 router.get('/users', validate(adminValidator.usersQuerySchema, 'query'), adminController.getUsers);
-router.post('/users', requireAdminOnly, validate(adminValidator.createUserSchema.shape.body, 'body'), adminController.createUser);
+router.post('/users', requireUserManager, validate(adminValidator.createUserSchema.shape.body, 'body'), adminController.createUser);
 router.get('/users/:id', validateObjectId('id'), adminController.getUser);
-router.patch('/users/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateUserSchema.shape.body, 'body'), adminController.updateUser);
-router.delete('/users/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteUser);
-router.post('/users/:id/reset-password', requireAdminOnly, validateObjectId('id'), validate(adminValidator.resetPasswordSchema.shape.body, 'body'), adminController.resetUserPassword);
-router.patch('/users/:id/suspend', requireAdminOnly, validateObjectId('id'), validate(adminValidator.suspendUserSchema.shape.body, 'body'), adminController.suspendUser);
+router.patch('/users/:id', requireUserManager, validateObjectId('id'), validate(adminValidator.updateUserSchema.shape.body, 'body'), adminController.updateUser);
+router.delete('/users/:id', requireUserManager, validateObjectId('id'), adminController.deleteUser);
+router.post('/users/:id/reset-password', requireUserManager, validateObjectId('id'), validate(adminValidator.resetPasswordSchema.shape.body, 'body'), adminController.resetUserPassword);
+router.patch('/users/:id/suspend', requireUserManager, validateObjectId('id'), validate(adminValidator.suspendUserSchema.shape.body, 'body'), adminController.suspendUser);
 router.get('/users/:id/student-profile', validateObjectId('id'), adminController.getStudentProfileByUser);
-router.patch('/users/:id/student-profile', requireAdminOnly, validateObjectId('id'), adminController.updateStudentProfileByUser);
+router.patch(
+  '/users/:id/student-profile',
+  requireAdminOnly,
+  validateObjectId('id'),
+  validate(adminValidator.adminPatchStudentProfileBodySchema, 'body'),
+  adminController.updateStudentProfileByUser
+);
 router.get('/users/:id/university-profile', validateObjectId('id'), adminController.getUniversityProfileByUser);
-router.patch('/users/:id/university-profile', requireAdminOnly, validateObjectId('id'), adminController.updateUniversityProfileByUser);
+router.patch(
+  '/users/:id/university-profile',
+  requireAdminOnly,
+  validateObjectId('id'),
+  validate(adminValidator.adminPatchUniversityProfileBodySchema, 'body'),
+  adminController.updateUniversityProfileByUser
+);
 router.get('/universities/verification', adminController.getVerificationQueue);
 router.post('/universities/:id/verify', requireAdminOnly, validateObjectId('id'), validate(adminValidator.verifyUniversitySchema.shape.body, 'body'), adminController.verifyUniversity);
 router.get('/universities/template', adminController.downloadUniversitiesTemplate);
@@ -94,6 +106,7 @@ router.patch('/interests/:id/status', requireAdminOnly, validateObjectId('id'), 
 router.get('/chats', validate(adminValidator.chatsQuerySchema, 'query'), adminController.getChats);
 router.get('/chats/:id/messages', validateObjectId('id'), validate(adminValidator.chatMessagesQuerySchema, 'query'), adminController.getChatMessages);
 router.post('/chats/:id/messages', requireAdminOnly, validateObjectId('id'), validate(adminValidator.sendChatMessageSchema.shape.body, 'body'), adminController.sendChatMessage);
+router.post('/telegram/send', requireAdminOnly, validate(adminValidator.sendTelegramMessageSchema.shape.body, 'body'), adminController.sendTelegramMessage);
 
 router.get('/investors', adminController.getInvestors);
 router.post('/investors', requireAdminOnly, validate(adminValidator.createInvestorSchema.shape.body, 'body'), adminController.createInvestor);

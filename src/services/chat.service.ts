@@ -7,6 +7,8 @@ import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString } from '../utils/objectId';
 import { redactStudentForUniversityChat } from '../utils/studentProfilePrivacy';
 
+const CHAT_MESSAGE_MAX_LENGTH = 4000;
+
 function buildMessageVisibilityFilter(viewerUserId?: string): Record<string, unknown> {
   const filter: Record<string, unknown> = {
     deletedForEveryoneAt: null,
@@ -266,8 +268,9 @@ export async function getMessages(chatId: string, userId: string, query: { page?
   const studentUserId = student ? String((student as Record<string, unknown>).userId) : null;
   const universityUserId = university ? String((university as Record<string, unknown>).userId) : null;
   const participantIds = [studentUserId, universityUserId].filter(Boolean);
-  // If chat was fetched via getChats, we already know current user is participant.
-  // To avoid blocking chats because of inconsistent data, we no longer hard-fail here.
+  if (!participantIds.includes(userId)) {
+    throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
+  }
 
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
@@ -319,7 +322,9 @@ export async function markRead(chatId: string, userId: string) {
     student ? String((student as Record<string, unknown>).userId) : null,
     university ? String((university as Record<string, unknown>).userId) : null,
   ].filter(Boolean);
-  // Same as in getMessages: don't hard-fail if relations are inconsistent.
+  if (!participantIds.includes(userId)) {
+    throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
+  }
 
   await Message.updateMany(
     {
@@ -481,18 +486,22 @@ export type SaveMessageParams = {
 export async function saveMessage(chatId: string, senderId: string, params: string | SaveMessageParams) {
   const opts: SaveMessageParams = typeof params === 'string' ? { text: params, type: 'text' } : params;
   const type = opts.type ?? 'text';
+  const textValue = String(opts.text ?? '');
   const emotionVal = opts.metadata && opts.metadata.emotion != null ? String(opts.metadata.emotion) : '';
   const message = opts.text ?? emotionVal;
   const attachmentUrl = opts.attachmentUrl;
   const metadata = opts.metadata;
 
-  if (type === 'text' && !(opts.text && opts.text.trim())) {
+  if (type === 'text' && !textValue.trim()) {
     throw new AppError(400, 'Message text is required for text messages', ErrorCodes.VALIDATION);
+  }
+  if (textValue.length > CHAT_MESSAGE_MAX_LENGTH) {
+    throw new AppError(400, `Message is too long (max ${CHAT_MESSAGE_MAX_LENGTH} characters)`, ErrorCodes.VALIDATION);
   }
   if (type === 'voice' && !attachmentUrl) {
     throw new AppError(400, 'Attachment URL is required for voice messages', ErrorCodes.VALIDATION);
   }
-  if (type === 'emotion' && !message.trim() && !(metadata?.emotion != null)) {
+  if (type === 'emotion' && !String(message ?? '').trim() && !(metadata?.emotion != null)) {
     throw new AppError(400, 'Emotion is required for emotion messages', ErrorCodes.VALIDATION);
   }
 
@@ -512,6 +521,9 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
   const studentU = student ? String((student as Record<string, unknown>).userId) : null;
   const universityU = university ? String((university as Record<string, unknown>).userId) : null;
   const participantIds = [studentU, universityU].filter(Boolean);
+  if (!participantIds.includes(senderId)) {
+    throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
+  }
   // Чат уже выбран из списка текущего пользователя; дополнительно не блокируем по неконсистентным связям.
 
   await assertChatMutationsAllowed(studentIdStr, universityIdStr, senderId, studentU);
@@ -594,9 +606,12 @@ async function syncInterestStatusForChat(studentId: string, universityId: string
 }
 
 export async function updateMessage(chatId: string, messageId: string, userId: string, text: string) {
-  const trimmedText = text.trim();
+  const trimmedText = String(text ?? '').trim();
   if (!trimmedText) {
     throw new AppError(400, 'Message text is required', ErrorCodes.VALIDATION);
+  }
+  if (trimmedText.length > CHAT_MESSAGE_MAX_LENGTH) {
+    throw new AppError(400, `Message is too long (max ${CHAT_MESSAGE_MAX_LENGTH} characters)`, ErrorCodes.VALIDATION);
   }
 
   const chat = await Chat.findById(chatId)
@@ -610,8 +625,14 @@ export async function updateMessage(chatId: string, messageId: string, userId: s
   const chatObj = chat as Record<string, unknown>;
   const studentProfileId = toObjectIdString(chatObj.studentId);
   const universityProfileId = toObjectIdString(chatObj.universityId);
-  const studentRef = chatObj.studentId as { userId?: unknown } | undefined;
-  const studentUserId = studentRef && typeof studentRef === 'object' ? String(studentRef.userId ?? '') : null;
+  const student = studentProfileId ? await StudentProfile.findById(studentProfileId).lean() : null;
+  const university = universityProfileId ? await UniversityProfile.findById(universityProfileId).lean() : null;
+  const studentUserId = student ? String((student as { userId?: unknown }).userId ?? '') : null;
+  const universityUserId = university ? String((university as { userId?: unknown }).userId ?? '') : null;
+  const participantIds = [studentUserId, universityUserId].filter(Boolean);
+  if (!participantIds.includes(userId)) {
+    throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
+  }
   await assertChatMutationsAllowed(studentProfileId, universityProfileId, userId, studentUserId);
 
   const existing = await Message.findOne({ _id: messageId, chatId }).lean();

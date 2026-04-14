@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const VISIT_ROLES = ['anonymous', 'student', 'university', 'admin', 'school_counsellor'] as const;
+const VISIT_ROLES = ['anonymous', 'student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'] as const;
 
 const siteVisitSchema = new mongoose.Schema(
   {

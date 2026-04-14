@@ -19,16 +19,16 @@ export const messageIdParamSchema = z.object({
 
 export const sendMessageSchema = z.object({
   body: z.object({
-    text: z.string().optional(),
+    text: z.string().max(4000).optional(),
     type: z.enum(['text', 'voice', 'emotion']).optional(),
-    attachmentUrl: z.string().url().optional(),
+    attachmentUrl: z.string().url().max(2048).optional(),
     metadata: z.record(z.unknown()).optional(),
   }),
 });
 
 export const updateMessageSchema = z.object({
   body: z.object({
-    text: z.string().trim().min(1),
+    text: z.string().trim().min(1).max(4000),
   }),
 });
 
@@ -41,7 +41,7 @@ export const deleteMessageSchema = z.object({
 export const acceptStudentSchema = z.object({
   body: z.object({
     positionType: z.string().optional(),
-    positionLabel: z.string().optional(),
-    congratulatoryMessage: z.string().optional(),
+    positionLabel: z.string().max(120).optional(),
+    congratulatoryMessage: z.string().max(2000).optional(),
   }),
 });
