@@ -184,6 +184,7 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
   const oauthClient = new OAuth2Client(config.google.clientId);
   const googleAudiences = [
     config.google.clientId,
+    config.google.expoClientId,
     config.google.iosClientId,
     config.google.androidClientId,
   ].filter((id): id is string => Boolean(id));

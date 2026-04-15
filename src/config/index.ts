@@ -80,6 +80,8 @@ export const config = {
    */
   google: {
     clientId: (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim(),
+    /** Optional: Expo Go OAuth client ID used by expo-auth-session in Expo Go runtime. */
+    expoClientId: (process.env.GOOGLE_EXPO_CLIENT_ID || '').trim(),
     /** Optional: native OAuth client IDs — id_token `aud` must match one of these (see mobile Google Sign-In). */
     iosClientId: (process.env.GOOGLE_IOS_CLIENT_ID || '').trim(),
     androidClientId: (process.env.GOOGLE_ANDROID_CLIENT_ID || '').trim(),
