@@ -7,6 +7,8 @@ import { validate } from '../middlewares/validate.middleware';
 import { validateObjectId } from '../middlewares/validateObjectId.middleware';
 import * as adminValidator from '../validators/admin.validator';
 import * as counsellorValidator from '../validators/counsellor.validator';
+import * as documentsValidator from '../validators/documents.validator';
+import * as universityValidator from '../validators/university.validator';
 
 const router = Router();
 
@@ -71,6 +73,114 @@ router.patch(
   validate(adminValidator.adminPatchUniversityProfileBodySchema, 'body'),
   adminController.updateUniversityProfileByUser
 );
+
+/** Document templates & issued university→student documents, acting as that university user account. */
+router.get(
+  '/university-accounts/:universityUserId/document-templates',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validate(documentsValidator.listTemplatesQuerySchema.shape.query, 'query'),
+  adminController.adminUniListDocumentTemplates
+);
+router.get(
+  '/university-accounts/:universityUserId/document-templates/:templateId',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('templateId'),
+  adminController.adminUniGetDocumentTemplate
+);
+router.post(
+  '/university-accounts/:universityUserId/document-templates',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validate(documentsValidator.createTemplateSchema.shape.body, 'body'),
+  adminController.adminUniCreateDocumentTemplate
+);
+router.patch(
+  '/university-accounts/:universityUserId/document-templates/:templateId',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('templateId'),
+  validate(documentsValidator.updateTemplateSchema.shape.body, 'body'),
+  adminController.adminUniUpdateDocumentTemplate
+);
+router.delete(
+  '/university-accounts/:universityUserId/document-templates/:templateId',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('templateId'),
+  adminController.adminUniDeleteDocumentTemplate
+);
+router.post(
+  '/university-accounts/:universityUserId/document-templates/:templateId/duplicate',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('templateId'),
+  adminController.adminUniDuplicateDocumentTemplate
+);
+router.post(
+  '/university-accounts/:universityUserId/document-templates/:templateId/render-preview',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('templateId'),
+  validate(documentsValidator.renderTemplatePreviewSchema.shape.body, 'body'),
+  adminController.adminUniRenderDocumentTemplatePreview
+);
+router.get(
+  '/university-accounts/:universityUserId/issued-documents',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validate(documentsValidator.listStudentDocumentsQuerySchema.shape.query, 'query'),
+  adminController.adminUniListIssuedStudentDocuments
+);
+router.post(
+  '/university-accounts/:universityUserId/issued-documents/send',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validate(documentsValidator.sendStudentDocumentSchema.shape.body, 'body'),
+  adminController.adminUniSendStudentDocument
+);
+router.get(
+  '/university-accounts/:universityUserId/issued-documents/:documentId',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('documentId'),
+  adminController.adminUniGetIssuedStudentDocument
+);
+router.post(
+  '/university-accounts/:universityUserId/issued-documents/:documentId/revoke',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('documentId'),
+  adminController.adminUniRevokeIssuedStudentDocument
+);
+router.delete(
+  '/university-accounts/:universityUserId/issued-documents/:documentId',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validateObjectId('documentId'),
+  adminController.adminUniDeleteIssuedStudentDocument
+);
+router.get(
+  '/university-accounts/:universityUserId/scholarships',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  adminController.adminUniGetScholarships
+);
+router.get(
+  '/university-accounts/:universityUserId/offer-templates',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  adminController.adminUniListOfferTemplates
+);
+router.post(
+  '/university-accounts/:universityUserId/offers',
+  requireAdminOnly,
+  validateObjectId('universityUserId'),
+  validate(universityValidator.createOfferSchema.shape.body, 'body'),
+  adminController.adminUniCreateOffer
+);
+
 router.get('/universities/verification', adminController.getVerificationQueue);
 router.post('/universities/:id/verify', requireAdminOnly, validateObjectId('id'), validate(adminValidator.verifyUniversitySchema.shape.body, 'body'), adminController.verifyUniversity);
 router.get('/universities/template', adminController.downloadUniversitiesTemplate);

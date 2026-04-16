@@ -959,14 +959,17 @@ export async function createOffer(
     deadline?: Date;
     certificateTemplateId?: string;
     certificateData?: Record<string, string>;
-  }
+  },
+  options?: { bypassOfferLimitCheck?: boolean }
 ) {
   const profile = await UniversityProfile.findOne({ userId });
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
 
-  const subscription = await subscriptionService.canSendOffer(userId);
-  if (!subscription.allowed) {
-    throw new AppError(402, `Student request limit reached (${subscription.current}/${subscription.limit ?? '?'}). Upgrade to Premium for unlimited requests.`, ErrorCodes.PAYMENT_REQUIRED);
+  if (!options?.bypassOfferLimitCheck) {
+    const subscription = await subscriptionService.canSendOffer(userId);
+    if (!subscription.allowed) {
+      throw new AppError(402, `Student request limit reached (${subscription.current}/${subscription.limit ?? '?'}). Upgrade to Premium for unlimited requests.`, ErrorCodes.PAYMENT_REQUIRED);
+    }
   }
 
   const studentProfile = await StudentProfile.findById(data.studentId);

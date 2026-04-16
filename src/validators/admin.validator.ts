@@ -224,6 +224,8 @@ export const usersQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(100).optional(),
   role: z.string().optional(),
   status: z.enum(['active', 'suspended']).optional(),
+  /** Case-insensitive match on email, user name, or student first/last name (students only). */
+  search: z.string().max(100).optional(),
 });
 
 export const catalogUniversitiesQuerySchema = z.object({

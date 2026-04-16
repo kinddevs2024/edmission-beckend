@@ -3,6 +3,8 @@ import { Request, Response, NextFunction } from 'express';
 import * as adminService from '../services/admin.service';
 import * as globalFacultyService from '../services/globalFaculty.service';
 import * as settingsService from '../services/settings.service';
+import * as documentsService from '../services/documents.service';
+import * as universityService from '../services/university.service';
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -38,12 +40,13 @@ export async function getAnalyticsOverview(req: Request, res: Response, next: Ne
 
 export async function getUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit, role, status } = req.query;
+    const { page, limit, role, status, search } = req.query;
     const data = await adminService.getUsers({
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       role: role as string,
       status: status as string,
+      search: typeof search === 'string' ? search : undefined,
     }, req.user);
     res.json(data);
   } catch (e) {
@@ -237,10 +240,11 @@ export async function updateInterestStatus(req: Request, res: Response, next: Ne
 
 export async function getChats(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit } = req.query;
+    const { page, limit, universityId } = req.query;
     const data = await adminService.listChats({
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
+      universityId: typeof universityId === 'string' ? universityId : undefined,
     });
     res.json(data);
   } catch (e) {
@@ -765,6 +769,204 @@ export async function deleteLandingCertificate(req: Request, res: Response, next
   try {
     const data = await adminService.deleteLandingCertificate(req.params.id);
     res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ——— Admin acting as a university (document templates, issued docs, offers) ———
+
+const uniUserIdParam = 'universityUserId';
+
+export async function adminUniListDocumentTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.listTemplates(universityUserId, {
+      type: req.query.type as 'offer' | 'scholarship' | undefined,
+      status: req.query.status as 'draft' | 'active' | 'archived' | undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniGetDocumentTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.getTemplate(universityUserId, req.params.templateId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniCreateDocumentTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.createTemplate(universityUserId, req.body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniUpdateDocumentTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.updateTemplate(universityUserId, req.params.templateId, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniDeleteDocumentTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    await documentsService.deleteTemplate(universityUserId, req.params.templateId);
+    res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniDuplicateDocumentTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.duplicateTemplate(universityUserId, req.params.templateId);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniRenderDocumentTemplatePreview(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.renderTemplatePreview(universityUserId, req.params.templateId, req.body);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniListIssuedStudentDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.listStudentDocuments(universityUserId, {
+      type: req.query.type as 'offer' | 'scholarship' | undefined,
+      status: req.query.status as
+        | 'sent'
+        | 'viewed'
+        | 'accepted'
+        | 'declined'
+        | 'postponed'
+        | 'expired'
+        | 'revoked'
+        | undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniSendStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.sendStudentDocument(universityUserId, req.body);
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniGetIssuedStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.getStudentDocument(universityUserId, req.params.documentId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniRevokeIssuedStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await documentsService.revokeStudentDocument(universityUserId, req.params.documentId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniDeleteIssuedStudentDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    await documentsService.deleteStudentDocument(universityUserId, req.params.documentId);
+    res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniGetScholarships(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await universityService.getScholarships(universityUserId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniListOfferTemplates(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const data = await universityService.listOfferTemplates(universityUserId);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function adminUniCreateOffer(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const universityUserId = req.params[uniUserIdParam];
+    await adminService.assertUniversityUserAccount(universityUserId);
+    const body = req.body as {
+      studentId: string;
+      scholarshipId?: string;
+      coveragePercent: number;
+      deadline?: string;
+      certificateTemplateId?: string;
+      certificateData?: Record<string, string>;
+    };
+    const data = await universityService.createOffer(
+      universityUserId,
+      {
+        ...body,
+        deadline: body.deadline ? new Date(body.deadline) : undefined,
+      },
+      { bypassOfferLimitCheck: true }
+    );
+    res.status(201).json(data);
   } catch (e) {
     next(e);
   }

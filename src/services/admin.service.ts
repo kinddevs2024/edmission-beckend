@@ -213,8 +213,19 @@ export async function getAnalyticsOverview(query: { from?: string; to?: string }
   };
 }
 
+export async function assertUniversityUserAccount(userId: string) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    throw new AppError(400, 'Invalid user id', ErrorCodes.VALIDATION);
+  }
+  const user = await User.findById(userId).select('role').lean();
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (String((user as { role?: string }).role) !== 'university') {
+    throw new AppError(400, 'User is not a university account', ErrorCodes.VALIDATION);
+  }
+}
+
 export async function getUsers(
-  query: { page?: number; limit?: number; role?: string; status?: string },
+  query: { page?: number; limit?: number; role?: string; status?: string; search?: string },
   actor?: { id: string; role: string }
 ) {
   const page = Math.max(1, query.page || 1);
@@ -222,9 +233,30 @@ export async function getUsers(
   const skip = (page - 1) * limit;
   const actorRole = getManagementRole(actor?.role);
   const visibleRoles = actorRole ? getVisibleRolesForManagementRole(actorRole) : null;
-  const where: Record<string, unknown> = mergeUserRoleFilters(visibleRoles, query.role);
-  if (query.status === 'active') where.suspended = false;
-  if (query.status === 'suspended') where.suspended = true;
+  const baseWhere: Record<string, unknown> = mergeUserRoleFilters(visibleRoles, query.role);
+  if (query.status === 'active') baseWhere.suspended = false;
+  if (query.status === 'suspended') baseWhere.suspended = true;
+
+  const searchRaw = query.search?.trim();
+  let where: Record<string, unknown> = baseWhere;
+  if (searchRaw) {
+    const rx = safeRegExp(searchRaw, 'i', 100);
+    const profileRows = await StudentProfile.find({
+      $or: [{ firstName: rx }, { lastName: rx }],
+    })
+      .select('userId')
+      .limit(200)
+      .lean();
+    const userIdsFromProfiles = profileRows
+      .map((p) => (p as { userId?: unknown }).userId)
+      .filter((id): id is mongoose.Types.ObjectId => Boolean(id) && mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+    const orClause: Record<string, unknown>[] = [{ email: rx }, { name: rx }];
+    if (userIdsFromProfiles.length) {
+      orClause.push({ _id: { $in: userIdsFromProfiles } });
+    }
+    where = { $and: [baseWhere, { $or: orClause }] };
+  }
 
   const [list, total] = await Promise.all([
     User.find(where).skip(skip).limit(limit).select('email name role emailVerified suspended createdAt').lean(),
@@ -678,9 +710,18 @@ export async function getChatMessages(chatId: string, query?: { limit?: number }
   const limit = Math.min(200, Math.max(1, query?.limit ?? 50));
   const chat = await Chat.findById(chatId).lean();
   if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
-  const messages = await Message.find({ chatId }).sort({ createdAt: -1 }).limit(limit).lean();
+  const [messages, uniProf] = await Promise.all([
+    Message.find({ chatId }).sort({ createdAt: -1 }).limit(limit).lean(),
+    UniversityProfile.findById((chat as { universityId?: unknown }).universityId).select('userId').lean(),
+  ]);
+  const c = chat as { _id: unknown; studentId?: unknown; universityId?: unknown };
   return {
-    chat: { ...chat, id: String((chat as { _id: unknown })._id) },
+    chat: {
+      ...chat,
+      id: String(c._id),
+      studentProfileId: c.studentId != null ? String(c.studentId) : undefined,
+      universityUserId: uniProf?.userId != null ? String((uniProf as { userId: unknown }).userId) : undefined,
+    },
     messages: messages.map((m) => ({ ...m, id: String((m as { _id: unknown })._id) })),
   };
 }
