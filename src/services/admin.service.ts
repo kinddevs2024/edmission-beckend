@@ -48,7 +48,14 @@ const MANAGER_VISIBLE_ROLES = ['school_counsellor', 'counsellor_coordinator'] as
 const COORDINATOR_VISIBLE_ROLES = ['school_counsellor'] as const;
 
 type ManagementRole = 'admin' | 'manager' | 'counsellor_coordinator' | 'school_counsellor';
-type ManagedRole = 'student' | 'university' | 'admin' | 'school_counsellor' | 'counsellor_coordinator' | 'manager';
+type ManagedRole =
+  | 'student'
+  | 'university'
+  | 'university_multi_manager'
+  | 'admin'
+  | 'school_counsellor'
+  | 'counsellor_coordinator'
+  | 'manager';
 type ManagementActor = { id: string; role: string } | undefined;
 
 function getManagementRole(role: string | undefined): ManagementRole | null {
@@ -349,6 +356,8 @@ export async function getUsers(
     } else if (row.role === 'school_counsellor') {
       const alt = schoolNameByUserId.get(row.id);
       if (alt) row.name = alt;
+    } else if (row.role === 'university_multi_manager' && needsDisplayName(row.name)) {
+      row.name = row.email || row.name;
     }
   }
 
@@ -376,7 +385,11 @@ export async function createUser(
   const name = payload.name != null ? String(payload.name) : '';
 
   if (!email) throw new AppError(400, 'Email is required', ErrorCodes.VALIDATION);
-  if (!['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(role)) {
+  if (
+    !['student', 'university', 'university_multi_manager', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(
+      role
+    )
+  ) {
     throw new AppError(400, 'Invalid role', ErrorCodes.VALIDATION);
   }
   if (actor && actor.role !== 'admin') {
@@ -435,7 +448,9 @@ export async function createUser(
 }
 
 export async function getUserById(userId: string, actor?: { id: string; role: string }) {
-  const u = await User.findById(userId).select('email name role emailVerified suspended createdAt').lean();
+  const u = await User.findById(userId)
+    .select('email name role emailVerified suspended createdAt managedUniversityUserIds universityMultiManagerApproved')
+    .lean();
   if (!u) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
   if (actor && actor.role !== 'admin') {
     const actorRole = getManagementRole(actor.role);
@@ -454,6 +469,8 @@ export async function updateUser(
     role?: ManagedRole;
     emailVerified?: boolean;
     suspended?: boolean;
+    managedUniversityUserIds?: string[];
+    universityMultiManagerApproved?: boolean;
   },
   actor?: { id: string; role: string }
 ) {
@@ -481,7 +498,38 @@ export async function updateUser(
     update.suspended = Boolean(patch.suspended);
   }
 
-  const updated = await User.findByIdAndUpdate(userId, update, { new: true }).select('email name role emailVerified suspended createdAt').lean();
+  if (patch.managedUniversityUserIds !== undefined || patch.universityMultiManagerApproved !== undefined) {
+    if (!actor || actor.role !== 'admin') {
+      throw new AppError(403, 'Only administrators can update multi-manager university assignments', ErrorCodes.FORBIDDEN);
+    }
+    const targetRole = patch.role ?? (user as { role?: string }).role;
+    const nextRole = patch.role ?? (user as { role: ManagedRole }).role;
+    if (nextRole !== 'university_multi_manager') {
+      throw new AppError(400, 'Assignment fields apply only to university multi-manager accounts', ErrorCodes.VALIDATION);
+    }
+    if (patch.managedUniversityUserIds !== undefined) {
+      const ids = [...new Set(patch.managedUniversityUserIds.map((x) => String(x).trim()).filter(Boolean))];
+      for (const id of ids) {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw new AppError(400, 'Invalid university user id in managedUniversityUserIds', ErrorCodes.VALIDATION);
+        }
+      }
+      if (ids.length) {
+        const uniUsers = await User.find({ _id: { $in: ids }, role: 'university' }).select('_id').lean();
+        if (uniUsers.length !== ids.length) {
+          throw new AppError(400, 'managedUniversityUserIds must reference existing university accounts', ErrorCodes.VALIDATION);
+        }
+      }
+      update.managedUniversityUserIds = ids.map((id) => new mongoose.Types.ObjectId(id));
+    }
+    if (patch.universityMultiManagerApproved !== undefined) {
+      update.universityMultiManagerApproved = Boolean(patch.universityMultiManagerApproved);
+    }
+  }
+
+  const updated = await User.findByIdAndUpdate(userId, update, { new: true })
+    .select('email name role emailVerified suspended createdAt managedUniversityUserIds universityMultiManagerApproved')
+    .lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
 }
 

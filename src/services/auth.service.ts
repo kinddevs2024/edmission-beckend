@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
 import { User, RefreshToken, StudentProfile, UniversityProfile, PendingRegistration, PendingPhoneRegistration } from '../models';
@@ -924,7 +925,7 @@ export async function logout(userId: string, refreshToken?: string) {
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
     .select(
-      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured googleSub yandexSub onboardingTutorialSeen'
+      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured googleSub yandexSub onboardingTutorialSeen managedUniversityUserIds universityMultiManagerApproved'
     )
     .lean();
   if (!user) {
@@ -965,6 +966,31 @@ export async function getMe(userId: string) {
       : u.role === 'university'
         ? universityLogo ?? undefined
         : undefined;
+
+  let managedUniversities:
+    | Array<{ userId: string; universityName: string; logoUrl?: string; verified: boolean }>
+    | undefined;
+  let universityMultiManagerApproved: boolean | undefined;
+  if (u.role === 'university_multi_manager') {
+    universityMultiManagerApproved = Boolean((u as { universityMultiManagerApproved?: boolean }).universityMultiManagerApproved);
+    const ids = ((u as { managedUniversityUserIds?: unknown[] }).managedUniversityUserIds ?? [])
+      .map((x) => String(x))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
+    if (ids.length) {
+      const profiles = await UniversityProfile.find({ userId: { $in: ids } })
+        .select('userId universityName logoUrl verified')
+        .lean();
+      managedUniversities = profiles.map((p) => ({
+        userId: String((p as { userId: unknown }).userId),
+        universityName: String((p as { universityName?: string }).universityName ?? ''),
+        logoUrl: (p as { logoUrl?: string }).logoUrl ? String((p as { logoUrl: string }).logoUrl).trim() || undefined : undefined,
+        verified: Boolean((p as { verified?: boolean }).verified),
+      }));
+    } else {
+      managedUniversities = [];
+    }
+  }
+
   return {
     id: String(u._id),
     email: u.email,
@@ -991,6 +1017,12 @@ export async function getMe(userId: string) {
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
     universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id), verified: (universityProfile as { verified?: boolean }).verified } : null,
     subscription,
+    ...(u.role === 'university_multi_manager'
+      ? {
+          universityMultiManagerApproved,
+          managedUniversities,
+        }
+      : {}),
   };
 }
 

@@ -30,7 +30,15 @@ const passwordSchema = z
 
 export const createUserSchema = z.object({
   body: z.object({
-    role: z.enum(['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager']),
+    role: z.enum([
+      'student',
+      'university',
+      'university_multi_manager',
+      'admin',
+      'school_counsellor',
+      'counsellor_coordinator',
+      'manager',
+    ]),
     email: z.string().email(),
     password: passwordSchema.optional(),
     name: z.string().max(200).optional(),
@@ -40,9 +48,13 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   body: z.object({
     name: z.string().max(200).optional(),
-    role: z.enum(['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager']).optional(),
+    role: z
+      .enum(['student', 'university', 'university_multi_manager', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'])
+      .optional(),
     emailVerified: z.boolean().optional(),
     suspended: z.boolean().optional(),
+    managedUniversityUserIds: z.array(objectIdZod).max(200).optional(),
+    universityMultiManagerApproved: z.boolean().optional(),
   }).strict(),
 });
 

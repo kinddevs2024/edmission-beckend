@@ -58,7 +58,14 @@ export async function createUser(req: Request, res: Response, next: NextFunction
   try {
     const body = req.body as { role?: string; email?: string; password?: string; name?: string };
     const data = await adminService.createUser({
-      role: body.role as 'student' | 'university' | 'admin' | 'school_counsellor' | 'counsellor_coordinator' | 'manager',
+      role: body.role as
+        | 'student'
+        | 'university'
+        | 'university_multi_manager'
+        | 'admin'
+        | 'school_counsellor'
+        | 'counsellor_coordinator'
+        | 'manager',
       email: body.email ?? '',
       password: body.password ?? '',
       name: body.name,
@@ -82,9 +89,18 @@ export async function updateUser(req: Request, res: Response, next: NextFunction
   try {
     const body = req.body as {
       name?: string;
-      role?: 'student' | 'university' | 'admin' | 'school_counsellor' | 'counsellor_coordinator' | 'manager';
+      role?:
+        | 'student'
+        | 'university'
+        | 'university_multi_manager'
+        | 'admin'
+        | 'school_counsellor'
+        | 'counsellor_coordinator'
+        | 'manager';
       emailVerified?: boolean;
       suspended?: boolean;
+      managedUniversityUserIds?: string[];
+      universityMultiManagerApproved?: boolean;
     };
     const data = await adminService.updateUser(req.params.id, body, req.user);
     res.json(data);

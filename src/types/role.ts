@@ -1,6 +1,7 @@
 export type Role =
   | 'student'
   | 'university'
+  | 'university_multi_manager'
   | 'admin'
   | 'school_counsellor'
   | 'counsellor_coordinator'
@@ -9,6 +10,7 @@ export type Role =
 export const ROLES: Role[] = [
   'student',
   'university',
+  'university_multi_manager',
   'admin',
   'school_counsellor',
   'counsellor_coordinator',

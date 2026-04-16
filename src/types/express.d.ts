@@ -11,6 +11,8 @@ declare global {
         role: Role;
         language?: ApiLocale;
       };
+      /** Set when a university_multi_manager request is delegated to a university account. */
+      universityDelegation?: { managerUserId: string };
     }
   }
 }

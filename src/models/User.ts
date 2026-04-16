@@ -1,6 +1,14 @@
 import mongoose from 'mongoose';
 
-const ROLES = ['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'] as const;
+const ROLES = [
+  'student',
+  'university',
+  'university_multi_manager',
+  'admin',
+  'school_counsellor',
+  'counsellor_coordinator',
+  'manager',
+] as const;
 const LANGUAGES = ['en', 'ru', 'uz'] as const;
 
 const userSchema = new mongoose.Schema(
@@ -66,6 +74,10 @@ const userSchema = new mongoose.Schema(
       student: { type: Boolean, default: false },
       university: { type: Boolean, default: false },
     },
+    /** University account User ids this multi-manager may impersonate (after admin approval). */
+    managedUniversityUserIds: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], default: [] },
+    /** Admin must set true before impersonation headers are accepted. */
+    universityMultiManagerApproved: { type: Boolean, default: false },
     /** Expo push tokens for mobile app (Expo Push / FCM/APNs via Expo). */
     expoPushTokens: {
       type: [
