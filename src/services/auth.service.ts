@@ -235,7 +235,7 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
     return issueTokensAfterLoginChecks(user);
   }
 
-  if (!data.role) {
+  if (data.acceptTerms !== true) {
     throw new AppError(
       404,
       'No account for this sign-in. Please register first.',
@@ -243,9 +243,8 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
     );
   }
 
-  if (data.acceptTerms !== true) {
-    throw new AppError(400, 'You must accept the terms to create an account', ErrorCodes.VALIDATION);
-  }
+  /** Login-page OAuth: create a student account immediately unless registration sent another role. */
+  const newUserRole = data.role ?? 'student';
 
   await PendingRegistration.deleteOne({ email });
 
@@ -254,19 +253,19 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
     email,
     name,
     passwordHash: oauthPasswordHash,
-    role: data.role,
+    role: newUserRole,
     emailVerified: true,
     googleSub: sub,
     localPasswordConfigured: false,
   });
 
-  if (data.role === 'student') {
+  if (newUserRole === 'student') {
     await StudentProfile.create({
       userId: newUser._id,
       avatarUrl: picture || undefined,
     });
   }
-  await subscriptionService.createForNewUser(String(newUser._id), data.role);
+  await subscriptionService.createForNewUser(String(newUser._id), newUserRole);
 
   return issueAuthTokens(newUser);
 }
@@ -432,7 +431,7 @@ async function finalizeYandexOAuthProfile(
     return issueTokensAfterLoginChecks(user);
   }
 
-  if (!data.role) {
+  if (data.acceptTerms !== true) {
     throw new AppError(
       404,
       'No account for this sign-in. Please register first.',
@@ -440,9 +439,7 @@ async function finalizeYandexOAuthProfile(
     );
   }
 
-  if (data.acceptTerms !== true) {
-    throw new AppError(400, 'You must accept the terms to create an account', ErrorCodes.VALIDATION);
-  }
+  const newUserRole = data.role ?? 'student';
 
   await PendingRegistration.deleteOne({ email });
 
@@ -451,19 +448,19 @@ async function finalizeYandexOAuthProfile(
     email,
     name,
     passwordHash: oauthPasswordHash,
-    role: data.role,
+    role: newUserRole,
     emailVerified: true,
     yandexSub: sub,
     localPasswordConfigured: false,
   });
 
-  if (data.role === 'student') {
+  if (newUserRole === 'student') {
     await StudentProfile.create({
       userId: newUser._id,
       avatarUrl: picture || undefined,
     });
   }
-  await subscriptionService.createForNewUser(String(newUser._id), data.role);
+  await subscriptionService.createForNewUser(String(newUser._id), newUserRole);
 
   return issueAuthTokens(newUser);
 }
@@ -887,7 +884,11 @@ export async function refresh(refreshToken: string) {
   if (!user || user.suspended) {
     throw new AppError(401, 'User not found or suspended', ErrorCodes.UNAUTHORIZED);
   }
-  if (payload.iat && user.passwordChangedAt instanceof Date && payload.iat * 1000 < user.passwordChangedAt.getTime()) {
+  if (
+    payload.iat &&
+    user.passwordChangedAt instanceof Date &&
+    payload.iat < Math.floor(user.passwordChangedAt.getTime() / 1000)
+  ) {
     throw new AppError(401, 'Invalid refresh token', ErrorCodes.UNAUTHORIZED);
   }
 
@@ -1193,7 +1194,11 @@ export async function setPassword(userId: string, newPassword: string) {
     passwordChangedAt: new Date(),
   });
   await RefreshToken.deleteMany({ userId });
-  return { success: true };
+  const refreshed = await User.findById(userId);
+  if (!refreshed) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+  return issueAuthTokens(refreshed);
 }
 
 /** Change password for logged-in user (knows current password). OAuth-only accounts must use set-password first. */
@@ -1226,7 +1231,11 @@ export async function changePassword(userId: string, currentPassword: string, ne
     passwordChangedAt: new Date(),
   });
   await RefreshToken.deleteMany({ userId });
-  return { success: true };
+  const refreshed = await User.findById(userId);
+  if (!refreshed) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+  return issueAuthTokens(refreshed);
 }
 
 function createTelegramCode(): string {

@@ -25,7 +25,10 @@ function tokenIssuedBeforePasswordChange(iat: number | undefined, passwordChange
   if (!iat || !passwordChangedAt) return false;
   const changedAtMs = new Date(passwordChangedAt).getTime();
   if (Number.isNaN(changedAtMs)) return false;
-  return iat * 1000 < changedAtMs;
+  // JWT `iat` is whole seconds; compare in seconds so a token minted immediately after a password
+  // update in the same second is not incorrectly rejected.
+  const changedAtSec = Math.floor(changedAtMs / 1000);
+  return iat < changedAtSec;
 }
 
 export function authMiddleware(

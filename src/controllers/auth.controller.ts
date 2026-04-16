@@ -324,8 +324,8 @@ export async function setPassword(
       return;
     }
     const { newPassword } = setPasswordSchema.shape.body.parse(req.body);
-    await authService.setPassword(req.user.id, newPassword);
-    res.json({ success: true });
+    const result = await authService.setPassword(req.user.id, newPassword);
+    res.json(result);
   } catch (e) {
     next(e);
   }
@@ -342,8 +342,8 @@ export async function changePassword(
       return;
     }
     const { currentPassword, newPassword } = changePasswordSchema.shape.body.parse(req.body);
-    await authService.changePassword(req.user.id, currentPassword, newPassword);
-    res.json({ success: true });
+    const result = await authService.changePassword(req.user.id, currentPassword, newPassword);
+    res.json(result);
   } catch (e) {
     next(e);
   }

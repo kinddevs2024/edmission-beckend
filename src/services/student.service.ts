@@ -27,7 +27,6 @@ import { toObjectIdString, toObjectIdStrings } from '../utils/objectId';
 function isMinimalPortfolioComplete(doc: Record<string, unknown>): boolean {
   const hasName = (doc.firstName != null && String(doc.firstName).trim() !== '') || (doc.lastName != null && String(doc.lastName).trim() !== '');
   const hasLocation = (doc.country != null && String(doc.country).trim() !== '') || (doc.city != null && String(doc.city).trim() !== '');
-  const status = doc.educationStatus as string | undefined;
   const schools = Array.isArray(doc.schoolsAttended) ? doc.schoolsAttended as Array<Record<string, unknown>> : [];
   const hasSchoolEntry = schools.some((s) => (s.institutionName != null && String(s.institutionName).trim() !== ''));
   const legacyEducation = (doc.schoolName != null && String(doc.schoolName).trim() !== '') || (doc.gradeLevel != null && String(doc.gradeLevel).trim() !== '') || (doc.graduationYear != null);
@@ -35,16 +34,49 @@ function isMinimalPortfolioComplete(doc: Record<string, unknown>): boolean {
   return Boolean(hasName && hasLocation && hasEducation);
 }
 
+/** Education slice: legacy fields, schoolsAttended rows, degree goal, or educationStatus (new wizard). */
+function portfolioEducationFilled(doc: Record<string, unknown>): boolean {
+  const legacy =
+    (doc.gradeLevel != null && String(doc.gradeLevel).trim() !== '')
+    || doc.gpa != null
+    || (doc.languageLevel != null && String(doc.languageLevel).trim() !== '')
+    || (Array.isArray(doc.languages) && doc.languages.length > 0)
+    || doc.schoolCompleted === true
+    || (doc.schoolName != null && String(doc.schoolName).trim() !== '')
+    || doc.graduationYear != null;
+  const schools = Array.isArray(doc.schoolsAttended) ? doc.schoolsAttended as Array<Record<string, unknown>> : [];
+  const hasSchools = schools.some((s) =>
+    (s.institutionName != null && String(s.institutionName).trim() !== '')
+    || (s.country != null && String(s.country).trim() !== '')
+    || (s.educationLevel != null && String(s.educationLevel).trim() !== '')
+    || (s.degreeName != null && String(s.degreeName).trim() !== ''),
+  );
+  const hasTargetDegree = doc.targetDegreeLevel != null && String(doc.targetDegreeLevel).trim() !== '';
+  const hasStatus = doc.educationStatus != null && String(doc.educationStatus).trim() !== '';
+  return legacy || hasSchools || hasTargetDegree || hasStatus;
+}
+
+function portfolioBudgetFilled(doc: Record<string, unknown>): boolean {
+  if (doc.budgetAmount == null || doc.budgetAmount === '') return false;
+  const n = Number(doc.budgetAmount);
+  return Number.isFinite(n) && n >= 0;
+}
+
+/**
+ * 9 weighted slices: name, location, education, bio, skills, interests/hobbies, experience, portfolio works, study budget.
+ * Profile photo is intentionally excluded — OAuth/default avatars should not inflate completion.
+ */
 function computePortfolioCompletion(doc: Record<string, unknown>): number {
   const sections = [
     (doc.firstName != null && String(doc.firstName).trim() !== '') || (doc.lastName != null && String(doc.lastName).trim() !== ''),
     (doc.country != null && String(doc.country).trim() !== '') || (doc.city != null && String(doc.city).trim() !== ''),
-    (doc.gradeLevel != null && String(doc.gradeLevel).trim() !== '') || (doc.gpa != null) || (doc.languageLevel != null && String(doc.languageLevel).trim() !== '') || (Array.isArray(doc.languages) && doc.languages.length > 0) || doc.schoolCompleted === true || (doc.schoolName != null && String(doc.schoolName).trim() !== '') || (doc.graduationYear != null),
-    (doc.bio != null && String(doc.bio).trim() !== '') || (doc.avatarUrl != null && String(doc.avatarUrl).trim() !== ''),
+    portfolioEducationFilled(doc),
+    doc.bio != null && String(doc.bio).trim() !== '',
     Array.isArray(doc.skills) && doc.skills.length > 0,
     (Array.isArray(doc.interests) && doc.interests.length > 0) || (Array.isArray(doc.hobbies) && doc.hobbies.length > 0),
     Array.isArray(doc.experiences) && doc.experiences.length > 0,
     Array.isArray(doc.portfolioWorks) && doc.portfolioWorks.length > 0,
+    portfolioBudgetFilled(doc),
   ];
   const filled = sections.filter(Boolean).length;
   return Math.round((filled / sections.length) * 100);
@@ -89,7 +121,10 @@ export async function updateProfile(userId: string, data: Record<string, unknown
       : [];
   }
   if (data.bio !== undefined) update.bio = String(data.bio);
-  if (data.avatarUrl !== undefined) update.avatarUrl = String(data.avatarUrl);
+  if (data.avatarUrl !== undefined) {
+    const trimmed = String(data.avatarUrl).trim();
+    update.avatarUrl = trimmed === '' ? null : trimmed;
+  }
   if (data.budgetAmount !== undefined) update.budgetAmount = data.budgetAmount != null && data.budgetAmount !== '' ? Number(data.budgetAmount) : null;
   if (data.budgetCurrency !== undefined) update.budgetCurrency = data.budgetCurrency != null && String(data.budgetCurrency).trim() !== '' ? String(data.budgetCurrency).trim() : 'USD';
   if (data.educationStatus !== undefined) {
@@ -171,8 +206,8 @@ export async function updateProfile(userId: string, data: Record<string, unknown
     update.profileVisibility = v === 'public' ? 'public' : 'private';
   }
 
-  const updated = await StudentProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
-  return { ...updated, id: String((updated as { _id: unknown })._id) };
+  await StudentProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
+  return getProfile(userId);
 }
 
 export async function getDashboard(userId: string) {
