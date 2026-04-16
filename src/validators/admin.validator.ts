@@ -344,10 +344,8 @@ export const updateLandingCertificateSchema = z.object({
   }).strict(),
 });
 
-/** Admin PATCH body: same as student self-update minus `profileVisibility` (not admin-editable). */
-export const adminPatchStudentProfileBodySchema = studentUserUpdateProfileSchema.shape.body
-  .omit({ profileVisibility: true })
-  .strict();
+/** Admin PATCH body: same as student self-update (incl. profile visibility). */
+export const adminPatchStudentProfileBodySchema = studentUserUpdateProfileSchema.shape.body;
 
 /** Admin PATCH body: subset matching UNIVERSITY_PROFILE_WHITELIST in admin.service. */
 export const adminPatchUniversityProfileBodySchema = universityUserUpdateProfileSchema.shape.body
@@ -366,6 +364,11 @@ export const adminPatchUniversityProfileBodySchema = universityUserUpdateProfile
     targetStudentCountries: true,
     minLanguageLevel: true,
     tuitionPrice: true,
+    rating: true,
+    coverImageUrl: true,
+    ieltsMinBand: true,
+    gpaMinMode: true,
+    gpaMinValue: true,
   })
   .extend({ verified: z.boolean().optional() })
   .strict();

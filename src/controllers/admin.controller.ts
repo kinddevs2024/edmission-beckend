@@ -146,6 +146,47 @@ export async function updateUniversityProfileByUser(req: Request, res: Response,
   }
 }
 
+export async function getStudentDocumentsByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.getStudentDocumentsByUserId(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function addStudentDocumentByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+    const data = await adminService.addStudentDocumentByUserId(req.params.id, {
+      type: String(body.type ?? ''),
+      source: body.source as 'upload' | 'editor' | undefined,
+      fileUrl: body.fileUrl as string | undefined,
+      name: body.name as string | undefined,
+      certificateType: body.certificateType as string | undefined,
+      score: body.score as string | undefined,
+      previewImageUrl: body.previewImageUrl as string | undefined,
+      canvasJson: body.canvasJson as string | undefined,
+      pageFormat: body.pageFormat as 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM' | undefined,
+      width: body.width as number | undefined,
+      height: body.height as number | undefined,
+      editorVersion: body.editorVersion as string | undefined,
+    });
+    res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteStudentDocumentByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await adminService.deleteStudentDocumentByUserId(req.params.id, req.params.documentId);
+    res.status(204).send();
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getOffers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, status } = req.query;

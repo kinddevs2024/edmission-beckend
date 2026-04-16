@@ -482,24 +482,21 @@ export async function resetUserPassword(
 }
 
 export async function getStudentProfileByUserId(userId: string) {
-  const profile = await StudentProfile.findOne({ userId }).lean();
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
-  return { ...profile, id: String((profile as { _id: unknown })._id) };
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== 'student') {
+    throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+  }
+  const { getProfile } = await import('./student.service');
+  return getProfile(userId);
 }
 
-const STUDENT_PROFILE_WHITELIST = new Set([
-  'firstName', 'lastName', 'birthDate', 'country', 'city', 'gradeLevel', 'gpa', 'languageLevel', 'languages',
-  'bio', 'avatarUrl', 'budgetAmount', 'budgetCurrency', 'educationStatus', 'schoolCompleted', 'schoolName',
-  'graduationYear', 'gradingScheme', 'gradeScale', 'highestEducationLevel', 'targetDegreeLevel', 'schoolsAttended',
-  'skills', 'interests', 'hobbies', 'experiences', 'portfolioWorks', 'interestedFaculties', 'preferredCountries',
-]);
-
 export async function updateStudentProfileByUserId(userId: string, patch: Record<string, unknown>) {
-  const profile = await StudentProfile.findOne({ userId });
-  if (!profile) throw new AppError(404, 'Student profile not found', ErrorCodes.NOT_FOUND);
-  const filtered = Object.fromEntries(Object.entries(patch).filter(([k]) => STUDENT_PROFILE_WHITELIST.has(k)));
-  const updated = await StudentProfile.findByIdAndUpdate(profile._id, filtered, { new: true }).lean();
-  return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== 'student') {
+    throw new AppError(404, 'Student not found', ErrorCodes.NOT_FOUND);
+  }
+  const { updateProfile } = await import('./student.service');
+  return updateProfile(userId, patch);
 }
 
 export async function getUniversityProfileByUserId(userId: string) {
@@ -512,6 +509,7 @@ const UNIVERSITY_PROFILE_WHITELIST = new Set([
   'universityName', 'tagline', 'establishedYear', 'studentCount', 'country', 'city', 'description', 'logoUrl',
   'verified', 'onboardingCompleted', 'facultyCodes', 'facultyItems', 'targetStudentCountries',
   'minLanguageLevel', 'tuitionPrice',
+  'rating', 'coverImageUrl', 'ieltsMinBand', 'gpaMinMode', 'gpaMinValue',
 ]);
 
 export async function updateUniversityProfileByUserId(userId: string, patch: Record<string, unknown>) {
@@ -526,6 +524,46 @@ export async function updateUniversityProfileByUserId(userId: string, patch: Rec
   }
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, filtered, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+}
+
+async function assertUserRole(userId: string, expectedRole: 'student' | 'university') {
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== expectedRole) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+}
+
+export async function getStudentDocumentsByUserId(studentUserId: string) {
+  await assertUserRole(studentUserId, 'student');
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.getMyDocuments(studentUserId);
+}
+
+type AdminAddStudentDocumentPayload = {
+  type: string;
+  source?: 'upload' | 'editor';
+  fileUrl?: string;
+  name?: string;
+  certificateType?: string;
+  score?: string;
+  previewImageUrl?: string;
+  canvasJson?: string;
+  pageFormat?: 'A4_PORTRAIT' | 'A4_LANDSCAPE' | 'LETTER' | 'CUSTOM';
+  width?: number;
+  height?: number;
+  editorVersion?: string;
+};
+
+export async function addStudentDocumentByUserId(studentUserId: string, data: AdminAddStudentDocumentPayload) {
+  await assertUserRole(studentUserId, 'student');
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.addDocument(studentUserId, data);
+}
+
+export async function deleteStudentDocumentByUserId(studentUserId: string, documentId: string) {
+  await assertUserRole(studentUserId, 'student');
+  const studentDocumentService = await import('./studentDocument.service');
+  return studentDocumentService.deleteDocument(studentUserId, documentId);
 }
 
 export async function listOffers(query: { page?: number; limit?: number; status?: string }) {

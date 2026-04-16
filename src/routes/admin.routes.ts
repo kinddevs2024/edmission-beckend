@@ -6,6 +6,7 @@ import { requireRole, requireAdminOnly, requireUserManager } from '../middleware
 import { validate } from '../middlewares/validate.middleware';
 import { validateObjectId } from '../middlewares/validateObjectId.middleware';
 import * as adminValidator from '../validators/admin.validator';
+import * as counsellorValidator from '../validators/counsellor.validator';
 
 const router = Router();
 
@@ -41,6 +42,26 @@ router.patch(
   validateObjectId('id'),
   validate(adminValidator.adminPatchStudentProfileBodySchema, 'body'),
   adminController.updateStudentProfileByUser
+);
+router.get(
+  '/users/:id/student-documents',
+  requireAdminOnly,
+  validateObjectId('id'),
+  adminController.getStudentDocumentsByUser
+);
+router.post(
+  '/users/:id/student-documents',
+  requireAdminOnly,
+  validateObjectId('id'),
+  validate(counsellorValidator.addDocumentForStudentSchema.shape.body, 'body'),
+  adminController.addStudentDocumentByUser
+);
+router.delete(
+  '/users/:id/student-documents/:documentId',
+  requireAdminOnly,
+  validateObjectId('id'),
+  validateObjectId('documentId'),
+  adminController.deleteStudentDocumentByUser
 );
 router.get('/users/:id/university-profile', validateObjectId('id'), adminController.getUniversityProfileByUser);
 router.patch(
