@@ -607,9 +607,20 @@ export async function getUniversities(
 }
 
 export async function getUniversityCountries(): Promise<string[]> {
+  const catalogFilter = {
+    country: { $exists: true, $ne: '' },
+    universityName: { $exists: true, $ne: '' },
+  };
+  const profileFilter = {
+    verified: true,
+    verificationRejectedAt: { $exists: false },
+    country: { $exists: true, $ne: '' },
+    universityName: { $exists: true, $ne: '' },
+  };
+
   const [catalogCountries, profileCountries] = await Promise.all([
-    UniversityCatalog.distinct('country', { country: { $exists: true, $ne: '' } }),
-    UniversityProfile.distinct('country', { verified: true, country: { $exists: true, $ne: '' } }),
+    UniversityCatalog.distinct('country', catalogFilter),
+    UniversityProfile.distinct('country', profileFilter),
   ]);
 
   return Array.from(
