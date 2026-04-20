@@ -1,8 +1,17 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
-import { User, RefreshToken, StudentProfile, UniversityProfile, PendingRegistration, PendingPhoneRegistration } from '../models';
+import {
+  User,
+  RefreshToken,
+  StudentProfile,
+  UniversityProfile,
+  PendingRegistration,
+  PendingPhoneRegistration,
+  TelegramAuthSession,
+} from '../models';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import * as settingsService from './settings.service';
@@ -25,6 +34,9 @@ import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from 
 const BCRYPT_ROUNDS = 12;
 const TELEGRAM_DUMMY_PASSWORD_HASH =
   '$2b$12$DLYYjMrl4MQYMjLOVAJATuS5AHqMc/B/AJGWISclNx4FPkvJc2scG';
+const TELEGRAM_WEB_AUTH_SESSION_ID_REGEX = /^[a-f0-9]{32}$/i;
+const TELEGRAM_WEB_AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
+const TELEGRAM_WEB_AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 
 function normalizePhone(raw: string): string {
   const trimmed = String(raw || '').trim();
@@ -617,6 +629,25 @@ function normalizeTelegramChatId(raw: string): string {
   return value;
 }
 
+function normalizeTelegramWebAuthSessionId(raw: string): string {
+  const value = String(raw ?? '').trim().toLowerCase();
+  return TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(value) ? value : '';
+}
+
+function createTelegramWebAuthSessionId(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function createTelegramWebAuthCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function isMongoDuplicateKeyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const row = error as { code?: unknown };
+  return Number(row.code) === 11000;
+}
+
 async function unlinkTelegramFromOtherUsers(chatId: string, exceptUserId?: string): Promise<void> {
   const where: Record<string, unknown> = {
     $or: [{ 'telegram.chatId': chatId }, { 'socialLinks.telegram': chatId }],
@@ -854,6 +885,230 @@ export async function verifyPhoneRegistrationByTelegram(
   await pending.save();
 
   return { ok: true, message: 'Phone confirmed. Return to Edmission and finish registration.' };
+}
+
+export async function startTelegramWebsiteAuthSession(): Promise<{
+  sessionId: string;
+  deepLink: string;
+  expiresAt: string;
+}> {
+  const botUsername = config.telegram.botUsername.trim();
+  if (!botUsername) {
+    throw new AppError(503, 'Telegram login is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const sessionId = createTelegramWebAuthSessionId();
+    const expiresAt = new Date(Date.now() + TELEGRAM_WEB_AUTH_SESSION_TTL_MS);
+    try {
+      await TelegramAuthSession.create({
+        sessionId,
+        expiresAt,
+      });
+      return {
+        sessionId,
+        deepLink: `https://t.me/${botUsername}?start=LOGIN_${sessionId}`,
+        expiresAt: expiresAt.toISOString(),
+      };
+    } catch (error) {
+      if (isMongoDuplicateKeyError(error)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError(500, 'Failed to create Telegram login session', ErrorCodes.INTERNAL_ERROR);
+}
+
+export async function bindTelegramWebsiteAuthSession(payload: {
+  sessionId: string;
+  telegramChatId: string;
+  telegramUsername?: string;
+  firstName?: string;
+  lastName?: string;
+}): Promise<{ ok: boolean; message: string }> {
+  const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
+  if (!sessionId) {
+    return { ok: false, message: 'Login session is invalid. Start again from website.' };
+  }
+
+  const normalizedChatId = normalizeTelegramChatId(payload.telegramChatId);
+  if (!normalizedChatId) {
+    return { ok: false, message: 'Telegram chat id is invalid.' };
+  }
+
+  const telegramId = Number(normalizedChatId);
+  if (!Number.isFinite(telegramId) || !Number.isSafeInteger(telegramId) || telegramId <= 0) {
+    return { ok: false, message: 'Telegram chat id is invalid.' };
+  }
+
+  const firstName = String(payload.firstName ?? '').trim();
+  const lastName = String(payload.lastName ?? '').trim();
+  const name = [firstName, lastName].filter(Boolean).join(' ').trim().slice(0, 120);
+  const telegramUsername = String(payload.telegramUsername ?? '').trim().slice(0, 120);
+
+  const setPatch: Record<string, unknown> = {
+    telegramId,
+    telegramUsername,
+  };
+  if (name) {
+    setPatch.name = name;
+  }
+
+  const session = await TelegramAuthSession.findOneAndUpdate(
+    {
+      sessionId,
+      consumedAt: null,
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: setPatch },
+    { new: true }
+  );
+
+  if (!session) {
+    return { ok: false, message: 'Session expired. Return to website and tap Telegram login again.' };
+  }
+
+  return { ok: true, message: 'Share your phone number to continue.' };
+}
+
+export async function issueTelegramWebsiteAuthCode(payload: {
+  sessionId: string;
+  telegramChatId: string;
+  phone: string;
+  telegramUsername?: string;
+  firstName?: string;
+  lastName?: string;
+}): Promise<{ ok: boolean; message: string; code?: string; expiresAt?: string }> {
+  const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
+  if (!sessionId) {
+    return { ok: false, message: 'Login session is invalid. Start again from website.' };
+  }
+
+  const normalizedChatId = normalizeTelegramChatId(payload.telegramChatId);
+  if (!normalizedChatId) {
+    return { ok: false, message: 'Telegram chat id is invalid.' };
+  }
+
+  const telegramId = Number(normalizedChatId);
+  if (!Number.isFinite(telegramId) || !Number.isSafeInteger(telegramId) || telegramId <= 0) {
+    return { ok: false, message: 'Telegram chat id is invalid.' };
+  }
+
+  const normalizedPhone = normalizePhone(payload.phone);
+  if (!normalizedPhone) {
+    return { ok: false, message: 'Phone number is invalid. Try sharing contact again.' };
+  }
+
+  const session = await TelegramAuthSession.findOne({
+    sessionId,
+    telegramId,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+
+  if (!session) {
+    return { ok: false, message: 'Session expired. Return to website and start Telegram login again.' };
+  }
+
+  const firstName = String(payload.firstName ?? '').trim();
+  const lastName = String(payload.lastName ?? '').trim();
+  const incomingName = [firstName, lastName].filter(Boolean).join(' ').trim().slice(0, 120);
+  if (incomingName && !String(session.name ?? '').trim()) {
+    session.name = incomingName;
+  }
+
+  session.phone = normalizedPhone;
+  session.telegramUsername = String(payload.telegramUsername ?? '').trim().slice(0, 120);
+  session.code = createTelegramWebAuthCode();
+  session.expiresAt = new Date(Date.now() + TELEGRAM_WEB_AUTH_CODE_TTL_MS);
+  await session.save();
+
+  return {
+    ok: true,
+    message: 'Code generated.',
+    code: session.code,
+    expiresAt: session.expiresAt.toISOString(),
+  };
+}
+
+export async function verifyTelegramWebsiteAuthCode(payload: {
+  sessionId: string;
+  code: string;
+}) {
+  const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
+  const normalizedCode = String(payload.code ?? '').trim();
+
+  if (!sessionId || !/^\d{6}$/.test(normalizedCode)) {
+    throw new AppError(400, 'Invalid session or code', ErrorCodes.VALIDATION);
+  }
+
+  const now = new Date();
+  const session = await TelegramAuthSession.findOneAndUpdate(
+    {
+      sessionId,
+      code: normalizedCode,
+      consumedAt: null,
+      expiresAt: { $gt: now },
+      phone: { $type: 'string', $ne: '' },
+      telegramId: { $type: 'number' },
+    },
+    {
+      $set: {
+        consumedAt: now,
+      },
+    },
+    { new: true }
+  );
+
+  if (!session) {
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  const phone = normalizePhone(String(session.phone ?? ''));
+  const telegramChatId = normalizeTelegramChatId(String(session.telegramId ?? ''));
+  const fullName = String(session.name ?? '').trim();
+  const telegramUsername = String(session.telegramUsername ?? '').trim();
+
+  if (!phone || !telegramChatId) {
+    throw new AppError(400, 'Telegram session is incomplete. Start login again.', ErrorCodes.VALIDATION);
+  }
+
+  const existingByPhone = await findUserByPhone(phone);
+  if (existingByPhone) {
+    const role = String(existingByPhone.role ?? '');
+    if (role !== 'student' && role !== 'university') {
+      throw new AppError(
+        403,
+        'Telegram login is available only for student and university accounts.',
+        ErrorCodes.FORBIDDEN
+      );
+    }
+
+    await linkTelegramToUser(String(existingByPhone._id), {
+      chatId: telegramChatId,
+      username: telegramUsername,
+      phone,
+    });
+    if (!String(existingByPhone.name ?? '').trim() && fullName) {
+      existingByPhone.name = fullName;
+      await existingByPhone.save();
+    }
+    return issueTokensAfterLoginChecks(existingByPhone);
+  }
+
+  const created = await registerFromTelegram({
+    chatId: telegramChatId,
+    phone,
+    fullName,
+    username: telegramUsername,
+  });
+  const user = await User.findById(created.userId);
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+  return issueTokensAfterLoginChecks(user);
 }
 
 export async function refresh(refreshToken: string) {

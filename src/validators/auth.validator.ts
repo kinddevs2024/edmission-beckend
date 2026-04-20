@@ -99,6 +99,13 @@ export const yandexAccessTokenAuthSchema = z.object({
   }),
 });
 
+export const telegramAuthVerifySchema = z.object({
+  body: z.object({
+    sessionId: z.string().regex(/^[a-f0-9]{32}$/i, 'Invalid session id'),
+    code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  }),
+});
+
 export const refreshSchema = z.object({
   body: z.object({
     refreshToken: z.string().optional(),
@@ -144,5 +151,6 @@ export type PhoneRegisterStartBody = z.infer<typeof phoneRegisterStartSchema>['b
 export type GoogleAuthBody = z.infer<typeof googleAuthSchema>['body'];
 export type YandexAuthBody = z.infer<typeof yandexAuthSchema>['body'];
 export type YandexAccessTokenAuthBody = z.infer<typeof yandexAccessTokenAuthSchema>['body'];
+export type TelegramAuthVerifyBody = z.infer<typeof telegramAuthVerifySchema>['body'];
 export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>['body'];

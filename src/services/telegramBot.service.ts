@@ -12,15 +12,16 @@ type TelegramUpdate = {
   message?: {
     text?: string;
     contact?: { phone_number?: string };
-    from?: { username?: string };
+    from?: { id?: number; username?: string; first_name?: string; last_name?: string };
     chat?: { id?: number | string };
     reply_to_message?: { message_id?: number };
   };
 };
 
 type BotState = {
-  mode: 'idle' | 'await_login_email' | 'await_login_password';
+  mode: 'idle' | 'await_login_email' | 'await_login_password' | 'await_telegram_auth_contact';
   pendingEmail?: string;
+  telegramAuthSessionId?: string;
   username?: string;
   updatedAt: number;
 };
@@ -48,6 +49,8 @@ const MAX_EMAIL_LENGTH = 254;
 const MAX_PASSWORD_LENGTH = 128;
 const LINK_CODE_REGEX = /^[a-f0-9]{32}$/i;
 const REGISTRATION_CODE_REGEX = /^reg_[a-f0-9]{24}$/i;
+const TELEGRAM_WEB_AUTH_START_PREFIX = 'LOGIN_';
+const TELEGRAM_WEB_AUTH_SESSION_ID_REGEX = /^[a-f0-9]{32}$/i;
 let lastCleanupAt = 0;
 
 const MENU_LOGIN = 'Login';
@@ -94,7 +97,7 @@ function setSession(chatId: string, next: Partial<BotState>): BotState {
 }
 
 function resetSession(chatId: string): void {
-  setSession(chatId, { mode: 'idle', pendingEmail: undefined });
+  setSession(chatId, { mode: 'idle', pendingEmail: undefined, telegramAuthSessionId: undefined });
 }
 
 function resetLoginGuard(chatId: string): void {
@@ -226,9 +229,48 @@ async function tryLinkByPayload(chatId: string, payload: string, username?: stri
   return true;
 }
 
-async function handleStart(chatId: string, payload: string, username?: string): Promise<void> {
-  await tryLinkByPayload(chatId, payload, username);
-  setSession(chatId, { mode: 'idle', pendingEmail: undefined, username });
+async function handleStart(
+  chatId: string,
+  payload: string,
+  username?: string,
+  firstName?: string,
+  lastName?: string
+): Promise<void> {
+  const normalizedPayload = String(payload ?? '').trim();
+  if (normalizedPayload.toUpperCase().startsWith(TELEGRAM_WEB_AUTH_START_PREFIX)) {
+    const sessionId = normalizedPayload.slice(TELEGRAM_WEB_AUTH_START_PREFIX.length).trim().toLowerCase();
+    if (!TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(sessionId)) {
+      await sendTelegramMessage(chatId, 'Invalid login session. Return to website and try again.');
+      return;
+    }
+
+    const bind = await authService.bindTelegramWebsiteAuthSession({
+      sessionId,
+      telegramChatId: chatId,
+      telegramUsername: username,
+      firstName,
+      lastName,
+    });
+    if (!bind.ok) {
+      await sendTelegramMessage(chatId, bind.message);
+      return;
+    }
+
+    setSession(chatId, {
+      mode: 'await_telegram_auth_contact',
+      pendingEmail: undefined,
+      telegramAuthSessionId: sessionId,
+      username,
+    });
+    await sendTelegramKeyboard(chatId, 'Share your phone number to continue website login.', [
+      [{ text: 'Share phone number', request_contact: true }],
+      [{ text: MENU_BACK }],
+    ]);
+    return;
+  }
+
+  await tryLinkByPayload(chatId, normalizedPayload, username);
+  setSession(chatId, { mode: 'idle', pendingEmail: undefined, telegramAuthSessionId: undefined, username });
   const user = (await authService.findUserByTelegramChatId(chatId)) as LinkedUserLean | null;
   if (user) {
     const name = String(user.name ?? '').trim() || 'there';
@@ -449,7 +491,9 @@ async function handleTextMessage(
   chatId: string,
   text: string,
   username?: string,
-  replyToMessageId?: number
+  replyToMessageId?: number,
+  firstName?: string,
+  lastName?: string
 ): Promise<void> {
   if (isRateLimited(chatId)) return;
   const normalized = text.trim();
@@ -465,7 +509,7 @@ async function handleTextMessage(
 
   if (normalized.startsWith('/start')) {
     const payload = extractStartPayload(normalized);
-    await handleStart(chatId, payload, username);
+    await handleStart(chatId, payload, username, firstName, lastName);
     return;
   }
 
@@ -488,6 +532,14 @@ async function handleTextMessage(
     resetSession(chatId);
     if (linkedUser) await showLoggedInMenu(chatId);
     else await showGuestMenu(chatId);
+    return;
+  }
+
+  if (state.mode === 'await_telegram_auth_contact') {
+    await sendTelegramKeyboard(chatId, 'Please use "Share phone number" to continue login.', [
+      [{ text: 'Share phone number', request_contact: true }],
+      [{ text: MENU_BACK }],
+    ]);
     return;
   }
 
@@ -593,16 +645,41 @@ async function handleTextMessage(
   await showGuestMenu(chatId);
 }
 
-async function handleContactMessage(chatId: string): Promise<void> {
+async function handleContactMessage(
+  chatId: string,
+  phone: string,
+  username?: string,
+  firstName?: string,
+  lastName?: string
+): Promise<void> {
   if (isRateLimited(chatId)) return;
+  const state = getSession(chatId);
+  const sessionId = String(state.telegramAuthSessionId ?? '').trim().toLowerCase();
+  if (state.mode !== 'await_telegram_auth_contact' || !TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(sessionId)) {
+    await sendTelegramMessage(chatId, 'Open Telegram login from the website first, then share your phone number.');
+    return;
+  }
+
+  const result = await authService.issueTelegramWebsiteAuthCode({
+    sessionId,
+    telegramChatId: chatId,
+    phone,
+    telegramUsername: username ?? state.username,
+    firstName,
+    lastName,
+  });
+
+  if (!result.ok || !result.code) {
+    resetSession(chatId);
+    await sendTelegramMessage(chatId, result.message);
+    return;
+  }
+
   resetSession(chatId);
   await sendTelegramMessage(
     chatId,
-    `Phone login is disabled. Use Login and enter email + password.\nWebsite: ${siteUrl(config.telegram.loginPath)}`
+    `✅ Done! Go back to the website and enter this code: ${result.code}`
   );
-  const linked = await authService.findUserByTelegramChatId(chatId);
-  if (linked) await showLoggedInMenu(chatId);
-  else await showGuestMenu(chatId);
 }
 
 async function pollUpdates(): Promise<void> {
@@ -643,16 +720,18 @@ async function pollUpdates(): Promise<void> {
       const text = update.message?.text;
       const phone = update.message?.contact?.phone_number;
       const username = update.message?.from?.username;
+      const firstName = update.message?.from?.first_name;
+      const lastName = update.message?.from?.last_name;
       const replyToMessageId = update.message?.reply_to_message?.message_id;
       const chatId = chatIdRaw != null ? String(chatIdRaw).trim() : '';
       if (!chatId) continue;
       try {
         if (typeof phone === 'string' && phone.trim()) {
-          await handleContactMessage(chatId);
+          await handleContactMessage(chatId, phone, username, firstName, lastName);
           continue;
         }
         if (typeof text === 'string') {
-          await handleTextMessage(chatId, text, username, replyToMessageId);
+          await handleTextMessage(chatId, text, username, replyToMessageId, firstName, lastName);
         }
       } catch (e) {
         logger.warn(e, 'Telegram update handler failed');

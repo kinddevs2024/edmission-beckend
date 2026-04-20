@@ -21,6 +21,7 @@ export { Chat } from './Chat';
 export { Message } from './Message';
 export { TelegramMessageLink } from './TelegramMessageLink';
 export { TelegramChatPreference } from './TelegramChatPreference';
+export { TelegramAuthSession } from './TelegramAuthSession';
 export { Recommendation } from './Recommendation';
 export { Notification } from './Notification';
 export { ActivityLog } from './ActivityLog';

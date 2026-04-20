@@ -9,6 +9,7 @@ import {
   loginSchema,
   loginByPhoneSchema,
   phoneRegisterStartSchema,
+  telegramAuthVerifySchema,
   googleAuthSchema,
   yandexAuthSchema,
   yandexAccessTokenAuthSchema,
@@ -67,6 +68,12 @@ router.post(
   '/yandex/access-token',
   validate(yandexAccessTokenAuthSchema.shape.body, 'body'),
   authController.yandexAccessTokenAuth
+);
+router.post('/telegram/start', authController.startTelegramAuth);
+router.post(
+  '/telegram/verify',
+  validate(telegramAuthVerifySchema.shape.body, 'body'),
+  authController.verifyTelegramAuth
 );
 router.post('/refresh', authController.refresh);
 router.post('/logout', authMiddleware, authController.logout);

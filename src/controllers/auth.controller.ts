@@ -9,6 +9,7 @@ import {
   phoneRegisterStatusSchema,
   phoneRegisterCompleteSchema,
   registerSchema,
+  telegramAuthVerifySchema,
   verifyEmailCodeSchema,
   resendVerificationSchema,
   forgotPasswordSchema,
@@ -134,6 +135,33 @@ export async function yandexAccessTokenAuth(
 ): Promise<void> {
   try {
     const result = await authService.loginWithYandexAccessToken(req.body as YandexAccessTokenAuthBody);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function startTelegramAuth(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await authService.startTelegramWebsiteAuthSession();
+    res.status(201).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function verifyTelegramAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = telegramAuthVerifySchema.shape.body.parse(req.body);
+    const result = await authService.verifyTelegramWebsiteAuthCode(data);
     res.json(result);
   } catch (e) {
     next(e);
