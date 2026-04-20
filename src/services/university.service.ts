@@ -646,6 +646,8 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
     delete out.lastName;
     delete out.avatarUrl;
     delete out.birthDate;
+    /** Free text often contains emails, phones, messengers — treat as contact data. */
+    delete out.bio;
     email = undefined;
     phone = undefined;
     socialLinks = undefined;

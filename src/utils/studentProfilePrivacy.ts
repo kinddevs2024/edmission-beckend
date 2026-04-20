@@ -19,6 +19,9 @@ export function redactStudentForUniversityListing(student: Record<string, unknow
   delete o.lastName;
   delete o.avatarUrl;
   delete o.userEmail;
+  /** Merged from User in discovery/pipeline — must not leak for private profiles. */
+  delete o.name;
+  delete o.email;
   if (o.userId && typeof o.userId === 'object' && o.userId !== null) {
     const u = o.userId as Record<string, unknown>;
     o.userId = u._id != null ? { _id: u._id } : o.userId;
