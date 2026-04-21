@@ -868,7 +868,9 @@ export async function completePhoneRegistration(registrationId: string) {
       avatarUrl: pending.avatarUrl || undefined,
     });
   }
-  await subscriptionService.createForNewUser(String(user._id), pending.role);
+  if (pending.role === 'student' || pending.role === 'university') {
+    await subscriptionService.createForNewUser(String(user._id), pending.role);
+  }
   await PendingPhoneRegistration.findByIdAndDelete(pending._id);
   return issueAuthTokens(user);
 }

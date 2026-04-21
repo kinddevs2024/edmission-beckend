@@ -4,7 +4,7 @@ const schema = new mongoose.Schema(
   {
     email: { type: String, required: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, required: true, enum: ['student', 'university'] },
+    role: { type: String, required: true, enum: ['student', 'university', 'school_counsellor'] },
     avatarUrl: String,
     verifyToken: { type: String, required: true },
     verifyTokenExpires: { type: Date, required: true },

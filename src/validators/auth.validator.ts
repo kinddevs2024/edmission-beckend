@@ -11,7 +11,7 @@ export const registerSchema = z.object({
   body: z.object({
     email: z.string().email(),
     password: passwordSchema,
-    role: z.enum(['student', 'university']),
+    role: z.enum(['student', 'university', 'school_counsellor']),
     acceptTerms: z.literal(true, { errorMap: () => ({ message: 'You must accept the terms' }) }),
     name: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
     avatarUrl: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
