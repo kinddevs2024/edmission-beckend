@@ -112,7 +112,7 @@ export const config = {
     frontendBaseUrl:
       (process.env.TELEGRAM_FRONTEND_URL && process.env.TELEGRAM_FRONTEND_URL.trim()) ||
       (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim()) ||
-      ((process.env.NODE_ENV || 'development') === 'production' ? 'https://edmission.uz' : 'http://localhost:5173'),
+      'https://edmission.uz',
     loginPath: process.env.TELEGRAM_LOGIN_PATH || '/login',
     registerPath: process.env.TELEGRAM_REGISTER_PATH || '/register',
     otpTtlMs: parseInt(process.env.TELEGRAM_OTP_TTL_MS || '300000', 10),

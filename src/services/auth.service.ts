@@ -19,6 +19,7 @@ import { config } from '../config';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { toPublicSiteUrl } from '../utils/publicSiteUrl';
 import type { Role } from '../types/role';
 import type {
   RegisterBody,
@@ -28,6 +29,7 @@ import type {
   GoogleAuthBody,
   YandexAuthBody,
   YandexAccessTokenAuthBody,
+  TelegramAuthStartBody,
 } from '../validators/auth.validator';
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
@@ -35,8 +37,9 @@ const BCRYPT_ROUNDS = 12;
 const TELEGRAM_DUMMY_PASSWORD_HASH =
   '$2b$12$DLYYjMrl4MQYMjLOVAJATuS5AHqMc/B/AJGWISclNx4FPkvJc2scG';
 const TELEGRAM_WEB_AUTH_SESSION_ID_REGEX = /^[a-f0-9]{32}$/i;
+const TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX = /^[a-f0-9]{48}$/i;
 const TELEGRAM_WEB_AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
-const TELEGRAM_WEB_AUTH_CODE_TTL_MS = 5 * 60 * 1000;
+const TELEGRAM_WEB_AUTH_CODE_TTL_MS = 15 * 60 * 1000;
 
 function normalizePhone(raw: string): string {
   const trimmed = String(raw || '').trim();
@@ -435,10 +438,18 @@ async function finalizeYandexOAuthProfile(
     if (user.yandexSub && user.yandexSub !== sub) {
       throw new AppError(403, 'This account is linked to a different Yandex profile.', ErrorCodes.FORBIDDEN);
     }
+    let changed = false;
     if (!user.yandexSub) {
       user.yandexSub = sub;
       user.emailVerified = true;
       user.localPasswordConfigured = true;
+      changed = true;
+    }
+    if (!String(user.name ?? '').trim() && String(name ?? '').trim()) {
+      user.name = String(name).trim();
+      changed = true;
+    }
+    if (changed) {
       await user.save();
     }
     return issueTokensAfterLoginChecks(user);
@@ -640,6 +651,10 @@ function createTelegramWebAuthSessionId(): string {
 
 function createTelegramWebAuthCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function createTelegramWebAuthLinkToken(): string {
+  return crypto.randomBytes(24).toString('hex');
 }
 
 function isMongoDuplicateKeyError(error: unknown): boolean {
@@ -887,7 +902,9 @@ export async function verifyPhoneRegistrationByTelegram(
   return { ok: true, message: 'Phone confirmed. Return to Edmission and finish registration.' };
 }
 
-export async function startTelegramWebsiteAuthSession(): Promise<{
+export async function startTelegramWebsiteAuthSession(
+  payload: TelegramAuthStartBody = {}
+): Promise<{
   sessionId: string;
   deepLink: string;
   expiresAt: string;
@@ -900,9 +917,11 @@ export async function startTelegramWebsiteAuthSession(): Promise<{
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const sessionId = createTelegramWebAuthSessionId();
     const expiresAt = new Date(Date.now() + TELEGRAM_WEB_AUTH_SESSION_TTL_MS);
+    const role = payload.role === 'university' ? 'university' : 'student';
     try {
       await TelegramAuthSession.create({
         sessionId,
+        role,
         expiresAt,
       });
       return {
@@ -927,7 +946,7 @@ export async function bindTelegramWebsiteAuthSession(payload: {
   telegramUsername?: string;
   firstName?: string;
   lastName?: string;
-}): Promise<{ ok: boolean; message: string }> {
+}): Promise<{ ok: boolean; message: string; ready?: boolean; loginLink?: string }> {
   const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
   if (!sessionId) {
     return { ok: false, message: 'Login session is invalid. Start again from website.' };
@@ -947,13 +966,25 @@ export async function bindTelegramWebsiteAuthSession(payload: {
   const lastName = String(payload.lastName ?? '').trim();
   const name = [firstName, lastName].filter(Boolean).join(' ').trim().slice(0, 120);
   const telegramUsername = String(payload.telegramUsername ?? '').trim().slice(0, 120);
+  const linkedUser = (await findUserByTelegramChatId(normalizedChatId)) as
+    | { name?: string; phone?: string; telegram?: { phone?: string } }
+    | null;
+  const linkedPhone = normalizePhone(
+    String(linkedUser?.phone ?? linkedUser?.telegram?.phone ?? '')
+  );
+  const linkedName = String(linkedUser?.name ?? '').trim().slice(0, 120);
 
   const setPatch: Record<string, unknown> = {
     telegramId,
     telegramUsername,
   };
-  if (name) {
-    setPatch.name = name;
+  const resolvedName = name || linkedName;
+  if (resolvedName) {
+    setPatch.name = resolvedName;
+  }
+  if (linkedPhone) {
+    setPatch.phone = linkedPhone;
+    setPatch.loginLinkToken = createTelegramWebAuthLinkToken();
   }
 
   const session = await TelegramAuthSession.findOneAndUpdate(
@@ -970,7 +1001,47 @@ export async function bindTelegramWebsiteAuthSession(payload: {
     return { ok: false, message: 'Session expired. Return to website and tap Telegram login again.' };
   }
 
+  if (linkedPhone) {
+    const loginLinkToken = String(session.loginLinkToken ?? '').trim().toLowerCase();
+    if (loginLinkToken && TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX.test(loginLinkToken)) {
+      return {
+        ok: true,
+        message: 'Telegram data found. Open website to continue.',
+        ready: true,
+        loginLink: toPublicSiteUrl(
+          `/auth/telegram?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(loginLinkToken)}`
+        ),
+      };
+    }
+  }
+
   return { ok: true, message: 'Share your phone number to continue.' };
+}
+
+export async function findLatestTelegramWebsiteAuthSessionIdByChatId(
+  telegramChatId: string
+): Promise<string | null> {
+  const normalizedChatId = normalizeTelegramChatId(telegramChatId);
+  if (!normalizedChatId) return null;
+
+  const telegramId = Number(normalizedChatId);
+  if (!Number.isFinite(telegramId) || !Number.isSafeInteger(telegramId) || telegramId <= 0) {
+    return null;
+  }
+
+  const row = await TelegramAuthSession.findOne({
+    telegramId,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  })
+    .sort({ updatedAt: -1 })
+    .select('sessionId')
+    .lean();
+
+  if (!row) return null;
+
+  const sessionId = normalizeTelegramWebAuthSessionId(String((row as { sessionId?: unknown }).sessionId ?? ''));
+  return sessionId || null;
 }
 
 export async function issueTelegramWebsiteAuthCode(payload: {
@@ -980,7 +1051,7 @@ export async function issueTelegramWebsiteAuthCode(payload: {
   telegramUsername?: string;
   firstName?: string;
   lastName?: string;
-}): Promise<{ ok: boolean; message: string; code?: string; expiresAt?: string }> {
+}): Promise<{ ok: boolean; message: string; code?: string; expiresAt?: string; loginLink?: string }> {
   const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
   if (!sessionId) {
     return { ok: false, message: 'Login session is invalid. Start again from website.' };
@@ -1022,6 +1093,7 @@ export async function issueTelegramWebsiteAuthCode(payload: {
   session.phone = normalizedPhone;
   session.telegramUsername = String(payload.telegramUsername ?? '').trim().slice(0, 120);
   session.code = createTelegramWebAuthCode();
+  session.loginLinkToken = createTelegramWebAuthLinkToken();
   session.expiresAt = new Date(Date.now() + TELEGRAM_WEB_AUTH_CODE_TTL_MS);
   await session.save();
 
@@ -1030,7 +1102,67 @@ export async function issueTelegramWebsiteAuthCode(payload: {
     message: 'Code generated.',
     code: session.code,
     expiresAt: session.expiresAt.toISOString(),
+    loginLink: toPublicSiteUrl(
+      `/auth/telegram?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(session.loginLinkToken)}`
+    ),
   };
+}
+
+async function finalizeTelegramWebsiteAuthSession(session: {
+  phone?: string;
+  telegramId?: number | null;
+  name?: string;
+  telegramUsername?: string;
+  role?: string;
+}) {
+  const phone = normalizePhone(String(session.phone ?? ''));
+  const telegramChatId = normalizeTelegramChatId(String(session.telegramId ?? ''));
+  const fullName = String(session.name ?? '').trim();
+  const telegramUsername = String(session.telegramUsername ?? '').trim();
+  const requestedRole = session.role === 'university' ? 'university' : 'student';
+
+  if (!phone || !telegramChatId) {
+    throw new AppError(400, 'Telegram session is incomplete. Start login again.', ErrorCodes.VALIDATION);
+  }
+
+  const existingByPhone = await findUserByPhone(phone);
+  if (existingByPhone) {
+    const role = String(existingByPhone.role ?? '');
+    if (role !== 'student' && role !== 'university') {
+      throw new AppError(
+        403,
+        'Telegram login is available only for student and university accounts.',
+        ErrorCodes.FORBIDDEN
+      );
+    }
+
+    await linkTelegramToUser(String(existingByPhone._id), {
+      chatId: telegramChatId,
+      username: telegramUsername,
+      phone,
+    });
+    if (!String(existingByPhone.name ?? '').trim() && fullName) {
+      existingByPhone.name = fullName;
+    }
+    if (existingByPhone.localPasswordConfigured !== true) {
+      existingByPhone.mustChangePassword = true;
+    }
+    await existingByPhone.save();
+    return issueTokensAfterLoginChecks(existingByPhone);
+  }
+
+  const created = await registerFromTelegram({
+    chatId: telegramChatId,
+    phone,
+    fullName,
+    username: telegramUsername,
+    role: requestedRole,
+  });
+  const user = await User.findById(created.userId);
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+  return issueTokensAfterLoginChecks(user);
 }
 
 export async function verifyTelegramWebsiteAuthCode(payload: {
@@ -1057,6 +1189,8 @@ export async function verifyTelegramWebsiteAuthCode(payload: {
     {
       $set: {
         consumedAt: now,
+        code: '',
+        loginLinkToken: '',
       },
     },
     { new: true }
@@ -1066,49 +1200,79 @@ export async function verifyTelegramWebsiteAuthCode(payload: {
     throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
   }
 
-  const phone = normalizePhone(String(session.phone ?? ''));
-  const telegramChatId = normalizeTelegramChatId(String(session.telegramId ?? ''));
-  const fullName = String(session.name ?? '').trim();
-  const telegramUsername = String(session.telegramUsername ?? '').trim();
+  return finalizeTelegramWebsiteAuthSession(session);
+}
 
-  if (!phone || !telegramChatId) {
-    throw new AppError(400, 'Telegram session is incomplete. Start login again.', ErrorCodes.VALIDATION);
+export async function verifyTelegramWebsiteAuthLink(payload: {
+  sessionId: string;
+  token: string;
+}) {
+  const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
+  const normalizedToken = String(payload.token ?? '').trim().toLowerCase();
+
+  if (!sessionId || !TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX.test(normalizedToken)) {
+    throw new AppError(400, 'Invalid session or token', ErrorCodes.VALIDATION);
   }
 
-  const existingByPhone = await findUserByPhone(phone);
-  if (existingByPhone) {
-    const role = String(existingByPhone.role ?? '');
-    if (role !== 'student' && role !== 'university') {
-      throw new AppError(
-        403,
-        'Telegram login is available only for student and university accounts.',
-        ErrorCodes.FORBIDDEN
-      );
-    }
+  const now = new Date();
+  const session = await TelegramAuthSession.findOneAndUpdate(
+    {
+      sessionId,
+      loginLinkToken: normalizedToken,
+      consumedAt: null,
+      expiresAt: { $gt: now },
+      phone: { $type: 'string', $ne: '' },
+      telegramId: { $type: 'number' },
+    },
+    {
+      $set: {
+        consumedAt: now,
+        code: '',
+        loginLinkToken: '',
+      },
+    },
+    { new: true }
+  );
 
-    await linkTelegramToUser(String(existingByPhone._id), {
-      chatId: telegramChatId,
-      username: telegramUsername,
-      phone,
-    });
-    if (!String(existingByPhone.name ?? '').trim() && fullName) {
-      existingByPhone.name = fullName;
-      await existingByPhone.save();
-    }
-    return issueTokensAfterLoginChecks(existingByPhone);
+  if (!session) {
+    throw new AppError(400, 'Invalid or expired login link', ErrorCodes.VALIDATION);
   }
 
-  const created = await registerFromTelegram({
-    chatId: telegramChatId,
-    phone,
-    fullName,
-    username: telegramUsername,
-  });
-  const user = await User.findById(created.userId);
-  if (!user) {
-    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  return finalizeTelegramWebsiteAuthSession(session);
+}
+
+export async function verifyTelegramWebsiteAuthReady(payload: {
+  sessionId: string;
+}): Promise<{ ready: false } | Awaited<ReturnType<typeof finalizeTelegramWebsiteAuthSession>>> {
+  const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
+  if (!sessionId) {
+    throw new AppError(400, 'Invalid session id', ErrorCodes.VALIDATION);
   }
-  return issueTokensAfterLoginChecks(user);
+
+  const now = new Date();
+  const session = await TelegramAuthSession.findOneAndUpdate(
+    {
+      sessionId,
+      consumedAt: null,
+      expiresAt: { $gt: now },
+      phone: { $type: 'string', $ne: '' },
+      telegramId: { $type: 'number' },
+    },
+    {
+      $set: {
+        consumedAt: now,
+        code: '',
+        loginLinkToken: '',
+      },
+    },
+    { new: true }
+  );
+
+  if (!session) {
+    return { ready: false };
+  }
+
+  return finalizeTelegramWebsiteAuthSession(session);
 }
 
 export async function refresh(refreshToken: string) {
@@ -1675,6 +1839,7 @@ export async function registerFromTelegram(payload: {
   phone: string;
   fullName: string;
   username?: string;
+  role?: 'student' | 'university';
 }) {
   const chatId = normalizeTelegramChatId(payload.chatId);
   if (!chatId) throw new AppError(400, 'Telegram chat id is required', ErrorCodes.VALIDATION);
@@ -1691,8 +1856,9 @@ export async function registerFromTelegram(payload: {
   }
   const passwordHash = await bcrypt.hash(`tg:${chatId}:${uuidv4()}`, BCRYPT_ROUNDS);
   const email = `tg_${chatId}_${Date.now()}@telegram.local`;
+  const role = payload.role === 'university' ? 'university' : 'student';
   const user = await User.create({
-    role: 'student',
+    role,
     language: 'en',
     email,
     name: String(payload.fullName ?? '').trim(),
@@ -1700,6 +1866,7 @@ export async function registerFromTelegram(payload: {
     passwordHash,
     emailVerified: true,
     localPasswordConfigured: false,
+    mustChangePassword: true,
     telegram: {
       chatId,
       username: String(payload.username ?? '').trim(),
@@ -1710,7 +1877,9 @@ export async function registerFromTelegram(payload: {
       telegram: chatId,
     },
   });
-  await StudentProfile.create({ userId: user._id });
-  await subscriptionService.createForNewUser(String(user._id), 'student');
+  if (role === 'student') {
+    await StudentProfile.create({ userId: user._id });
+  }
+  await subscriptionService.createForNewUser(String(user._id), role);
   return { userId: String(user._id), created: true };
 }

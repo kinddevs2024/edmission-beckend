@@ -514,6 +514,18 @@ type TelegramReplyKeyboard = {
   one_time_keyboard?: boolean;
 };
 
+type TelegramInlineKeyboardButton = {
+  text: string;
+  url?: string;
+  callback_data?: string;
+};
+
+type TelegramInlineKeyboard = {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+};
+
+type TelegramReplyMarkup = TelegramReplyKeyboard | TelegramInlineKeyboard;
+
 async function callTelegram(method: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   const token = config.telegram.botToken.trim();
   if (!token) {
@@ -539,7 +551,7 @@ export async function sendTelegramMessage(
   chatId: string,
   text: string,
   parseMode?: TelegramParseMode,
-  replyMarkup?: TelegramReplyKeyboard
+  replyMarkup?: TelegramReplyMarkup
 ): Promise<void> {
   const normalizedChatId = String(chatId ?? '').trim();
   if (!normalizedChatId) {

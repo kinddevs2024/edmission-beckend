@@ -106,6 +106,25 @@ export const telegramAuthVerifySchema = z.object({
   }),
 });
 
+export const telegramAuthStartSchema = z.object({
+  body: z.object({
+    role: z.enum(['student', 'university']).optional(),
+  }),
+});
+
+export const telegramAuthVerifyLinkSchema = z.object({
+  body: z.object({
+    sessionId: z.string().regex(/^[a-f0-9]{32}$/i, 'Invalid session id'),
+    token: z.string().regex(/^[a-f0-9]{48}$/i, 'Invalid link token'),
+  }),
+});
+
+export const telegramAuthVerifyReadySchema = z.object({
+  body: z.object({
+    sessionId: z.string().regex(/^[a-f0-9]{32}$/i, 'Invalid session id'),
+  }),
+});
+
 export const refreshSchema = z.object({
   body: z.object({
     refreshToken: z.string().optional(),
@@ -151,6 +170,9 @@ export type PhoneRegisterStartBody = z.infer<typeof phoneRegisterStartSchema>['b
 export type GoogleAuthBody = z.infer<typeof googleAuthSchema>['body'];
 export type YandexAuthBody = z.infer<typeof yandexAuthSchema>['body'];
 export type YandexAccessTokenAuthBody = z.infer<typeof yandexAccessTokenAuthSchema>['body'];
+export type TelegramAuthStartBody = z.infer<typeof telegramAuthStartSchema>['body'];
 export type TelegramAuthVerifyBody = z.infer<typeof telegramAuthVerifySchema>['body'];
+export type TelegramAuthVerifyLinkBody = z.infer<typeof telegramAuthVerifyLinkSchema>['body'];
+export type TelegramAuthVerifyReadyBody = z.infer<typeof telegramAuthVerifyReadySchema>['body'];
 export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>['body'];

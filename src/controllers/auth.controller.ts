@@ -9,7 +9,10 @@ import {
   phoneRegisterStatusSchema,
   phoneRegisterCompleteSchema,
   registerSchema,
+  telegramAuthStartSchema,
   telegramAuthVerifySchema,
+  telegramAuthVerifyLinkSchema,
+  telegramAuthVerifyReadySchema,
   verifyEmailCodeSchema,
   resendVerificationSchema,
   forgotPasswordSchema,
@@ -142,12 +145,13 @@ export async function yandexAccessTokenAuth(
 }
 
 export async function startTelegramAuth(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   try {
-    const result = await authService.startTelegramWebsiteAuthSession();
+    const data = telegramAuthStartSchema.shape.body.parse(req.body);
+    const result = await authService.startTelegramWebsiteAuthSession(data);
     res.status(201).json(result);
   } catch (e) {
     next(e);
@@ -162,6 +166,38 @@ export async function verifyTelegramAuth(
   try {
     const data = telegramAuthVerifySchema.shape.body.parse(req.body);
     const result = await authService.verifyTelegramWebsiteAuthCode(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function verifyTelegramAuthLink(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = telegramAuthVerifyLinkSchema.shape.body.parse(req.body);
+    const result = await authService.verifyTelegramWebsiteAuthLink(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function verifyTelegramAuthReady(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = telegramAuthVerifyReadySchema.shape.body.parse(req.body);
+    const result = await authService.verifyTelegramWebsiteAuthReady(data);
+    if ('ready' in result && result.ready === false) {
+      res.status(202).json(result);
+      return;
+    }
     res.json(result);
   } catch (e) {
     next(e);

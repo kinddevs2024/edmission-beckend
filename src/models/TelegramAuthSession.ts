@@ -3,11 +3,13 @@ import mongoose from 'mongoose';
 const telegramAuthSessionSchema = new mongoose.Schema(
   {
     sessionId: { type: String, required: true, unique: true },
+    role: { type: String, enum: ['student', 'university'], default: 'student' },
     telegramId: { type: Number },
     telegramUsername: { type: String, default: '' },
     name: { type: String, default: '' },
     phone: { type: String, default: '' },
     code: { type: String, default: '' },
+    loginLinkToken: { type: String, default: '' },
     expiresAt: { type: Date, required: true },
     consumedAt: { type: Date, default: null },
   },
