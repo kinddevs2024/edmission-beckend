@@ -10,6 +10,8 @@ const universityCatalogSchema = new mongoose.Schema(
     country: String,
     city: String,
     description: String,
+    /** Public university rating shown to students. */
+    rating: { type: Number, min: 0 },
     logoUrl: String,
     facultyCodes: [String],
     /** Per-category included items: { [categoryId]: string[] }. If missing, all items from catalog are implied. */

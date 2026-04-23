@@ -1083,6 +1083,7 @@ type CatalogUniversityPayload = {
   country?: string;
   city?: string;
   description?: string;
+  rating?: number;
   logoUrl?: string;
   facultyCodes?: string[];
   facultyItems?: Record<string, string[]>;
@@ -1218,6 +1219,7 @@ function buildCatalogUniversityPayload(body: Record<string, unknown>): CatalogUn
     country: trimString(body.country),
     city: trimString(body.city),
     description: trimString(body.description),
+    rating: normalizeNumber(body.rating),
     logoUrl: trimString(body.logoUrl),
     facultyCodes: normalizeStringArray(body.facultyCodes, 50),
     facultyItems: normalizeFacultyItemsValue(body.facultyItems),
@@ -1360,6 +1362,7 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
     country?: string;
     city?: string;
     description?: string;
+    rating?: number;
     logoUrl?: string;
     facultyCodes?: string[];
     facultyItems?: Record<string, string[]>;
@@ -1383,6 +1386,7 @@ export async function approveUniversityRequest(requestId: string, adminUserId: s
     country: catalog.country,
     city: catalog.city,
     description: catalog.description,
+    rating: catalog.rating,
     logoUrl: catalog.logoUrl,
     verified: true,
     onboardingCompleted: false,
@@ -1765,6 +1769,7 @@ function sortForCompare(payload: CatalogUniversityPayload): Record<string, unkno
     country: payload.country ?? '',
     city: payload.city ?? '',
     description: payload.description ?? '',
+    rating: payload.rating ?? null,
     logoUrl: payload.logoUrl ?? '',
     facultyCodes: [...(payload.facultyCodes ?? [])].sort(),
     facultyItems,
@@ -1802,6 +1807,7 @@ function makePreviewChanges(current: CatalogUniversityPayload, incoming: Catalog
     tagline: 'Slogan',
     logoUrl: 'Logo URL',
     description: 'Description',
+    rating: 'Rating',
     minLanguageLevel: 'Minimum requirements',
     tuitionPrice: 'Minimum tuition (annual)',
     establishedYear: 'Year founded',
@@ -1906,6 +1912,7 @@ async function syncLinkedUniversityProfile(profileId: string, payload: CatalogUn
     country: payload.country,
     city: payload.city,
     description: payload.description,
+    rating: payload.rating,
     logoUrl: payload.logoUrl,
     facultyCodes: payload.facultyCodes ?? [],
     facultyItems: payload.facultyItems,
@@ -2125,6 +2132,7 @@ export function parseUniversitiesExcel(buffer: Buffer): ParsedUniversitiesExcelR
       tagline: String(row['Slogan'] ?? row['tagline'] ?? '').trim() || undefined,
       logoUrl: String(row['Logo URL'] ?? row['logoUrl'] ?? '').trim() || undefined,
       description: String(row['Description'] ?? row['description'] ?? '').trim() || undefined,
+      rating: parseNumFromText(row['Rating'] ?? row['rating']),
       minLanguageLevel: String(row['Minimum requirements'] ?? row['minLanguageLevel'] ?? '').trim() || undefined,
       tuitionPrice: parseNumFromText(row['Minimum tuition (annual)'] ?? row['tuitionPrice']),
       establishedYear: parseNumFromText(row['Year founded'] ?? row['establishedYear']),
@@ -2253,6 +2261,7 @@ export function getUniversitiesExcelTemplateBuffer(): Buffer {
     'Slogan',
     'Logo URL',
     'Description',
+    'Rating',
     'Minimum requirements',
     'Minimum tuition (annual)',
     'Year founded',
@@ -2276,6 +2285,7 @@ export function getUniversitiesExcelTemplateBuffer(): Buffer {
       'Short slogan',
       'https://example.com/logo.png',
       'Description text',
+      '85',
       'IELTS 6.5 or equivalent',
       '5000',
       '1990',
@@ -2320,6 +2330,7 @@ export async function getUniversitiesExcelExportBuffer(): Promise<Buffer> {
       'Slogan',
       'Logo URL',
       'Description',
+      'Rating',
       'Minimum requirements',
       'Minimum tuition (annual)',
       'Year founded',
@@ -2336,6 +2347,7 @@ export async function getUniversitiesExcelExportBuffer(): Promise<Buffer> {
       item.body.tagline ?? '',
       item.body.logoUrl ?? '',
       item.body.description ?? '',
+      item.body.rating ?? '',
       item.body.minLanguageLevel ?? '',
       item.body.tuitionPrice ?? '',
       item.body.establishedYear ?? '',
