@@ -13,3 +13,9 @@ export const trustedLogosQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(100).optional(),
   offset: z.coerce.number().min(0).max(50_000).optional(),
 });
+
+/** Public university catalog pagination for landing/explore pages. */
+export const publicUniversitiesQuerySchema = z.object({
+  page: z.coerce.number().min(1).max(50_000).optional(),
+  limit: z.coerce.number().min(1).max(50).optional(),
+});

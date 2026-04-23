@@ -547,24 +547,32 @@ export async function getUniversities(
     })
     .filter((item) => matchesUniversityFilters(item, query));
 
-  const strictMatches = merged
-    .filter((item) => item.isSuitable)
+  const sortedMerged = merged
+    .slice()
     .sort((left, right) => compareUniversities(left, right, query.sort));
 
-  /** When nothing passes isSuitable, still show a short ranked list (explore UI expects ~6 cards). */
-  const FALLBACK_UNIVERSITIES_CAP = 6;
-  const fallbackMatches = merged
-    .slice()
-    .sort((left, right) =>
-      compareFallbackUniversities(
-        left as Record<string, unknown>,
-        right as Record<string, unknown>,
-        profileObject as Record<string, unknown>
-      )
-    )
-    .slice(0, FALLBACK_UNIVERSITIES_CAP);
+  let visibleUniversities: Array<SearchableUniversityItem & { isSuitable?: boolean }>;
+  if (!useProfileFilters) {
+    // Explicit "no profile filters" mode should expose the full catalog (subject only to explicit query filters).
+    visibleUniversities = sortedMerged;
+  } else {
+    const strictMatches = sortedMerged.filter((item) => item.isSuitable);
 
-  const visibleUniversities = strictMatches.length > 0 ? strictMatches : fallbackMatches;
+    /** When nothing passes isSuitable, still show a short ranked list (explore UI expects ~6 cards). */
+    const FALLBACK_UNIVERSITIES_CAP = 6;
+    const fallbackMatches = merged
+      .slice()
+      .sort((left, right) =>
+        compareFallbackUniversities(
+          left as Record<string, unknown>,
+          right as Record<string, unknown>,
+          profileObject as Record<string, unknown>
+        )
+      )
+      .slice(0, FALLBACK_UNIVERSITIES_CAP);
+
+    visibleUniversities = strictMatches.length > 0 ? strictMatches : fallbackMatches;
+  }
 
   const total = visibleUniversities.length;
   const dataWithCount = visibleUniversities

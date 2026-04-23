@@ -65,6 +65,252 @@ export async function getPublicStats(): Promise<{
   return { universities, students, scholarships };
 }
 
+export type PublicUniversityListItem = {
+  id: string;
+  _source: 'catalog' | 'profile';
+  name: string;
+  universityName: string;
+  country?: string;
+  city?: string;
+  description?: string;
+  logo?: string;
+  logoUrl?: string;
+  rating?: number;
+  hasScholarship: boolean;
+  scholarships: Array<{ coveragePercent?: number; name?: string }>;
+  minLanguageLevel?: string;
+  tuitionPrice?: number;
+  ieltsMinBand?: number;
+  gpaMinMode?: 'scale' | 'percent';
+  gpaMinValue?: number;
+  foundedYear?: number;
+  studentCount?: number;
+};
+
+type PublicUniversitiesQuery = {
+  page?: number;
+  limit?: number;
+};
+
+function mapEmbeddedScholarships(rows: unknown): Array<{ coveragePercent?: number; name?: string }> {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .slice(0, 3)
+    .map((raw) => {
+      const row = raw as { coveragePercent?: unknown; name?: unknown };
+      const coveragePercent = typeof row.coveragePercent === 'number' && Number.isFinite(row.coveragePercent)
+        ? Number(row.coveragePercent)
+        : undefined;
+      const name = firstText(row.name);
+      if (coveragePercent === undefined && !name) return null;
+      return {
+        ...(coveragePercent !== undefined ? { coveragePercent } : {}),
+        ...(name ? { name } : {}),
+      };
+    })
+    .filter((item): item is { coveragePercent?: number; name?: string } => item !== null);
+}
+
+function maxEmbeddedCoverage(rows: unknown): number | undefined {
+  if (!Array.isArray(rows)) return undefined;
+  const values = rows
+    .map((raw) => {
+      const coverage = (raw as { coveragePercent?: unknown }).coveragePercent;
+      return typeof coverage === 'number' && Number.isFinite(coverage) ? Number(coverage) : undefined;
+    })
+    .filter((value): value is number => value !== undefined);
+  if (values.length === 0) return undefined;
+  return Math.max(...values);
+}
+
+/**
+ * Public catalog for Landing/Explore pages (no auth):
+ * - unlinked catalog universities
+ * - verified university profiles
+ * with simple pagination and no profile-based filters.
+ */
+export async function getPublicUniversities(
+  query: PublicUniversitiesQuery = {}
+): Promise<{
+  data: PublicUniversityListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}> {
+  const page = Math.max(1, Math.floor(Number(query.page)) || 1);
+  const limit = Math.min(50, Math.max(1, Math.floor(Number(query.limit)) || 8));
+  const skip = (page - 1) * limit;
+
+  const [catalogs, profiles] = await Promise.all([
+    UniversityCatalog.find({ linkedUniversityProfileId: { $exists: false } })
+      .sort({ universityName: 1, _id: 1 })
+      .lean(),
+    UniversityProfile.find({ verified: true })
+      .sort({ universityName: 1, _id: 1 })
+      .lean(),
+  ]);
+
+  const profileIds = profiles.map((profile) => (profile as { _id: unknown })._id);
+  const [scholarshipStats, linkedCatalogs] = await Promise.all([
+    profileIds.length > 0
+      ? Scholarship.aggregate<{ _id: unknown; count: number; maxCoverage?: number }>([
+          { $match: { universityId: { $in: profileIds } } },
+          {
+            $group: {
+              _id: '$universityId',
+              count: { $sum: 1 },
+              maxCoverage: { $max: '$coveragePercent' },
+            },
+          },
+        ])
+      : [],
+    profileIds.length > 0
+      ? UniversityCatalog.find({ linkedUniversityProfileId: { $in: profileIds } }).lean()
+      : [],
+  ]);
+
+  const scholarshipMap: Record<string, { count: number; maxCoverage?: number }> = {};
+  for (const row of scholarshipStats) {
+    const id = String(row._id);
+    scholarshipMap[id] = {
+      count: typeof row.count === 'number' && Number.isFinite(row.count) ? row.count : 0,
+      maxCoverage:
+        typeof row.maxCoverage === 'number' && Number.isFinite(row.maxCoverage)
+          ? Number(row.maxCoverage)
+          : undefined,
+    };
+  }
+
+  const linkedCatalogMap: Record<string, Record<string, unknown>> = {};
+  for (const catalog of linkedCatalogs) {
+    const linkedProfileId = (catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId;
+    if (!linkedProfileId) continue;
+    linkedCatalogMap[String(linkedProfileId)] = catalog as unknown as Record<string, unknown>;
+  }
+
+  const catalogItems: PublicUniversityListItem[] = catalogs.map((catalog) => {
+    const catalogScholarshipsRaw = (catalog as { scholarships?: unknown }).scholarships;
+    const catalogScholarships = mapEmbeddedScholarships(catalogScholarshipsRaw);
+    const rawMode = (catalog as { gpaMinMode?: unknown }).gpaMinMode;
+    const gpaMinMode = rawMode === 'scale' || rawMode === 'percent' ? rawMode : undefined;
+    const logoUrl = firstText((catalog as { logoUrl?: unknown }).logoUrl);
+    return {
+      id: `catalog-${String((catalog as { _id: unknown })._id)}`,
+      _source: 'catalog',
+      name: firstText((catalog as { universityName?: unknown }).universityName, 'University') ?? 'University',
+      universityName: firstText((catalog as { universityName?: unknown }).universityName, 'University') ?? 'University',
+      country: firstText((catalog as { country?: unknown }).country),
+      city: firstText((catalog as { city?: unknown }).city),
+      description: firstText((catalog as { description?: unknown }).description),
+      logo: logoUrl,
+      logoUrl,
+      rating: firstFiniteNumber((catalog as { rating?: unknown }).rating),
+      hasScholarship: Array.isArray(catalogScholarshipsRaw) && catalogScholarshipsRaw.length > 0,
+      scholarships: catalogScholarships,
+      minLanguageLevel: firstText((catalog as { minLanguageLevel?: unknown }).minLanguageLevel),
+      tuitionPrice: firstFiniteNumber((catalog as { tuitionPrice?: unknown }).tuitionPrice),
+      ieltsMinBand: firstFiniteNumber((catalog as { ieltsMinBand?: unknown }).ieltsMinBand),
+      gpaMinMode,
+      gpaMinValue: firstFiniteNumber((catalog as { gpaMinValue?: unknown }).gpaMinValue),
+      foundedYear: firstFiniteNumber((catalog as { establishedYear?: unknown }).establishedYear),
+      studentCount: firstFiniteNumber((catalog as { studentCount?: unknown }).studentCount),
+    };
+  });
+
+  const profileItems: PublicUniversityListItem[] = profiles.map((profile) => {
+    const id = String((profile as { _id: unknown })._id);
+    const linkedCatalog = linkedCatalogMap[id];
+    const profileScholarshipStat = scholarshipMap[id];
+    const linkedScholarshipsRaw = (linkedCatalog as { scholarships?: unknown } | undefined)?.scholarships;
+    const linkedScholarships = mapEmbeddedScholarships(linkedScholarshipsRaw);
+    const linkedCoverage = maxEmbeddedCoverage(linkedScholarshipsRaw);
+    const hasScholarship = (profileScholarshipStat?.count ?? 0) > 0 || (Array.isArray(linkedScholarshipsRaw) && linkedScholarshipsRaw.length > 0);
+    const maxCoverage = profileScholarshipStat?.maxCoverage ?? linkedCoverage;
+    const scholarships = hasScholarship
+      ? (typeof maxCoverage === 'number'
+          ? [{ coveragePercent: maxCoverage }]
+          : linkedScholarships)
+      : [];
+    const rawMode =
+      (profile as { gpaMinMode?: unknown }).gpaMinMode ??
+      (linkedCatalog as { gpaMinMode?: unknown } | undefined)?.gpaMinMode;
+    const gpaMinMode = rawMode === 'scale' || rawMode === 'percent' ? rawMode : undefined;
+    const logoUrl = firstText(
+      (profile as { logoUrl?: unknown }).logoUrl,
+      (linkedCatalog as { logoUrl?: unknown } | undefined)?.logoUrl
+    );
+    const universityName = firstText(
+      (profile as { universityName?: unknown }).universityName,
+      (linkedCatalog as { universityName?: unknown } | undefined)?.universityName,
+      'University'
+    ) ?? 'University';
+    return {
+      id,
+      _source: 'profile',
+      name: universityName,
+      universityName,
+      country: firstText(
+        (profile as { country?: unknown }).country,
+        (linkedCatalog as { country?: unknown } | undefined)?.country
+      ),
+      city: firstText(
+        (profile as { city?: unknown }).city,
+        (linkedCatalog as { city?: unknown } | undefined)?.city
+      ),
+      description: firstText(
+        (profile as { description?: unknown }).description,
+        (linkedCatalog as { description?: unknown } | undefined)?.description
+      ),
+      logo: logoUrl,
+      logoUrl,
+      rating: firstFiniteNumber((profile as { rating?: unknown }).rating),
+      hasScholarship,
+      scholarships,
+      minLanguageLevel: firstText(
+        (profile as { minLanguageLevel?: unknown }).minLanguageLevel,
+        (linkedCatalog as { minLanguageLevel?: unknown } | undefined)?.minLanguageLevel
+      ),
+      tuitionPrice: firstFiniteNumber(
+        (profile as { tuitionPrice?: unknown }).tuitionPrice,
+        (linkedCatalog as { tuitionPrice?: unknown } | undefined)?.tuitionPrice
+      ),
+      ieltsMinBand: firstFiniteNumber(
+        (profile as { ieltsMinBand?: unknown }).ieltsMinBand,
+        (linkedCatalog as { ieltsMinBand?: unknown } | undefined)?.ieltsMinBand
+      ),
+      gpaMinMode,
+      gpaMinValue: firstFiniteNumber(
+        (profile as { gpaMinValue?: unknown }).gpaMinValue,
+        (linkedCatalog as { gpaMinValue?: unknown } | undefined)?.gpaMinValue
+      ),
+      foundedYear: firstFiniteNumber(
+        (profile as { establishedYear?: unknown }).establishedYear,
+        (linkedCatalog as { establishedYear?: unknown } | undefined)?.establishedYear
+      ),
+      studentCount: firstFiniteNumber(
+        (profile as { studentCount?: unknown }).studentCount,
+        (linkedCatalog as { studentCount?: unknown } | undefined)?.studentCount
+      ),
+    };
+  });
+
+  const merged = [...catalogItems, ...profileItems].sort((left, right) =>
+    left.name.localeCompare(right.name, 'en', { sensitivity: 'base' })
+  );
+
+  const total = merged.length;
+  const data = merged.slice(skip, skip + limit);
+
+  return {
+    data,
+    total,
+    page,
+    limit,
+    totalPages: total > 0 ? Math.ceil(total / limit) : 0,
+  };
+}
+
 /**
  * Logos for landing carousels: serve real catalog logos from the DB in stable pages
  * so clients can start quickly and progressively load the full set in the background.

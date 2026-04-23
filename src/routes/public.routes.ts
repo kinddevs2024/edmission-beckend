@@ -14,6 +14,13 @@ router.use(requireDb);
 /** Public stats for landing page - no auth required */
 router.get('/stats', publicController.getStats);
 
+/** Public university catalog for landing/explore pages (no auth required). */
+router.get(
+  '/universities',
+  validate(publicValidator.publicUniversitiesQuerySchema, 'query'),
+  publicController.getPublicUniversities
+);
+
 /** Public share cards for social preview (Telegram, YouTube, etc.) */
 router.get('/share/university/:id', validateUniversityId('id'), publicController.getUniversitySharePreview);
 router.get('/share/student/:id', validateObjectId('id'), publicController.getStudentSharePreview);

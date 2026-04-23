@@ -115,6 +115,19 @@ export async function getStats(_req: Request, res: Response, next: NextFunction)
   }
 }
 
+export async function getPublicUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const q = req.query as { page?: number; limit?: number };
+    const data = await publicService.getPublicUniversities({
+      page: q.page,
+      limit: q.limit,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getTrustedUniversityLogos(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const q = req.query as { limit?: number; offset?: number };
