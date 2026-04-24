@@ -254,6 +254,15 @@ export async function updateInterestStatus(req: Request, res: Response, next: Ne
   }
 }
 
+export async function openInterestChat(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.openInterestChat(req.params.id);
+    res.status(200).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getChats(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, universityId } = req.query;

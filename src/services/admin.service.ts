@@ -701,18 +701,84 @@ export async function listInterests(
   }
   const fetchLimit = skip + limit;
   const [profileList, profileTotal, catalogList, catalogTotal] = await Promise.all([
-    Interest.find(whereProfile).sort({ createdAt: -1 }).limit(fetchLimit).lean(),
+    Interest.find(whereProfile)
+      .populate('studentId', 'firstName lastName')
+      .populate('universityId', 'universityName')
+      .sort({ createdAt: -1 })
+      .limit(fetchLimit)
+      .lean(),
     Interest.countDocuments(whereProfile),
-    CatalogInterest.find(whereCatalog).sort({ createdAt: -1 }).limit(fetchLimit).lean(),
+    CatalogInterest.find(whereCatalog)
+      .populate('studentId', 'firstName lastName')
+      .populate('catalogUniversityId', 'universityName')
+      .sort({ createdAt: -1 })
+      .limit(fetchLimit)
+      .lean(),
     CatalogInterest.countDocuments(whereCatalog),
   ]);
+  const pairMap = new Map<string, { studentId: string; universityId: string }>();
+  for (const row of profileList) {
+    const x = row as Record<string, unknown>;
+    const studentId = toObjectIdString(x.studentId);
+    const universityId = toObjectIdString(x.universityId);
+    if (!studentId || !universityId) continue;
+    pairMap.set(`${studentId}|${universityId}`, { studentId, universityId });
+  }
+  const pairFilters = Array.from(pairMap.values()).map((p) => ({ studentId: p.studentId, universityId: p.universityId }));
+  const chats = pairFilters.length > 0
+    ? await Chat.find({ $or: pairFilters }).select('_id studentId universityId createdAt').lean()
+    : [];
+  const chatByPair = new Map<string, { chatId: string; chatCreatedAt?: Date }>();
+  for (const row of chats) {
+    const x = row as Record<string, unknown>;
+    const studentId = toObjectIdString(x.studentId);
+    const universityId = toObjectIdString(x.universityId);
+    if (!studentId || !universityId) continue;
+    chatByPair.set(`${studentId}|${universityId}`, {
+      chatId: String(x._id),
+      chatCreatedAt: x.createdAt as Date | undefined,
+    });
+  }
   const profileItems = profileList.map((i) => {
     const x = i as Record<string, unknown>;
-    return { ...x, id: String(x._id), source: 'profile' as const, universityId: x.universityId };
+    const studentId = toObjectIdString(x.studentId) ?? '';
+    const universityId = toObjectIdString(x.universityId) ?? '';
+    const studentNameFirst = (x.studentId as { firstName?: string } | null | undefined)?.firstName ?? '';
+    const studentNameLast = (x.studentId as { lastName?: string } | null | undefined)?.lastName ?? '';
+    const studentName = `${studentNameFirst} ${studentNameLast}`.trim() || undefined;
+    const universityName = (x.universityId as { universityName?: string } | null | undefined)?.universityName;
+    const chat = chatByPair.get(`${studentId}|${universityId}`);
+    return {
+      ...x,
+      id: String(x._id),
+      source: 'profile' as const,
+      studentId,
+      universityId,
+      studentName,
+      universityName,
+      chatId: chat?.chatId,
+      chatCreatedAt: chat?.chatCreatedAt,
+    };
   });
   const catalogItems = catalogList.map((i) => {
     const x = i as Record<string, unknown>;
-    return { ...x, id: `catalog-${x._id}`, source: 'catalog' as const, universityId: x.catalogUniversityId };
+    const studentId = toObjectIdString(x.studentId) ?? '';
+    const universityId = toObjectIdString(x.catalogUniversityId) ?? '';
+    const studentNameFirst = (x.studentId as { firstName?: string } | null | undefined)?.firstName ?? '';
+    const studentNameLast = (x.studentId as { lastName?: string } | null | undefined)?.lastName ?? '';
+    const studentName = `${studentNameFirst} ${studentNameLast}`.trim() || undefined;
+    const universityName = (x.catalogUniversityId as { universityName?: string } | null | undefined)?.universityName;
+    return {
+      ...x,
+      id: `catalog-${x._id}`,
+      source: 'catalog' as const,
+      studentId,
+      universityId,
+      studentName,
+      universityName,
+      chatId: undefined,
+      chatCreatedAt: undefined,
+    };
   });
   const merged = [...profileItems, ...catalogItems].sort(
     (a, b) => new Date((b as { createdAt?: Date }).createdAt ?? 0).getTime() - new Date((a as { createdAt?: Date }).createdAt ?? 0).getTime()
@@ -725,15 +791,43 @@ export async function listInterests(
 export async function updateInterestStatus(interestId: string, status: string) {
   if (interestId.startsWith('catalog-')) {
     const catalogId = interestId.replace(/^catalog-/, '');
-    const updated = await CatalogInterest.findByIdAndUpdate(catalogId, { status }, { new: true }).lean();
+    if (!mongoose.Types.ObjectId.isValid(catalogId)) {
+      throw new AppError(400, 'Invalid id', ErrorCodes.VALIDATION);
+    }
+    const updated = await CatalogInterest.findByIdAndUpdate(catalogId, { status }, { new: true, runValidators: true }).lean();
     if (!updated) throw new AppError(404, 'Interest not found', ErrorCodes.NOT_FOUND);
     const x = updated as Record<string, unknown>;
     return { ...x, id: `catalog-${x._id}`, source: 'catalog' as const };
   }
-  const updated = await Interest.findByIdAndUpdate(interestId, { status }, { new: true }).lean();
+  if (!mongoose.Types.ObjectId.isValid(interestId)) {
+    throw new AppError(400, 'Invalid id', ErrorCodes.VALIDATION);
+  }
+  const updated = await Interest.findByIdAndUpdate(interestId, { status }, { new: true, runValidators: true }).lean();
   if (!updated) throw new AppError(404, 'Interest not found', ErrorCodes.NOT_FOUND);
   const x = updated as Record<string, unknown>;
   return { ...x, id: String(x._id), source: 'profile' as const };
+}
+
+export async function openInterestChat(interestId: string) {
+  if (interestId.startsWith('catalog-')) {
+    throw new AppError(400, 'Catalog interests do not support chat', ErrorCodes.VALIDATION);
+  }
+  if (!mongoose.Types.ObjectId.isValid(interestId)) {
+    throw new AppError(400, 'Invalid id', ErrorCodes.VALIDATION);
+  }
+  const interest = await Interest.findById(interestId).lean();
+  if (!interest) throw new AppError(404, 'Interest not found', ErrorCodes.NOT_FOUND);
+  const studentId = toObjectIdString((interest as { studentId?: unknown }).studentId);
+  const universityId = toObjectIdString((interest as { universityId?: unknown }).universityId);
+  if (!studentId || !universityId) {
+    throw new AppError(400, 'Interest has invalid participants', ErrorCodes.VALIDATION);
+  }
+  const chatService = await import('./chat.service');
+  const result = await chatService.getOrCreateChat(studentId, universityId);
+  return {
+    chatId: String(result.chatId),
+    created: Boolean(result.created),
+  };
 }
 
 export async function listChats(query: { page?: number; limit?: number; universityId?: string }) {
@@ -741,7 +835,10 @@ export async function listChats(query: { page?: number; limit?: number; universi
   const limit = Math.min(100, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
   const filter: Record<string, unknown> = {};
-  if (query.universityId) filter.universityId = toObjectIdString(query.universityId);
+  if (query.universityId) {
+    const universityId = toObjectIdString(query.universityId);
+    if (universityId) filter.universityId = universityId;
+  }
   const [list, total, universities] = await Promise.all([
     Chat.find(filter).populate('universityId', 'universityName').populate('studentId', 'firstName lastName').sort({ updatedAt: -1 }).skip(skip).limit(limit).lean(),
     Chat.countDocuments(filter),
@@ -749,11 +846,33 @@ export async function listChats(query: { page?: number; limit?: number; universi
   ]);
   const data = list.map((c) => {
     const x = c as Record<string, unknown>;
-    return { ...x, id: String(x._id), universityName: (x.universityId as { universityName?: string })?.universityName, studentName: x.studentId ? `${(x.studentId as { firstName?: string }).firstName ?? ''} ${(x.studentId as { lastName?: string }).lastName ?? ''}`.trim() : '—' };
+    const studentId = toObjectIdString(x.studentId) ?? '';
+    const universityId = toObjectIdString(x.universityId) ?? '';
+    const firstName = (x.studentId as { firstName?: string } | null | undefined)?.firstName ?? '';
+    const lastName = (x.studentId as { lastName?: string } | null | undefined)?.lastName ?? '';
+    const studentName = `${firstName} ${lastName}`.trim() || undefined;
+    const universityName = (x.universityId as { universityName?: string } | null | undefined)?.universityName;
+    return {
+      ...x,
+      id: String(x._id),
+      studentId,
+      universityId,
+      studentName,
+      universityName,
+    };
   });
-  return { data, total, page, limit, totalPages: Math.ceil(total / limit), universities: universities.map((u) => ({ id: String((u as { _id: unknown })._id), name: (u as { universityName?: string }).universityName ?? '' })) };
+  return {
+    data,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+    universities: universities.map((u) => ({
+      id: String((u as { _id: unknown })._id),
+      name: (u as { universityName?: string }).universityName ?? '',
+    })),
+  };
 }
-
 export async function getChatMessages(chatId: string, query?: { limit?: number }) {
   const limit = Math.min(200, Math.max(1, query?.limit ?? 50));
   const chat = await Chat.findById(chatId).lean();
@@ -2445,3 +2564,4 @@ export async function getUniversitiesExcelExportBuffer(): Promise<Buffer> {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(documentsSheet), 'University Documents');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
+

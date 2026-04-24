@@ -84,7 +84,7 @@ export const updateOfferStatusSchema = z.object({
 
 export const updateInterestStatusSchema = z.object({
   body: z.object({
-    status: z.string().min(1),
+    status: z.enum(['interested', 'under_review', 'chat_opened', 'offer_sent', 'rejected', 'accepted']),
   }),
 });
 

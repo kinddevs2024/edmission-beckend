@@ -4,7 +4,7 @@ import * as adminController from '../controllers/admin.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { requireRole, requireAdminOnly, requireUserManager } from '../middlewares/rbac.middleware';
 import { validate } from '../middlewares/validate.middleware';
-import { validateObjectId } from '../middlewares/validateObjectId.middleware';
+import { validateObjectId, validateUniversityId } from '../middlewares/validateObjectId.middleware';
 import * as adminValidator from '../validators/admin.validator';
 import * as counsellorValidator from '../validators/counsellor.validator';
 import * as documentsValidator from '../validators/documents.validator';
@@ -233,7 +233,8 @@ router.patch('/documents/:id/review', requireAdminOnly, validateObjectId('id'), 
 router.get('/offers', validate(adminValidator.offersQuerySchema, 'query'), adminController.getOffers);
 router.patch('/offers/:id/status', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateOfferStatusSchema.shape.body, 'body'), adminController.updateOfferStatus);
 router.get('/interests', validate(adminValidator.interestsQuerySchema, 'query'), adminController.getInterests);
-router.patch('/interests/:id/status', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateInterestStatusSchema.shape.body, 'body'), adminController.updateInterestStatus);
+router.patch('/interests/:id/status', requireAdminOnly, validateUniversityId('id'), validate(adminValidator.updateInterestStatusSchema.shape.body, 'body'), adminController.updateInterestStatus);
+router.post('/interests/:id/open-chat', requireAdminOnly, validateUniversityId('id'), adminController.openInterestChat);
 router.get('/chats', validate(adminValidator.chatsQuerySchema, 'query'), adminController.getChats);
 router.get('/chats/:id/messages', validateObjectId('id'), validate(adminValidator.chatMessagesQuerySchema, 'query'), adminController.getChatMessages);
 router.post('/chats/:id/messages', requireAdminOnly, validateObjectId('id'), validate(adminValidator.sendChatMessageSchema.shape.body, 'body'), adminController.sendChatMessage);
