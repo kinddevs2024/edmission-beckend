@@ -873,6 +873,53 @@ export async function listChats(query: { page?: number; limit?: number; universi
     })),
   };
 }
+
+function normalizeChatMessageText(raw: unknown): string {
+  if (raw == null) return '';
+  if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean') {
+    return String(raw);
+  }
+  if (Buffer.isBuffer(raw)) {
+    return raw.toString('utf8');
+  }
+  if (raw instanceof Uint8Array) {
+    return Buffer.from(raw).toString('utf8');
+  }
+  if (typeof raw === 'object') {
+    const x = raw as Record<string, unknown>;
+    const direct = x.message ?? x.text;
+    if (typeof direct === 'string' || typeof direct === 'number' || typeof direct === 'boolean') {
+      return String(direct);
+    }
+    if (x.type === 'Buffer' && Array.isArray(x.data)) {
+      try {
+        return Buffer.from((x.data as unknown[]).map((n) => Number(n))).toString('utf8');
+      } catch {
+        return '';
+      }
+    }
+    if (Array.isArray(x.buffer)) {
+      try {
+        return Buffer.from((x.buffer as unknown[]).map((n) => Number(n))).toString('utf8');
+      } catch {
+        return '';
+      }
+    }
+    if (x.buffer instanceof Uint8Array) {
+      try {
+        return Buffer.from(x.buffer).toString('utf8');
+      } catch {
+        return '';
+      }
+    }
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return String(raw);
+    }
+  }
+  return String(raw);
+}
 export async function getChatMessages(chatId: string, query?: { limit?: number }) {
   const limit = Math.min(200, Math.max(1, query?.limit ?? 50));
   const chat = await Chat.findById(chatId).lean();
@@ -889,7 +936,16 @@ export async function getChatMessages(chatId: string, query?: { limit?: number }
       studentProfileId: c.studentId != null ? String(c.studentId) : undefined,
       universityUserId: uniProf?.userId != null ? String((uniProf as { userId: unknown }).userId) : undefined,
     },
-    messages: messages.map((m) => ({ ...m, id: String((m as { _id: unknown })._id) })),
+    messages: messages.map((m) => {
+      const x = m as Record<string, unknown>;
+      const normalizedText = normalizeChatMessageText(x.message ?? x.text);
+      return {
+        ...x,
+        id: String((m as { _id: unknown })._id),
+        message: normalizedText,
+        text: normalizedText,
+      };
+    }),
   };
 }
 
