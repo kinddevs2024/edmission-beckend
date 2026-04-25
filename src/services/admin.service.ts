@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import mongoose from 'mongoose';
 import {
@@ -58,6 +59,16 @@ type ManagedRole =
   | 'manager';
 type ManagementActor = { id: string; role: string } | undefined;
 
+const MANAGED_ROLES = [
+  'student',
+  'university',
+  'university_multi_manager',
+  'admin',
+  'school_counsellor',
+  'counsellor_coordinator',
+  'manager',
+] as const;
+
 function getManagementRole(role: string | undefined): ManagementRole | null {
   if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator' || role === 'school_counsellor') {
     return role;
@@ -77,6 +88,29 @@ function canManageTargetRole(actorRole: ManagementRole, targetRole: string): boo
   if (actorRole === 'manager') return targetRole === 'school_counsellor' || targetRole === 'counsellor_coordinator';
   if (actorRole === 'counsellor_coordinator') return targetRole === 'school_counsellor';
   return false;
+}
+
+function isManagedRole(value: string): value is ManagedRole {
+  return (MANAGED_ROLES as readonly string[]).includes(value);
+}
+
+function isPhonePlaceholderEmail(value: unknown): boolean {
+  return /^phone_\d+@phone\.edmission\.local$/i.test(String(value ?? '').trim());
+}
+
+function getPublicUserEmail(user: { email?: string; phone?: string }): string {
+  const email = String(user.email ?? '').trim();
+  const phone = String(user.phone ?? '').trim();
+  if (phone && (isPhonePlaceholderEmail(email) || email === phone)) return phone;
+  return email;
+}
+
+function generateTempPassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(12);
+  let value = '';
+  for (let i = 0; i < 12; i++) value += chars[bytes[i]! % chars.length];
+  return value;
 }
 
 function assertRoleManageAllowed(actor: ManagementActor, targetRole: string): void {
@@ -266,7 +300,11 @@ export async function getUsers(
   }
 
   const [list, total] = await Promise.all([
-    User.find(where).skip(skip).limit(limit).select('email name role emailVerified suspended createdAt').lean(),
+    User.find(where)
+      .skip(skip)
+      .limit(limit)
+      .select('email name phone role emailVerified suspended createdAt mustChangePassword temporaryPlainPassword')
+      .lean(),
     User.countDocuments(where),
   ]);
   const data = list.map((u) => {
@@ -274,20 +312,26 @@ export async function getUsers(
       _id: unknown
       email?: string
       name?: string
+      phone?: string
       role?: string
       emailVerified?: boolean
       suspended?: boolean
       createdAt?: Date | string
+      mustChangePassword?: boolean
+      temporaryPlainPassword?: string
     };
     const createdAt =
       doc.createdAt != null ? new Date(doc.createdAt as string | Date).toISOString() : undefined;
     return {
       id: String(doc._id),
-      email: doc.email ?? '',
+      email: getPublicUserEmail(doc),
       name: doc.name ?? '',
+      phone: doc.phone ?? '',
       role: doc.role ?? '',
       emailVerified: doc.emailVerified,
       suspended: doc.suspended,
+      mustChangePassword: Boolean(doc.mustChangePassword),
+      temporaryPassword: doc.mustChangePassword ? String(doc.temporaryPlainPassword ?? '') || undefined : undefined,
       createdAt,
     };
   });
@@ -449,7 +493,7 @@ export async function createUser(
 
 export async function getUserById(userId: string, actor?: { id: string; role: string }) {
   const u = await User.findById(userId)
-    .select('email name role emailVerified suspended createdAt managedUniversityUserIds universityMultiManagerApproved')
+    .select('email name phone role emailVerified suspended createdAt mustChangePassword temporaryPlainPassword managedUniversityUserIds universityMultiManagerApproved')
     .lean();
   if (!u) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
   if (actor && actor.role !== 'admin') {
@@ -459,7 +503,12 @@ export async function getUserById(userId: string, actor?: { id: string; role: st
       throw new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN);
     }
   }
-  return { ...u, id: String((u as { _id: unknown })._id) };
+  const doc = u as { _id: unknown; mustChangePassword?: boolean; temporaryPlainPassword?: string };
+  return {
+    ...u,
+    id: String(doc._id),
+    temporaryPassword: doc.mustChangePassword ? String(doc.temporaryPlainPassword ?? '') || undefined : undefined,
+  };
 }
 
 export async function updateUser(
@@ -528,9 +577,15 @@ export async function updateUser(
   }
 
   const updated = await User.findByIdAndUpdate(userId, update, { new: true })
-    .select('email name role emailVerified suspended createdAt managedUniversityUserIds universityMultiManagerApproved')
+    .select('email name phone role emailVerified suspended createdAt mustChangePassword temporaryPlainPassword managedUniversityUserIds universityMultiManagerApproved')
     .lean();
-  return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+  if (!updated) return null;
+  const doc = updated as { _id: unknown; mustChangePassword?: boolean; temporaryPlainPassword?: string };
+  return {
+    ...updated,
+    id: String(doc._id),
+    temporaryPassword: doc.mustChangePassword ? String(doc.temporaryPlainPassword ?? '') || undefined : undefined,
+  };
 }
 
 export async function resetUserPassword(
@@ -551,6 +606,8 @@ export async function resetUserPassword(
       passwordHash,
       localPasswordConfigured: true,
       mustChangePassword: false,
+      temporaryPlainPassword: '',
+      temporaryPasswordGeneratedAt: null,
       resetToken: null,
       resetTokenExpires: null,
       passwordChangedAt: new Date(),
@@ -559,6 +616,624 @@ export async function resetUserPassword(
   );
   await RefreshToken.deleteMany({ userId });
   return { success: true };
+}
+
+type UserExcelPayload = {
+  email: string;
+  generatedEmail?: boolean;
+  role: ManagedRole;
+  name: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  language?: 'en' | 'ru' | 'uz';
+  emailVerified?: boolean;
+  suspended?: boolean;
+  country?: string;
+  city?: string;
+  gradeLevel?: string;
+  gpa?: number;
+  schoolName?: string;
+  graduationYear?: number;
+  preferredCountries?: string[];
+  interestedFaculties?: string[];
+  counsellorUserId?: string;
+  managedUniversityUserIds?: string[];
+  universityMultiManagerApproved?: boolean;
+};
+
+type ParsedUserExcelRow = {
+  row: number;
+  sourceId?: string;
+  body: UserExcelPayload;
+};
+
+type ParsedUsersExcelResult = {
+  rows: ParsedUserExcelRow[];
+  errors: Array<{ row: number; name: string; message: string }>;
+};
+
+type UsersExcelPreviewItem = {
+  row: number;
+  sourceId?: string;
+  existingId?: string;
+  email: string;
+  name: string;
+  action: 'create' | 'update';
+  incoming: UserExcelPayload;
+  current?: UserExcelPayload;
+  changes: Array<{ field: string; before: string; after: string }>;
+};
+
+function normalizeEmail(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function parseBooleanFromText(value: unknown): boolean | undefined {
+  if (value == null || value === '') return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', 'yes', 'y', '1', 'active', 'verified', 'approved'].includes(normalized)) return true;
+  if (['false', 'no', 'n', '0', 'suspended', 'unverified', 'not verified'].includes(normalized)) return false;
+  return undefined;
+}
+
+function splitFullName(value: string): { firstName: string; lastName: string } {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return { firstName: parts[0] ?? '', lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+function slugEmailPart(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 24);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function makeGeneratedEmailBase(firstName: string, lastName: string): string {
+  const lastInitial = slugEmailPart(lastName).slice(0, 1).toUpperCase();
+  const cleanFirstName = slugEmailPart(firstName);
+  const displayFirstName = cleanFirstName
+    ? cleanFirstName.charAt(0).toUpperCase() + cleanFirstName.slice(1)
+    : 'User';
+  return `${lastInitial || 'U'}-${displayFirstName}`;
+}
+
+async function makeUniqueGeneratedEmail(firstName: string, lastName: string, usedEmails: Set<string>): Promise<string> {
+  const base = makeGeneratedEmailBase(firstName, lastName);
+  let counter = 1;
+  while (counter < 10000) {
+    const suffix = counter === 1 ? '' : String(counter);
+    const email = `${base}${suffix}@edu.uz`;
+    const emailKey = email.toLowerCase();
+    const existing = await User.exists({ email: new RegExp(`^${escapeRegExp(email)}$`, 'i') });
+    if (!usedEmails.has(emailKey) && !existing) {
+      usedEmails.add(emailKey);
+      return email;
+    }
+    counter += 1;
+  }
+  const fallback = `${base}.${Date.now()}@edu.uz`;
+  usedEmails.add(fallback.toLowerCase());
+  return fallback;
+}
+
+function userExcelComparable(payload: UserExcelPayload): Record<string, unknown> {
+  return {
+    email: payload.email,
+    role: payload.role,
+    name: payload.name,
+    firstName: payload.firstName,
+    lastName: payload.lastName,
+    phone: payload.phone ?? '',
+    language: payload.language ?? '',
+    emailVerified: payload.emailVerified ?? false,
+    suspended: payload.suspended ?? false,
+    country: payload.country ?? '',
+    city: payload.city ?? '',
+    gradeLevel: payload.gradeLevel ?? '',
+    gpa: payload.gpa ?? null,
+    schoolName: payload.schoolName ?? '',
+    graduationYear: payload.graduationYear ?? null,
+    preferredCountries: [...(payload.preferredCountries ?? [])].sort(),
+    interestedFaculties: [...(payload.interestedFaculties ?? [])].sort(),
+    counsellorUserId: payload.counsellorUserId ?? '',
+    managedUniversityUserIds: [...(payload.managedUniversityUserIds ?? [])].sort(),
+    universityMultiManagerApproved: payload.universityMultiManagerApproved ?? false,
+  };
+}
+
+function makeUserPreviewChanges(current: UserExcelPayload, incoming: UserExcelPayload) {
+  const labels: Record<string, string> = {
+    email: 'Email',
+    role: 'Role',
+    name: 'Name',
+    firstName: 'First name',
+    lastName: 'Last name',
+    phone: 'Phone',
+    language: 'Language',
+    emailVerified: 'Email verified',
+    suspended: 'Suspended',
+    country: 'Country',
+    city: 'City',
+    gradeLevel: 'Grade level',
+    gpa: 'GPA',
+    schoolName: 'School name',
+    graduationYear: 'Graduation year',
+    preferredCountries: 'Preferred countries',
+    interestedFaculties: 'Interested faculties',
+    counsellorUserId: 'Counsellor User ID',
+    managedUniversityUserIds: 'Managed university User IDs',
+    universityMultiManagerApproved: 'Multi-manager approved',
+  };
+  const currentComparable = userExcelComparable(current);
+  const incomingComparable = userExcelComparable(incoming);
+  return Object.keys(labels)
+    .map((field) => {
+      const before = stringifyCompareValue(currentComparable[field]);
+      const after = stringifyCompareValue(incomingComparable[field]);
+      if (before === after) return null;
+      return { field: labels[field], before, after };
+    })
+    .filter((item): item is { field: string; before: string; after: string } => item != null);
+}
+
+async function getStudentPayloadByUserIds(userIds: string[]): Promise<Map<string, Partial<UserExcelPayload>>> {
+  const result = new Map<string, Partial<UserExcelPayload>>();
+  if (!userIds.length) return result;
+  const profiles = await StudentProfile.find({ userId: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } }).lean();
+  for (const profile of profiles) {
+    const row = profile as Record<string, unknown>;
+    const userId = String(row.userId ?? '');
+    result.set(userId, {
+      firstName: String(row.firstName ?? ''),
+      lastName: String(row.lastName ?? ''),
+      country: trimString(row.country),
+      city: trimString(row.city),
+      gradeLevel: trimString(row.gradeLevel),
+      gpa: normalizeNumber(row.gpa),
+      schoolName: trimString(row.schoolName),
+      graduationYear: normalizeNumber(row.graduationYear),
+      preferredCountries: Array.isArray(row.preferredCountries) ? row.preferredCountries.map(String).filter(Boolean) : [],
+      interestedFaculties: Array.isArray(row.interestedFaculties) ? row.interestedFaculties.map(String).filter(Boolean) : [],
+      counsellorUserId: row.counsellorUserId != null ? String(row.counsellorUserId) : undefined,
+    });
+  }
+  return result;
+}
+
+function buildUserExcelPayload(userRaw: Record<string, unknown>, studentPatch?: Partial<UserExcelPayload>): UserExcelPayload {
+  const userName = String(userRaw.name ?? '').trim();
+  const splitName = splitFullName(userName);
+  const firstName = studentPatch?.firstName ?? splitName.firstName;
+  const lastName = studentPatch?.lastName ?? splitName.lastName;
+  const roleRaw = String(userRaw.role ?? 'student');
+  return {
+    email: getPublicUserEmail(userRaw as { email?: string; phone?: string }),
+    role: isManagedRole(roleRaw) ? roleRaw : 'student',
+    name: userName || [firstName, lastName].filter(Boolean).join(' '),
+    firstName,
+    lastName,
+    phone: trimString(userRaw.phone),
+    language: ['en', 'ru', 'uz'].includes(String(userRaw.language ?? '')) ? (String(userRaw.language) as 'en' | 'ru' | 'uz') : undefined,
+    emailVerified: Boolean(userRaw.emailVerified),
+    suspended: Boolean(userRaw.suspended),
+    country: studentPatch?.country,
+    city: studentPatch?.city,
+    gradeLevel: studentPatch?.gradeLevel,
+    gpa: studentPatch?.gpa,
+    schoolName: studentPatch?.schoolName,
+    graduationYear: studentPatch?.graduationYear,
+    preferredCountries: studentPatch?.preferredCountries ?? [],
+    interestedFaculties: studentPatch?.interestedFaculties ?? [],
+    counsellorUserId: studentPatch?.counsellorUserId,
+    managedUniversityUserIds: Array.isArray(userRaw.managedUniversityUserIds)
+      ? userRaw.managedUniversityUserIds.map((id) => String(id)).filter(Boolean)
+      : [],
+    universityMultiManagerApproved: Boolean(userRaw.universityMultiManagerApproved),
+  };
+}
+
+async function findUserForImport(row: ParsedUserExcelRow) {
+  if (row.sourceId && mongoose.Types.ObjectId.isValid(row.sourceId)) {
+    const byId = await User.findById(row.sourceId).lean();
+    if (byId) return byId as Record<string, unknown>;
+  }
+  if (row.body.email) {
+    const byEmail = await User.findOne({ email: row.body.email }).lean();
+    if (byEmail) return byEmail as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+async function ensureStudentProfile(userId: string, payload: UserExcelPayload): Promise<void> {
+  if (payload.role !== 'student') return;
+  const update: Record<string, unknown> = {
+    firstName: payload.firstName,
+    lastName: payload.lastName,
+    country: payload.country,
+    city: payload.city,
+    gradeLevel: payload.gradeLevel,
+    gpa: payload.gpa,
+    schoolName: payload.schoolName,
+    graduationYear: payload.graduationYear,
+    preferredCountries: payload.preferredCountries ?? [],
+    interestedFaculties: payload.interestedFaculties ?? [],
+  };
+  if (payload.counsellorUserId && mongoose.Types.ObjectId.isValid(payload.counsellorUserId)) {
+    update.counsellorUserId = new mongoose.Types.ObjectId(payload.counsellorUserId);
+  }
+  await StudentProfile.findOneAndUpdate({ userId }, update, { upsert: true, new: true, setDefaultsOnInsert: true });
+}
+
+async function applyUserExcelPayload(
+  existing: Record<string, unknown> | undefined,
+  payload: UserExcelPayload,
+  actor?: { id: string; role: string }
+): Promise<'create' | 'update'> {
+  if (actor && actor.role !== 'admin') {
+    assertRoleManageAllowed(actor, payload.role);
+  }
+  if (existing) {
+    const existingId = String(existing._id ?? existing.id ?? '');
+    if (existing.email === DEFAULT_ADMIN_EMAIL) {
+      throw new AppError(403, 'Cannot modify default admin', ErrorCodes.FORBIDDEN);
+    }
+    if (payload.email && payload.email !== String(existing.email ?? '').toLowerCase()) {
+      const duplicate = await User.findOne({ email: payload.email, _id: { $ne: existingId } }).select('_id').lean();
+      if (duplicate) throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
+    }
+    const update: Record<string, unknown> = {
+      email: payload.email,
+      role: payload.role,
+      name: payload.name,
+      phone: payload.phone ?? '',
+      emailVerified: payload.emailVerified ?? true,
+      suspended: payload.suspended ?? false,
+      universityMultiManagerApproved: payload.universityMultiManagerApproved ?? false,
+    };
+    if (payload.language) update.language = payload.language;
+    if (payload.managedUniversityUserIds) {
+      update.managedUniversityUserIds = payload.managedUniversityUserIds
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+    }
+    await User.findByIdAndUpdate(existingId, update, { new: true });
+    await ensureStudentProfile(existingId, payload);
+    return 'update';
+  }
+
+  const tempPassword = generateTempPassword();
+  const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_ROUNDS);
+  const created = await User.create({
+    email: payload.email,
+    name: payload.name,
+    phone: payload.phone ?? '',
+    language: payload.language,
+    passwordHash,
+    role: payload.role,
+    emailVerified: payload.emailVerified ?? true,
+    suspended: payload.suspended ?? false,
+    localPasswordConfigured: true,
+    mustChangePassword: true,
+    temporaryPlainPassword: tempPassword,
+    temporaryPasswordGeneratedAt: new Date(),
+    universityMultiManagerApproved: payload.universityMultiManagerApproved ?? false,
+    managedUniversityUserIds: (payload.managedUniversityUserIds ?? [])
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id)),
+  });
+  const createdId = String(created._id);
+  if (payload.role === 'student') {
+    await StudentProfile.create({ userId: created._id });
+  } else if (payload.role === 'university') {
+    await UniversityProfile.create({
+      userId: created._id,
+      universityName: payload.name?.trim() ? payload.name.trim() : 'New University',
+      verified: true,
+      onboardingCompleted: false,
+    });
+  } else if (payload.role === 'school_counsellor') {
+    await CounsellorProfile.create({
+      userId: created._id,
+      schoolName: payload.name?.trim() ? payload.name.trim() : '',
+    });
+  }
+  if (payload.role === 'student' || payload.role === 'university') {
+    await subscriptionService.createForNewUser(createdId, payload.role);
+  }
+  await User.findByIdAndUpdate(createdId, {
+    phone: payload.phone ?? '',
+    language: payload.language,
+    emailVerified: payload.emailVerified ?? true,
+    suspended: payload.suspended ?? false,
+    universityMultiManagerApproved: payload.universityMultiManagerApproved ?? false,
+    managedUniversityUserIds: (payload.managedUniversityUserIds ?? [])
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id)),
+  });
+  await ensureStudentProfile(createdId, payload);
+  return 'create';
+}
+
+export async function parseUsersExcel(buffer: Buffer): Promise<ParsedUsersExcelResult> {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false });
+  const sheetName = (wb.SheetNames || []).find((name: string) => /user/i.test(name)) || wb.SheetNames?.[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName] || {}) as Record<string, unknown>[];
+  const resultRows: ParsedUserExcelRow[] = [];
+  const errors: Array<{ row: number; name: string; message: string }> = [];
+  const usedEmails = new Set<string>();
+
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const fullName = trimString(row['Name'] ?? row['name']) ?? '';
+    const splitName = splitFullName(fullName);
+    const firstName = trimString(row['First name'] ?? row['firstName']) ?? splitName.firstName;
+    const lastName = trimString(row['Last name'] ?? row['lastName'] ?? row['Surname'] ?? row['surname']) ?? splitName.lastName;
+    const displayName = fullName || [firstName, lastName].filter(Boolean).join(' ');
+    if (!firstName || !lastName) {
+      errors.push({ row: rowNumber, name: displayName, message: 'First name and last name are required.' });
+      continue;
+    }
+
+    const roleRaw = String(row['Role'] ?? row['role'] ?? 'student').trim();
+    const role = isManagedRole(roleRaw) ? roleRaw : 'student';
+    let email = normalizeEmail(row['Email'] ?? row['email']);
+    let generatedEmail = false;
+    if (!email) {
+      email = await makeUniqueGeneratedEmail(firstName, lastName, usedEmails);
+      generatedEmail = true;
+    } else {
+      usedEmails.add(email);
+    }
+
+    const languageRaw = String(row['Language'] ?? row['language'] ?? '').trim().toLowerCase();
+    const language = ['en', 'ru', 'uz'].includes(languageRaw) ? (languageRaw as 'en' | 'ru' | 'uz') : undefined;
+    const body: UserExcelPayload = {
+      email,
+      generatedEmail,
+      role,
+      name: displayName,
+      firstName,
+      lastName,
+      phone: trimString(row['Phone'] ?? row['phone']),
+      language,
+      emailVerified: parseBooleanFromText(row['Email verified'] ?? row['emailVerified']) ?? true,
+      suspended: parseBooleanFromText(row['Suspended'] ?? row['suspended']) ?? false,
+      country: trimString(row['Country'] ?? row['country']),
+      city: trimString(row['City'] ?? row['city']),
+      gradeLevel: trimString(row['Grade level'] ?? row['gradeLevel']),
+      gpa: normalizeNumber(row['GPA'] ?? row['gpa']),
+      schoolName: trimString(row['School name'] ?? row['schoolName']),
+      graduationYear: normalizeNumber(row['Graduation year'] ?? row['graduationYear']),
+      preferredCountries: splitList(row['Preferred countries'] ?? row['preferredCountries']),
+      interestedFaculties: splitList(row['Interested faculties'] ?? row['interestedFaculties']),
+      counsellorUserId: trimString(row['Counsellor User ID'] ?? row['counsellorUserId']),
+      managedUniversityUserIds: splitList(row['Managed university User IDs'] ?? row['managedUniversityUserIds']),
+      universityMultiManagerApproved: parseBooleanFromText(row['Multi-manager approved'] ?? row['universityMultiManagerApproved']) ?? false,
+    };
+    resultRows.push({
+      row: rowNumber,
+      sourceId: trimString(row['ID'] ?? row['id']),
+      body,
+    });
+  }
+
+  return { rows: resultRows, errors };
+}
+
+export async function previewUsersExcelImport(
+  buffer: Buffer,
+  actor?: { id: string; role: string }
+): Promise<{
+  items: UsersExcelPreviewItem[];
+  errors: Array<{ row: number; name: string; message: string }>;
+  summary: { total: number; creates: number; updates: number; errors: number };
+}> {
+  const parsed = await parseUsersExcel(buffer);
+  const items: UsersExcelPreviewItem[] = [];
+  const errors = [...parsed.errors];
+
+  for (const row of parsed.rows) {
+    try {
+      if (actor && actor.role !== 'admin') {
+        assertRoleManageAllowed(actor, row.body.role);
+      }
+      const existing = await findUserForImport(row);
+      let current: UserExcelPayload | undefined;
+      if (existing) {
+        const id = String(existing._id ?? existing.id ?? '');
+        const studentMap = await getStudentPayloadByUserIds([id]);
+        current = buildUserExcelPayload(existing, studentMap.get(id));
+      }
+      items.push({
+        row: row.row,
+        sourceId: row.sourceId,
+        existingId: existing ? String(existing._id ?? existing.id ?? '') : undefined,
+        email: row.body.email,
+        name: row.body.name,
+        action: existing ? 'update' : 'create',
+        incoming: row.body,
+        current,
+        changes: current ? makeUserPreviewChanges(current, row.body) : [],
+      });
+    } catch (e: unknown) {
+      errors.push({ row: row.row, name: row.body.name, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return {
+    items,
+    errors,
+    summary: {
+      total: items.length,
+      creates: items.filter((item) => item.action === 'create').length,
+      updates: items.filter((item) => item.action === 'update').length,
+      errors: errors.length,
+    },
+  };
+}
+
+export async function importUsersFromExcel(
+  buffer: Buffer,
+  actor?: { id: string; role: string }
+): Promise<{
+  created: number;
+  updated: number;
+  errors: Array<{ row: number; name: string; message: string }>;
+}> {
+  const parsed = await parseUsersExcel(buffer);
+  const errors: Array<{ row: number; name: string; message: string }> = [...parsed.errors];
+  let created = 0;
+  let updated = 0;
+
+  for (const row of parsed.rows) {
+    try {
+      const existing = await findUserForImport(row);
+      const action = await applyUserExcelPayload(existing, row.body, actor);
+      if (action === 'create') created += 1;
+      else updated += 1;
+    } catch (e: unknown) {
+      errors.push({ row: row.row, name: row.body.name, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return { created, updated, errors };
+}
+
+export function getUsersExcelTemplateBuffer(): Buffer {
+  const XLSX = require('xlsx');
+  const headers = [
+    'ID',
+    'Email',
+    'Role',
+    'Name',
+    'First name',
+    'Last name',
+    'Phone',
+    'Language',
+    'Email verified',
+    'Suspended',
+    'Country',
+    'City',
+    'Grade level',
+    'GPA',
+    'School name',
+    'Graduation year',
+    'Preferred countries',
+    'Interested faculties',
+    'Counsellor User ID',
+    'Managed university User IDs',
+    'Multi-manager approved',
+  ];
+  const data = [
+    headers,
+    [
+      '',
+      '',
+      'student',
+      'Example Student',
+      'Example',
+      'Student',
+      '+998901234567',
+      'en',
+      'yes',
+      'no',
+      'UZ',
+      'Tashkent',
+      '11',
+      '4.5',
+      'Example School',
+      '2026',
+      'UZ; KZ; TR',
+      'engineering_technology; computer_science_digital_technologies',
+      '',
+      '',
+      'no',
+    ],
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'Users');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+export async function getUsersExcelExportBuffer(actor?: { id: string; role: string }): Promise<Buffer> {
+  const XLSX = require('xlsx');
+  const actorRole = getManagementRole(actor?.role);
+  const visibleRoles = actorRole ? getVisibleRolesForManagementRole(actorRole) : null;
+  const filter = mergeUserRoleFilters(visibleRoles, undefined);
+  const users = await User.find(filter)
+    .select('email role language name phone emailVerified suspended createdAt managedUniversityUserIds universityMultiManagerApproved')
+    .sort({ createdAt: -1 })
+    .lean();
+  const userIds = users.map((user) => String((user as { _id: unknown })._id));
+  const studentMap = await getStudentPayloadByUserIds(userIds);
+  const headers = [
+    'ID',
+    'Email',
+    'Role',
+    'Name',
+    'First name',
+    'Last name',
+    'Phone',
+    'Language',
+    'Email verified',
+    'Suspended',
+    'Country',
+    'City',
+    'Grade level',
+    'GPA',
+    'School name',
+    'Graduation year',
+    'Preferred countries',
+    'Interested faculties',
+    'Counsellor User ID',
+    'Managed university User IDs',
+    'Multi-manager approved',
+    'Created at',
+  ];
+  const data = [
+    headers,
+    ...users.map((user) => {
+      const id = String((user as { _id: unknown })._id);
+      const payload = buildUserExcelPayload(user as Record<string, unknown>, studentMap.get(id));
+      return [
+        id,
+        payload.email,
+        payload.role,
+        payload.name,
+        payload.firstName,
+        payload.lastName,
+        payload.phone ?? '',
+        payload.language ?? '',
+        payload.emailVerified ? 'yes' : 'no',
+        payload.suspended ? 'yes' : 'no',
+        payload.country ?? '',
+        payload.city ?? '',
+        payload.gradeLevel ?? '',
+        payload.gpa ?? '',
+        payload.schoolName ?? '',
+        payload.graduationYear ?? '',
+        (payload.preferredCountries ?? []).join('; '),
+        (payload.interestedFaculties ?? []).join('; '),
+        payload.counsellorUserId ?? '',
+        (payload.managedUniversityUserIds ?? []).join('; '),
+        payload.universityMultiManagerApproved ? 'yes' : 'no',
+        user.createdAt ? new Date(user.createdAt as Date).toISOString() : '',
+      ];
+    }),
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'Users');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
 export async function getStudentProfileByUserId(userId: string) {

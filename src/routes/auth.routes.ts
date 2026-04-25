@@ -8,6 +8,8 @@ import {
   registerSchema,
   loginSchema,
   loginByPhoneSchema,
+  phoneCodeStartSchema,
+  phoneCodeVerifySchema,
   phoneRegisterStartSchema,
   telegramAuthStartSchema,
   telegramAuthVerifySchema,
@@ -43,6 +45,16 @@ router.post(
   '/login-phone',
   validate(loginByPhoneSchema.shape.body, 'body'),
   authController.loginByPhone
+);
+router.post(
+  '/phone/start',
+  validate(phoneCodeStartSchema.shape.body, 'body'),
+  authController.startPhoneCodeAuth
+);
+router.post(
+  '/phone/verify',
+  validate(phoneCodeVerifySchema.shape.body, 'body'),
+  authController.verifyPhoneCodeAuth
 );
 router.post(
   '/register-phone/start',

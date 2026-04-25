@@ -15,6 +15,7 @@ import {
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import * as settingsService from './settings.service';
+import { sendTelegramMessage } from './telegram.service';
 import { config } from '../config';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { AppError, ErrorCodes } from '../utils/errors';
@@ -25,6 +26,8 @@ import type {
   RegisterBody,
   LoginBody,
   LoginByPhoneBody,
+  PhoneCodeStartBody,
+  PhoneCodeVerifyBody,
   PhoneRegisterStartBody,
   GoogleAuthBody,
   YandexAuthBody,
@@ -52,6 +55,42 @@ function normalizePhone(raw: string): string {
 function makePhonePlaceholderEmail(phone: string): string {
   const digits = phone.replace(/\D/g, '');
   return `phone_${digits}@phone.edmission.local`;
+}
+
+function isPhonePlaceholderEmail(value: unknown): boolean {
+  return /^phone_\d+@phone\.edmission\.local$/i.test(String(value ?? '').trim());
+}
+
+function isRealEmail(value: unknown): boolean {
+  const email = String(value ?? '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.toLowerCase().endsWith('.local');
+}
+
+function getPublicEmail(doc: { email?: string; phone?: string }): string {
+  const email = String(doc.email ?? '').trim();
+  const phone = String(doc.phone ?? '').trim();
+  if (phone && (isPhonePlaceholderEmail(email) || email === phone)) return phone;
+  return email;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findUserByEmailCaseInsensitive(email: string) {
+  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+  if (!normalizedEmail) return null;
+  return User.findOne({ email: new RegExp(`^${escapeRegExp(normalizedEmail)}$`, 'i') });
+}
+
+function findUserByLoginIdentifier(identifier: string) {
+  const raw = String(identifier ?? '').trim();
+  if (!raw) return null;
+  const normalizedPhone = normalizePhone(raw);
+  if (normalizedPhone && !raw.includes('@')) {
+    return User.findOne({ phone: normalizedPhone });
+  }
+  return findUserByEmailCaseInsensitive(raw);
 }
 
 function hasOAuthLinked(u: { googleSub?: string | null; yandexSub?: string | null }): boolean {
@@ -103,12 +142,13 @@ function toPlainUser(doc: {
   localPasswordConfigured?: boolean | null
   googleSub?: string | null
   yandexSub?: string | null
+  temporaryPlainPassword?: string | null
   onboardingTutorialSeen?: { student?: boolean; university?: boolean } | null
 }) {
   const mustSetLocalPassword = computeMustSetLocalPassword(doc)
   return {
     id: String(doc._id),
-    email: doc.email,
+    email: getPublicEmail(doc),
     role: doc.role as Role,
     name: doc.name ?? '',
     phone: doc.phone ?? '',
@@ -121,6 +161,14 @@ function toPlainUser(doc: {
     },
     mustChangePassword: Boolean(doc.mustChangePassword),
     mustSetLocalPassword,
+    linkedProviders: {
+      email: isRealEmail(doc.email),
+      phone: Boolean(doc.phone),
+      google: Boolean(doc.googleSub),
+      yandex: Boolean(doc.yandexSub),
+      telegram: Boolean(doc.socialLinks?.telegram),
+    },
+    temporaryPassword: doc.mustChangePassword ? String(doc.temporaryPlainPassword ?? '') || undefined : undefined,
     onboardingTutorialSeen: {
       student: doc.onboardingTutorialSeen?.student ?? false,
       university: doc.onboardingTutorialSeen?.university ?? false,
@@ -530,16 +578,29 @@ export async function register(data: RegisterBody) {
   if (existingUser) {
     throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
   }
+  const normalizedPhone = data.phone ? normalizePhone(data.phone) : '';
+  if (data.phone && !normalizedPhone) {
+    throw new AppError(400, 'Invalid phone', ErrorCodes.VALIDATION);
+  }
+  if (normalizedPhone) {
+    const existingByPhone = await User.findOne({ phone: normalizedPhone }).select('_id').lean();
+    if (existingByPhone) {
+      throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
+    }
+  }
 
   const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS);
   const verifyCode = generateVerificationCode();
   const verifyTokenExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 min
   const avatarUrl = (data as { avatarUrl?: string }).avatarUrl?.trim();
+  const name = String(data.name ?? '').trim();
 
   await PendingRegistration.findOneAndUpdate(
     { email: normalizedEmail },
     {
       email: normalizedEmail,
+      phone: normalizedPhone,
+      name,
       passwordHash,
       role: data.role,
       avatarUrl: avatarUrl || undefined,
@@ -612,8 +673,7 @@ export async function resendVerificationCode(email: string) {
 }
 
 export async function login(data: LoginBody) {
-  const normalizedEmail = data.email.toLowerCase().trim();
-  const user = await User.findOne({ email: normalizedEmail });
+  const user = await findUserByLoginIdentifier(data.email);
   if (!user) {
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
@@ -694,7 +754,7 @@ export async function authenticateTelegramCredentials(email: string, password: s
     throw new AppError(400, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
 
-  const user = await User.findOne({ email: normalizedEmail });
+  const user = await findUserByEmailCaseInsensitive(normalizedEmail);
   if (!user) {
     await bcrypt.compare(rawPassword, TELEGRAM_DUMMY_PASSWORD_HASH).catch(() => false);
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
@@ -725,7 +785,7 @@ export async function authenticateTelegramCredentials(email: string, password: s
 
   return {
     id: String(user._id),
-    email: String(user.email ?? ''),
+    email: getPublicEmail(user),
     name: String(user.name ?? '').trim(),
     role: user.role as Role,
   };
@@ -751,8 +811,81 @@ export async function loginByPhone(data: LoginByPhoneBody) {
   return issueTokensAfterLoginChecks(user);
 }
 
+export async function startPhoneCodeAuth(data: PhoneCodeStartBody) {
+  const normalizedPhone = normalizePhone(data.phone);
+  if (!normalizedPhone) {
+    throw new AppError(400, 'Invalid phone', ErrorCodes.VALIDATION);
+  }
+
+  const existing = await User.findOne({ phone: normalizedPhone });
+  if (existing) {
+    const role = String(existing.role ?? '');
+    if (role !== 'student' && role !== 'university') {
+      throw new AppError(403, 'Phone code login is available only for student and university accounts.', ErrorCodes.FORBIDDEN);
+    }
+    const chatId = normalizeTelegramChatId(String(existing.telegram?.chatId ?? existing.socialLinks?.telegram ?? ''));
+    if (chatId && config.telegram.botToken) {
+      const issued = await issueTelegramPhoneCode(normalizedPhone);
+      if (!issued) {
+        throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+      }
+      try {
+        await sendTelegramMessage(
+          chatId,
+          `Your Edmission login code is ${issued.code}. It expires in ${Math.max(1, Math.round(config.telegram.otpTtlMs / 60000))} minute(s).`
+        );
+      } catch (error) {
+        logger.warn({ error, userId: String(existing._id) }, 'Failed to deliver phone login code by Telegram');
+        throw new AppError(503, 'Could not send Telegram code. Try Telegram login instead.', ErrorCodes.SERVICE_UNAVAILABLE);
+      }
+      return {
+        mode: 'login' as const,
+        phone: normalizedPhone,
+        delivery: 'telegram' as const,
+        expiresAt: new Date(Date.now() + config.telegram.otpTtlMs).toISOString(),
+      };
+    }
+
+    const started = await startTelegramWebsiteAuthSession({
+      role: role === 'university' ? 'university' : 'student',
+    });
+    return {
+      mode: 'telegram_required' as const,
+      phone: normalizedPhone,
+      sessionId: started.sessionId,
+      deepLink: started.deepLink,
+      expiresAt: started.expiresAt,
+      message: 'This phone is not linked to Telegram yet. Open the bot to confirm it once.',
+    };
+  }
+
+  if (data.acceptTerms !== true) {
+    throw new AppError(404, 'No account for this phone. Please register first.', ErrorCodes.OAUTH_SIGNUP_REQUIRED);
+  }
+
+  const started = await startTelegramWebsiteAuthSession({
+    role: data.role === 'university' ? 'university' : 'student',
+  });
+  return {
+    mode: 'register' as const,
+    phone: normalizedPhone,
+    sessionId: started.sessionId,
+    deepLink: started.deepLink,
+    expiresAt: started.expiresAt,
+    message: 'Open Telegram to confirm your phone and finish registration.',
+  };
+}
+
+export async function verifyPhoneCodeAuth(data: PhoneCodeVerifyBody) {
+  const user = await verifyTelegramPhoneCode(data.phone, data.code);
+  if (!user) {
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+  return issueTokensAfterLoginChecks(user);
+}
+
 function generatePhoneVerifyCode(): string {
-  return `reg_${uuidv4().replace(/-/g, '').slice(0, 24)}`;
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
@@ -766,12 +899,11 @@ export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
   }
 
   const placeholderEmail = makePhonePlaceholderEmail(normalizedPhone);
-  const existingByEmail = await User.findOne({ email: placeholderEmail }).select('_id').lean();
+  const existingByEmail = await User.findOne({ email: { $in: [normalizedPhone, placeholderEmail] } }).select('_id').lean();
   if (existingByEmail) {
     throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
   }
 
-  const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS);
   const verifyCode = generatePhoneVerifyCode();
   const verifyCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -781,12 +913,14 @@ export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
     { phone: normalizedPhone },
     {
       phone: normalizedPhone,
-      passwordHash,
+      passwordHash: '',
       role: data.role,
       name: fullName,
       avatarUrl: data.avatarUrl?.trim() || undefined,
       verifyCode,
       verifyCodeExpires,
+      verifyFailedAttempts: 0,
+      verifyLockedUntil: null,
       verifiedViaTelegram: false,
       telegramChatId: '',
       telegramUsername: '',
@@ -795,16 +929,14 @@ export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
     { upsert: true, new: true }
   );
 
-  const botUsername = config.telegram.botUsername;
-  const deepLink = botUsername ? `https://t.me/${botUsername}?start=${verifyCode}` : '';
   return {
     registrationId: String((pending as { _id: unknown })._id),
     phone: normalizedPhone,
     verification: {
-      method: 'telegram',
+      method: 'code',
       code: verifyCode,
       expiresAt: verifyCodeExpires.toISOString(),
-      deepLink,
+      deepLink: '',
     },
   };
 }
@@ -822,13 +954,53 @@ export async function getPhoneRegistrationStatus(registrationId: string) {
   };
 }
 
-export async function completePhoneRegistration(registrationId: string) {
-  const pending = await PendingPhoneRegistration.findById(registrationId);
+export async function completePhoneRegistration(data: { registrationId: string; code: string; password: string }) {
+  const pending = await PendingPhoneRegistration.findById(data.registrationId);
   if (!pending) {
     throw new AppError(404, 'Registration request not found or expired', ErrorCodes.NOT_FOUND);
   }
-  if (!pending.verifiedViaTelegram) {
-    throw new AppError(400, 'Phone is not verified in Telegram yet', ErrorCodes.VALIDATION);
+
+  const now = Date.now();
+  const expires = pending.verifyCodeExpires ? new Date(pending.verifyCodeExpires).getTime() : 0;
+  if (!expires || expires <= now) {
+    await PendingPhoneRegistration.findByIdAndDelete(pending._id);
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  const lockedUntil = new Date((pending as { verifyLockedUntil?: Date | null }).verifyLockedUntil ?? 0).getTime();
+  if (lockedUntil > now) {
+    const waitSec = Math.ceil((lockedUntil - now) / 1000);
+    throw new AppError(
+      429,
+      `Too many invalid attempts. Please wait ${waitSec} seconds or request a new code.`,
+      ErrorCodes.RATE_LIMIT
+    );
+  }
+
+  const code = String(data.code ?? '').trim();
+  if (String(pending.verifyCode ?? '').trim() !== code) {
+    const failedAttempts = Number((pending as { verifyFailedAttempts?: number }).verifyFailedAttempts ?? 0) + 1;
+    const nextLockedUntil = failedAttempts >= VERIFY_CODE_MAX_ATTEMPTS
+      ? new Date(Date.now() + VERIFY_CODE_LOCK_MS)
+      : null;
+    await PendingPhoneRegistration.updateOne(
+      { _id: pending._id },
+      {
+        verifyFailedAttempts: failedAttempts,
+        verifyLockedUntil: nextLockedUntil,
+      }
+    );
+
+    if (nextLockedUntil) {
+      const waitSec = Math.ceil((nextLockedUntil.getTime() - Date.now()) / 1000);
+      throw new AppError(
+        429,
+        `Too many invalid attempts. Please wait ${waitSec} seconds or request a new code.`,
+        ErrorCodes.RATE_LIMIT
+      );
+    }
+
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
   }
 
   const existingByPhone = await User.findOne({ phone: pending.phone }).select('_id').lean();
@@ -837,13 +1009,16 @@ export async function completePhoneRegistration(registrationId: string) {
     throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
   }
 
-  const email = makePhonePlaceholderEmail(pending.phone);
-  const existingByEmail = await User.findOne({ email }).select('_id').lean();
+  const email = pending.phone;
+  const placeholderEmail = makePhonePlaceholderEmail(pending.phone);
+  const existingByEmail = await User.findOne({ email: { $in: [email, placeholderEmail] } }).select('_id').lean();
   if (existingByEmail) {
     await PendingPhoneRegistration.findByIdAndDelete(pending._id);
     throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
   }
 
+  const password = String(data.password ?? '');
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const normalizedTelegramChatId = normalizeTelegramChatId(String(pending.telegramChatId ?? ''));
   const normalizedTelegramUsername = String(pending.telegramUsername ?? '').trim();
 
@@ -851,10 +1026,13 @@ export async function completePhoneRegistration(registrationId: string) {
     email,
     name: pending.name || '',
     phone: pending.phone,
-    passwordHash: pending.passwordHash,
+    passwordHash,
     role: pending.role as Role,
     emailVerified: true,
     localPasswordConfigured: true,
+    mustChangePassword: false,
+    temporaryPlainPassword: '',
+    temporaryPasswordGeneratedAt: null,
     telegram: {
       ...(normalizedTelegramChatId ? { chatId: normalizedTelegramChatId } : {}),
       username: normalizedTelegramUsername,
@@ -1053,6 +1231,7 @@ export async function issueTelegramWebsiteAuthCode(payload: {
   telegramUsername?: string;
   firstName?: string;
   lastName?: string;
+  email?: string;
 }): Promise<{ ok: boolean; message: string; code?: string; expiresAt?: string; loginLink?: string }> {
   const sessionId = normalizeTelegramWebAuthSessionId(payload.sessionId);
   if (!sessionId) {
@@ -1091,10 +1270,17 @@ export async function issueTelegramWebsiteAuthCode(payload: {
   if (incomingName && !String(session.name ?? '').trim()) {
     session.name = incomingName;
   }
+  const email = String(payload.email ?? '').toLowerCase().trim();
+  if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    session.email = email;
+  }
 
   session.phone = normalizedPhone;
   session.telegramUsername = String(payload.telegramUsername ?? '').trim().slice(0, 120);
+  session.firstName = firstName.slice(0, 80);
+  session.lastName = lastName.slice(0, 80);
   session.code = createTelegramWebAuthCode();
+  session.codeAttempts = 0;
   session.loginLinkToken = createTelegramWebAuthLinkToken();
   session.expiresAt = new Date(Date.now() + TELEGRAM_WEB_AUTH_CODE_TTL_MS);
   await session.save();
@@ -1114,12 +1300,14 @@ async function finalizeTelegramWebsiteAuthSession(session: {
   phone?: string;
   telegramId?: number | null;
   name?: string;
+  email?: string;
   telegramUsername?: string;
   role?: string;
 }) {
   const phone = normalizePhone(String(session.phone ?? ''));
   const telegramChatId = normalizeTelegramChatId(String(session.telegramId ?? ''));
   const fullName = String(session.name ?? '').trim();
+  const email = String(session.email ?? '').toLowerCase().trim();
   const telegramUsername = String(session.telegramUsername ?? '').trim();
   const requestedRole = session.role === 'university' ? 'university' : 'student';
 
@@ -1157,6 +1345,7 @@ async function finalizeTelegramWebsiteAuthSession(session: {
     chatId: telegramChatId,
     phone,
     fullName,
+    email,
     username: telegramUsername,
     role: requestedRole,
   });
@@ -1179,28 +1368,36 @@ export async function verifyTelegramWebsiteAuthCode(payload: {
   }
 
   const now = new Date();
-  const session = await TelegramAuthSession.findOneAndUpdate(
+  const session = await TelegramAuthSession.findOne(
     {
       sessionId,
-      code: normalizedCode,
       consumedAt: null,
       expiresAt: { $gt: now },
       phone: { $type: 'string', $ne: '' },
       telegramId: { $type: 'number' },
-    },
-    {
-      $set: {
-        consumedAt: now,
-        code: '',
-        loginLinkToken: '',
-      },
-    },
-    { new: true }
+    }
   );
 
   if (!session) {
     throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
   }
+  const attempts = Number(session.codeAttempts ?? 0);
+  if (attempts >= config.telegram.maxOtpAttempts) {
+    throw new AppError(429, 'Too many attempts. Start a new Telegram login session.', ErrorCodes.RATE_LIMIT);
+  }
+  if (String(session.code ?? '').trim() !== normalizedCode) {
+    session.codeAttempts = attempts + 1;
+    await session.save();
+    if (session.codeAttempts >= config.telegram.maxOtpAttempts) {
+      throw new AppError(429, 'Too many attempts. Start a new Telegram login session.', ErrorCodes.RATE_LIMIT);
+    }
+    throw new AppError(400, 'Invalid code', ErrorCodes.VALIDATION);
+  }
+
+  session.consumedAt = now;
+  session.code = '';
+  session.loginLinkToken = '';
+  await session.save();
 
   return finalizeTelegramWebsiteAuthSession(session);
 }
@@ -1346,7 +1543,7 @@ export async function logout(userId: string, refreshToken?: string) {
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
     .select(
-      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured googleSub yandexSub onboardingTutorialSeen managedUniversityUserIds universityMultiManagerApproved'
+      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured temporaryPlainPassword googleSub yandexSub onboardingTutorialSeen managedUniversityUserIds universityMultiManagerApproved'
     )
     .lean();
   if (!user) {
@@ -1371,6 +1568,7 @@ export async function getMe(userId: string) {
     totpEnabled?: boolean
     mustChangePassword?: boolean
     localPasswordConfigured?: boolean
+    temporaryPlainPassword?: string | null
     googleSub?: string | null
     yandexSub?: string | null
     onboardingTutorialSeen?: { student?: boolean; university?: boolean }
@@ -1414,7 +1612,7 @@ export async function getMe(userId: string) {
 
   return {
     id: String(u._id),
-    email: u.email,
+    email: getPublicEmail(u),
     name: u.name ?? '',
     phone: u.phone ?? '',
     socialLinks: {
@@ -1433,6 +1631,14 @@ export async function getMe(userId: string) {
     mustChangePassword: Boolean(u.mustChangePassword),
     mustSetLocalPassword: computeMustSetLocalPassword(u),
     localPasswordConfigured: u.localPasswordConfigured !== false,
+    linkedProviders: {
+      email: isRealEmail(u.email),
+      phone: Boolean(u.phone),
+      google: Boolean(u.googleSub),
+      yandex: Boolean(u.yandexSub),
+      telegram: Boolean(u.socialLinks?.telegram),
+    },
+    temporaryPassword: u.mustChangePassword ? String(u.temporaryPlainPassword ?? '') || undefined : undefined,
     notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
     onboardingTutorialSeen: u.onboardingTutorialSeen ?? { student: false, university: false },
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
@@ -1548,9 +1754,18 @@ export async function verifyEmailByCode(email: string, code: string) {
 
   let user: InstanceType<typeof User>;
   try {
+    const pendingPhone = normalizePhone(String((pending as { phone?: string }).phone ?? ''));
+    if (pendingPhone) {
+      const existingByPhone = await User.findOne({ phone: pendingPhone }).select('_id').lean();
+      if (existingByPhone) {
+        await PendingRegistration.deleteOne({ email: normalized }).catch(() => {});
+        throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
+      }
+    }
     user = await User.create({
       email: pending.email,
-      name: '',
+      name: String((pending as { name?: string }).name ?? '').trim(),
+      phone: pendingPhone || undefined,
       passwordHash: pending.passwordHash,
       role: pending.role as Role,
       emailVerified: true,
@@ -1577,9 +1792,8 @@ export async function verifyEmailByCode(email: string, code: string) {
   return issueAuthTokens(user);
 }
 
-export async function forgotPassword(email: string): Promise<{ success: true; resetLink?: string }> {
-  const normalizedEmail = email.toLowerCase().trim();
-  const user = await User.findOne({ email: normalizedEmail });
+export async function forgotPassword(identifier: string): Promise<{ success: true; resetLink?: string }> {
+  const user = await findUserByLoginIdentifier(identifier);
   if (!user) return { success: true };
 
   const resetToken = uuidv4();
@@ -1588,6 +1802,11 @@ export async function forgotPassword(email: string): Promise<{ success: true; re
     resetToken,
     resetTokenExpires: new Date(Date.now() + 60 * 60 * 1000),
   });
+
+  if (!isRealEmail(user.email)) {
+    logger.info({ userId: String(user._id), phone: user.phone, resetLink }, 'Phone-only password reset link');
+    return { success: true, resetLink };
+  }
 
   const sent = await emailService.sendResetPasswordEmail(user.email, resetToken);
   if (!sent && config.email.enabled) {
@@ -1627,6 +1846,9 @@ export async function resetPassword(token: string, newPassword: string) {
     resetToken: null,
     resetTokenExpires: null,
     localPasswordConfigured: true,
+    mustChangePassword: false,
+    temporaryPlainPassword: '',
+    temporaryPasswordGeneratedAt: null,
     passwordChangedAt: new Date(),
   });
   await RefreshToken.deleteMany({ userId: user._id });
@@ -1644,6 +1866,8 @@ export async function setPassword(userId: string, newPassword: string) {
     passwordHash,
     mustChangePassword: false,
     localPasswordConfigured: true,
+    temporaryPlainPassword: '',
+    temporaryPasswordGeneratedAt: null,
     passwordChangedAt: new Date(),
   });
   await RefreshToken.deleteMany({ userId });
@@ -1681,6 +1905,8 @@ export async function changePassword(userId: string, currentPassword: string, ne
     passwordHash,
     mustChangePassword: false,
     localPasswordConfigured: true,
+    temporaryPlainPassword: '',
+    temporaryPasswordGeneratedAt: null,
     passwordChangedAt: new Date(),
   });
   await RefreshToken.deleteMany({ userId });
@@ -1840,6 +2066,7 @@ export async function registerFromTelegram(payload: {
   chatId: string;
   phone: string;
   fullName: string;
+  email?: string;
   username?: string;
   role?: 'student' | 'university';
 }) {
@@ -1856,8 +2083,32 @@ export async function registerFromTelegram(payload: {
     });
     return { userId: String(existing._id), created: false };
   }
+  const emailCandidate = String(payload.email ?? '').toLowerCase().trim();
+  const useProvidedEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailCandidate);
+  if (useProvidedEmail) {
+    const existingByEmail = await User.findOne({ email: emailCandidate });
+    if (existingByEmail) {
+      const existingPhone = normalizePhone(String(existingByEmail.phone ?? ''));
+      if (existingPhone && existingPhone !== phone) {
+        throw new AppError(409, 'Email already registered with a different phone', ErrorCodes.CONFLICT);
+      }
+      await linkTelegramToUser(String(existingByEmail._id), {
+        chatId,
+        username: payload.username,
+        phone,
+      });
+      if (!existingPhone) {
+        existingByEmail.phone = phone;
+      }
+      if (!String(existingByEmail.name ?? '').trim()) {
+        existingByEmail.name = String(payload.fullName ?? '').trim();
+      }
+      await existingByEmail.save();
+      return { userId: String(existingByEmail._id), created: false };
+    }
+  }
   const passwordHash = await bcrypt.hash(`tg:${chatId}:${uuidv4()}`, BCRYPT_ROUNDS);
-  const email = `tg_${chatId}_${Date.now()}@telegram.local`;
+  const email = useProvidedEmail ? emailCandidate : `tg_${chatId}_${Date.now()}@telegram.local`;
   const role = payload.role === 'university' ? 'university' : 'student';
   const user = await User.create({
     role,

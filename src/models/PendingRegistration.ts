@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 const schema = new mongoose.Schema(
   {
     email: { type: String, required: true },
+    phone: { type: String, default: '' },
+    name: { type: String, default: '' },
     passwordHash: { type: String, required: true },
     role: { type: String, required: true, enum: ['student', 'university', 'school_counsellor'] },
     avatarUrl: String,

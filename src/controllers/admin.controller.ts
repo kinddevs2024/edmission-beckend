@@ -129,6 +129,54 @@ export async function resetUserPassword(req: Request, res: Response, next: NextF
   }
 }
 
+export async function downloadUsersTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const buffer = adminService.getUsersExcelTemplateBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="users_template.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function downloadAllUsersExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const buffer = await adminService.getUsersExcelExportBuffer(req.user);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="users_export.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function previewUsersExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.file?.buffer) {
+      res.status(400).json({ message: 'No file uploaded. Use form field "file" with an .xlsx file.' });
+      return;
+    }
+    const result = await adminService.previewUsersExcelImport(req.file.buffer, req.user);
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function uploadUsersExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.file?.buffer) {
+      res.status(400).json({ message: 'No file uploaded. Use form field "file" with an .xlsx file.' });
+      return;
+    }
+    const result = await adminService.importUsersFromExcel(req.file.buffer, req.user);
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getStudentProfileByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = await adminService.getStudentProfileByUserId(req.params.id);

@@ -7,9 +7,16 @@ export const passwordSchema = z
   .refine((p) => /[a-z]/.test(p), 'Password must contain at least one lowercase letter')
   .refine((p) => /\d/.test(p), 'Password must contain at least one number');
 
+export const phoneSchema = z
+  .string()
+  .min(7, 'Phone is too short')
+  .max(20, 'Phone is too long')
+  .regex(/^\+?[0-9()\-\s]+$/, 'Invalid phone format');
+
 export const registerSchema = z.object({
   body: z.object({
     email: z.string().email(),
+    phone: phoneSchema.optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
     password: passwordSchema,
     role: z.enum(['student', 'university', 'school_counsellor']),
     acceptTerms: z.literal(true, { errorMap: () => ({ message: 'You must accept the terms' }) }),
@@ -27,21 +34,14 @@ export const verifyEmailCodeSchema = z.object({
 
 export const loginSchema = z.object({
   body: z.object({
-    email: z.string().email(),
+    email: z.string().min(1).max(254),
     password: z.string(),
   }),
 });
 
-export const phoneSchema = z
-  .string()
-  .min(7, 'Phone is too short')
-  .max(20, 'Phone is too long')
-  .regex(/^\+?[0-9()\-\s]+$/, 'Invalid phone format');
-
 export const phoneRegisterStartSchema = z.object({
   body: z.object({
     phone: phoneSchema,
-    password: passwordSchema,
     role: z.enum(['student', 'university']),
     acceptTerms: z.literal(true, { errorMap: () => ({ message: 'You must accept the terms' }) }),
     firstName: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
@@ -59,6 +59,8 @@ export const phoneRegisterStatusSchema = z.object({
 export const phoneRegisterCompleteSchema = z.object({
   body: z.object({
     registrationId: z.string().length(24, 'Invalid registration id'),
+    code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+    password: passwordSchema,
   }),
 });
 
@@ -66,6 +68,24 @@ export const loginByPhoneSchema = z.object({
   body: z.object({
     phone: phoneSchema,
     password: z.string(),
+  }),
+});
+
+export const phoneCodeStartSchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    role: z.enum(['student', 'university']).optional(),
+    acceptTerms: z.boolean().optional(),
+    firstName: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
+    lastName: z.string().optional().transform((v) => (v === '' || v == null ? undefined : v)),
+    email: z.string().email().optional().or(z.literal('').transform(() => undefined)),
+  }),
+});
+
+export const phoneCodeVerifySchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
   }),
 });
 
@@ -139,7 +159,7 @@ export const resendVerificationSchema = z.object({
 
 export const forgotPasswordSchema = z.object({
   body: z.object({
-    email: z.string().email(),
+    email: z.string().min(1).max(254),
   }),
 });
 
@@ -166,6 +186,8 @@ export const changePasswordSchema = z.object({
 export type RegisterBody = z.infer<typeof registerSchema>['body'];
 export type LoginBody = z.infer<typeof loginSchema>['body'];
 export type LoginByPhoneBody = z.infer<typeof loginByPhoneSchema>['body'];
+export type PhoneCodeStartBody = z.infer<typeof phoneCodeStartSchema>['body'];
+export type PhoneCodeVerifyBody = z.infer<typeof phoneCodeVerifySchema>['body'];
 export type PhoneRegisterStartBody = z.infer<typeof phoneRegisterStartSchema>['body'];
 export type GoogleAuthBody = z.infer<typeof googleAuthSchema>['body'];
 export type YandexAuthBody = z.infer<typeof yandexAuthSchema>['body'];

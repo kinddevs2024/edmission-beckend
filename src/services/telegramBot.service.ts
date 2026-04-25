@@ -20,10 +20,18 @@ type TelegramUpdate = {
 
 type BotState = {
   lang?: 'uz' | 'ru' | 'en';
-  mode: 'idle' | 'await_login_email' | 'await_login_password' | 'await_telegram_auth_contact' | 'await_telegram_auth_name';
+  mode:
+    | 'idle'
+    | 'await_login_email'
+    | 'await_login_password'
+    | 'await_telegram_auth_contact'
+    | 'await_telegram_auth_name'
+    | 'await_telegram_auth_email';
   pendingEmail?: string;
   telegramAuthSessionId?: string;
   telegramAuthPhone?: string;
+  telegramAuthFirstName?: string;
+  telegramAuthLastName?: string;
   username?: string;
   updatedAt: number;
 };
@@ -60,6 +68,7 @@ const MENU_LOGIN = 'Login';
 const MENU_REGISTER = 'Register';
 const MENU_HELP = 'Help';
 const MENU_BACK = 'Back';
+const MENU_SKIP_EMAIL = 'Skip email';
 
 const MENU_OPEN_SITE = 'Open website';
 const MENU_RECENT = 'Recent messages';
@@ -80,6 +89,8 @@ const I18N: Record<BotLang, Record<string, string>> = {
     sharePhonePrompt: 'Share your phone number to continue registration.',
     sharePhoneButton: 'Share phone number',
     askNamePrompt: 'Phone received. Now send your name.',
+    askEmailPrompt: 'Optional: send your email, or tap Skip email.',
+    skipEmail: 'Skip email',
     doneOpenWebsite: 'Done. Open website to continue:',
     sessionExpiredRestart: 'Session expired. Starting a new registration flow.',
     invalidSessionRestart: 'Invalid login session. Starting a new registration flow.',
@@ -209,6 +220,8 @@ function resetSession(chatId: string): void {
     pendingEmail: undefined,
     telegramAuthSessionId: undefined,
     telegramAuthPhone: undefined,
+    telegramAuthFirstName: undefined,
+    telegramAuthLastName: undefined,
   });
 }
 
@@ -282,6 +295,7 @@ function isVisibleReplyText(input: string): boolean {
     MENU_REGISTER,
     MENU_HELP,
     MENU_BACK,
+    MENU_SKIP_EMAIL,
     MENU_OPEN_SITE,
     MENU_RECENT,
     MENU_MARK_VIEWED,
@@ -763,6 +777,11 @@ async function handleTextMessage(
     return;
   }
 
+  if (state.mode === 'await_telegram_auth_email') {
+    await handleTelegramAuthEmailMessage(chatId, state, normalized, username);
+    return;
+  }
+
   if (linkedUser) {
     if (normalized === MENU_OPEN_SITE) {
       const role = String(linkedUser.role ?? '');
@@ -926,6 +945,8 @@ async function handleContactMessage(
     mode: 'await_telegram_auth_name',
     telegramAuthSessionId: sessionId,
     telegramAuthPhone: phoneInput,
+    telegramAuthFirstName: undefined,
+    telegramAuthLastName: undefined,
     username: username ?? state.username,
   });
   const suggestedName = [String(firstName ?? '').trim(), String(lastName ?? '').trim()]
@@ -1004,12 +1025,60 @@ async function handleTelegramAuthNameMessage(
   }
 
   const nameParts = splitNameForSession(resolvedName);
+  setSession(chatId, {
+    mode: 'await_telegram_auth_email',
+    telegramAuthSessionId: sessionId,
+    telegramAuthPhone: phoneInput,
+    telegramAuthFirstName: nameParts.firstName,
+    telegramAuthLastName: nameParts.lastName,
+    username: username ?? state.username,
+  });
+  await sendTelegramKeyboard(chatId, t(sessionState, 'askEmailPrompt'), [
+    [{ text: t(sessionState, 'skipEmail') }],
+    [{ text: MENU_BACK }],
+  ]);
+}
+
+async function handleTelegramAuthEmailMessage(
+  chatId: string,
+  state: BotState,
+  rawEmail: string,
+  username?: string
+): Promise<void> {
+  const sessionState = getSession(chatId);
+  let sessionId = String(state.telegramAuthSessionId ?? '').trim().toLowerCase();
+  const phoneInput = String(state.telegramAuthPhone ?? '').trim();
+
+  if (!TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(sessionId)) {
+    const restoredSessionId = await authService.findLatestTelegramWebsiteAuthSessionIdByChatId(chatId);
+    if (restoredSessionId) sessionId = restoredSessionId;
+  }
+  if (!TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(sessionId) || !PHONE_INPUT_REGEX.test(phoneInput)) {
+    resetSession(chatId);
+    await sendTelegramMessage(chatId, t(sessionState, 'sessionExpiredRestart'));
+    await beginTelegramWebsiteRegistrationFlow(chatId, username ?? state.username);
+    return;
+  }
+
+  const normalized = String(rawEmail ?? '').trim();
+  const skip = normalizeInput(normalized) === normalizeInput(MENU_SKIP_EMAIL) || normalizeInput(normalized) === normalizeInput(t(sessionState, 'skipEmail'));
+  const email = skip ? '' : normalized.toLowerCase();
+  if (email && !isEmailCandidate(email)) {
+    await sendTelegramKeyboard(chatId, 'Please send a valid email or tap Skip email.', [
+      [{ text: t(sessionState, 'skipEmail') }],
+      [{ text: MENU_BACK }],
+    ]);
+    return;
+  }
+
   const result = await authService.issueTelegramWebsiteAuthCode({
     sessionId,
     telegramChatId: chatId,
     phone: phoneInput,
     telegramUsername: username ?? state.username,
-    ...nameParts,
+    firstName: state.telegramAuthFirstName,
+    lastName: state.telegramAuthLastName,
+    email,
   });
 
   if (!result.ok) {

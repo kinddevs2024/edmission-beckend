@@ -5,6 +5,8 @@ import type { GoogleAuthBody, YandexAuthBody, YandexAccessTokenAuthBody } from '
 import {
   loginSchema,
   loginByPhoneSchema,
+  phoneCodeStartSchema,
+  phoneCodeVerifySchema,
   phoneRegisterStartSchema,
   phoneRegisterStatusSchema,
   phoneRegisterCompleteSchema,
@@ -63,6 +65,34 @@ export async function loginByPhone(
   }
 }
 
+export async function startPhoneCodeAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = phoneCodeStartSchema.shape.body.parse(req.body);
+    const result = await authService.startPhoneCodeAuth(data);
+    res.status(201).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function verifyPhoneCodeAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = phoneCodeVerifySchema.shape.body.parse(req.body);
+    const result = await authService.verifyPhoneCodeAuth(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function startPhoneRegistration(
   req: Request,
   res: Response,
@@ -97,8 +127,8 @@ export async function completePhoneRegistration(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { registrationId } = phoneRegisterCompleteSchema.shape.body.parse(req.body);
-    const result = await authService.completePhoneRegistration(registrationId);
+    const data = phoneRegisterCompleteSchema.shape.body.parse(req.body);
+    const result = await authService.completePhoneRegistration(data);
     res.json(result);
   } catch (e) {
     next(e);

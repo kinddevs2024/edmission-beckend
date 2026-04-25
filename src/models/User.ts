@@ -66,6 +66,12 @@ const userSchema = new mongoose.Schema(
      * true or undefined = normal email/password or password already set.
      */
     localPasswordConfigured: { type: Boolean },
+    /**
+     * Temporary/plain password for generated accounts only.
+     * Visible to admins until the user updates their password, then cleared.
+     */
+    temporaryPlainPassword: { type: String, default: '' },
+    temporaryPasswordGeneratedAt: { type: Date },
     notificationPreferences: {
       emailApplicationUpdates: { type: Boolean, default: true },
       emailTrialReminder: { type: Boolean, default: true },

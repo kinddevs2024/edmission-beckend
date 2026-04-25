@@ -32,6 +32,20 @@ router.get('/analytics/overview', validate(adminValidator.analyticsOverviewQuery
 router.get('/analytics/university-interests', adminController.getUniversityInterestAnalytics);
 router.get('/users', validate(adminValidator.usersQuerySchema, 'query'), adminController.getUsers);
 router.post('/users', requireUserManager, validate(adminValidator.createUserSchema.shape.body, 'body'), adminController.createUser);
+router.get('/users/template', requireUserManager, adminController.downloadUsersTemplate);
+router.get('/users/export', adminController.downloadAllUsersExcel);
+router.post('/users/import/preview', requireUserManager, (req, res, next) => {
+  uploadExcel.single('file')(req, res, (err) => {
+    if (err) return next(err);
+    next();
+  });
+}, adminController.previewUsersExcel);
+router.post('/users/import', requireUserManager, (req, res, next) => {
+  uploadExcel.single('file')(req, res, (err) => {
+    if (err) return next(err);
+    next();
+  });
+}, adminController.uploadUsersExcel);
 router.get('/users/:id', validateObjectId('id'), adminController.getUser);
 router.patch('/users/:id', requireUserManager, validateObjectId('id'), validate(adminValidator.updateUserSchema.shape.body, 'body'), adminController.updateUser);
 router.delete('/users/:id', requireUserManager, validateObjectId('id'), adminController.deleteUser);
