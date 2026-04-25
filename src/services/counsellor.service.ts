@@ -8,6 +8,8 @@ import {
   SchoolJoinRequest,
   SchoolInvitation,
   Interest,
+  CatalogInterest,
+  StudentIssuedDocument,
 } from '../models';
 import * as subscriptionService from './subscription.service';
 import * as notificationService from './notification.service';
@@ -22,6 +24,64 @@ function generateTempPassword(): string {
   let s = '';
   for (let i = 0; i < 12; i++) s += chars[bytes[i]! % chars.length];
   return s;
+}
+
+function splitList(value: unknown): string[] {
+  if (value == null || value === '') return [];
+  return String(value)
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+function parseNumFromText(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const parsed = Number(String(value).replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.[0] ?? NaN);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function trimString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed || undefined;
+}
+
+function slugEmailPart(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 24);
+}
+
+function makeGeneratedEmailBase(firstName: string, lastName: string): string {
+  const lastInitial = slugEmailPart(lastName).slice(0, 1).toUpperCase();
+  const cleanFirstName = slugEmailPart(firstName);
+  const displayFirstName = cleanFirstName
+    ? cleanFirstName.charAt(0).toUpperCase() + cleanFirstName.slice(1)
+    : 'User';
+  return `${lastInitial || 'U'}-${displayFirstName}`;
+}
+
+async function makeUniqueGeneratedStudentEmail(firstName: string, lastName: string, usedEmails: Set<string>): Promise<string> {
+  const base = makeGeneratedEmailBase(firstName, lastName);
+  let counter = 1;
+  while (counter < 10000) {
+    const suffix = counter === 1 ? '' : String(counter);
+    const email = `${base}${suffix}@edu.uz`;
+    const emailKey = email.toLowerCase();
+    const existing = await User.exists({ email: new RegExp(`^${escapeRegex(email)}$`, 'i') });
+    if (!usedEmails.has(emailKey) && !existing) {
+      usedEmails.add(emailKey);
+      return email;
+    }
+    counter += 1;
+  }
+  const fallback = `${base}.${Date.now()}@edu.uz`;
+  usedEmails.add(fallback.toLowerCase());
+  return fallback;
 }
 
 function ensureCounsellor(counsellorUserId: string): void {
@@ -180,6 +240,9 @@ export async function createStudentByCounsellor(
     passwordHash,
     role: 'student',
     mustChangePassword: true,
+    localPasswordConfigured: true,
+    temporaryPlainPassword: tempPassword,
+    temporaryPasswordGeneratedAt: new Date(),
   });
 
   await StudentProfile.create({
@@ -227,10 +290,10 @@ export async function listMyStudents(counsellorUserId: string, params?: { page?:
     StudentProfile.countDocuments(where),
   ]);
   const userIds = profiles.map((p: { userId?: unknown }) => p.userId).filter(Boolean);
-  const users = await User.find({ _id: { $in: userIds } }).select('email name mustChangePassword').lean();
-  const userMap = new Map(users.map((u: { _id: unknown; email?: string; name?: string }) => [String(u._id), u]));
+  const users = await User.find({ _id: { $in: userIds } }).select('email name mustChangePassword temporaryPlainPassword').lean();
+  const userMap = new Map(users.map((u: { _id: unknown; email?: string; name?: string; mustChangePassword?: boolean; temporaryPlainPassword?: string }) => [String(u._id), u]));
   const data = profiles.map((p: Record<string, unknown>) => {
-    const u = userMap.get(String(p.userId)) as { email?: string; name?: string; mustChangePassword?: boolean } | undefined;
+    const u = userMap.get(String(p.userId)) as { email?: string; name?: string; mustChangePassword?: boolean; temporaryPlainPassword?: string } | undefined;
     return {
       id: String(p._id),
       userId: String(p.userId),
@@ -241,9 +304,302 @@ export async function listMyStudents(counsellorUserId: string, params?: { page?:
       country: p.country ?? '',
       city: p.city ?? '',
       mustChangePassword: Boolean(u?.mustChangePassword),
+      temporaryPassword: u?.mustChangePassword ? String(u?.temporaryPlainPassword ?? '') || undefined : undefined,
     };
   });
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+}
+
+type CounsellorExcelStudentPayload = {
+  email: string;
+  firstName: string;
+  lastName: string;
+  name: string;
+  phone?: string;
+  country?: string;
+  city?: string;
+  gradeLevel?: string;
+  gpa?: number;
+  schoolName?: string;
+  graduationYear?: number;
+  preferredCountries?: string[];
+  interestedFaculties?: string[];
+};
+
+type ParsedCounsellorStudentExcelRow = {
+  row: number;
+  sourceId?: string;
+  body: CounsellorExcelStudentPayload;
+};
+
+async function assertCounsellorAccount(counsellorUserId: string): Promise<void> {
+  const user = await User.findById(counsellorUserId).select('role').lean();
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(403, 'Not a school counsellor', ErrorCodes.FORBIDDEN);
+  }
+}
+
+function buildCounsellorStudentPayload(userRaw: Record<string, unknown>, profileRaw: Record<string, unknown>): CounsellorExcelStudentPayload {
+  const firstName = String(profileRaw.firstName ?? '').trim();
+  const lastName = String(profileRaw.lastName ?? '').trim();
+  const name = String(userRaw.name ?? '').trim() || [firstName, lastName].filter(Boolean).join(' ');
+  return {
+    email: String(userRaw.email ?? '').trim().toLowerCase(),
+    firstName,
+    lastName,
+    name,
+    phone: trimString(userRaw.phone),
+    country: trimString(profileRaw.country),
+    city: trimString(profileRaw.city),
+    gradeLevel: trimString(profileRaw.gradeLevel),
+    gpa: parseNumFromText(profileRaw.gpa),
+    schoolName: trimString(profileRaw.schoolName),
+    graduationYear: parseNumFromText(profileRaw.graduationYear),
+    preferredCountries: Array.isArray(profileRaw.preferredCountries) ? profileRaw.preferredCountries.map(String).filter(Boolean) : [],
+    interestedFaculties: Array.isArray(profileRaw.interestedFaculties) ? profileRaw.interestedFaculties.map(String).filter(Boolean) : [],
+  };
+}
+
+async function getCounsellorStudentRows(counsellorUserId: string): Promise<Array<{
+  id: string;
+  userId: string;
+  payload: CounsellorExcelStudentPayload;
+  temporaryPassword?: string;
+}>> {
+  await assertCounsellorAccount(counsellorUserId);
+  const profiles = await StudentProfile.find({ counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId) })
+    .sort({ createdAt: -1 })
+    .lean();
+  const userIds = profiles.map((profile) => profile.userId).filter(Boolean);
+  const users = await User.find({ _id: { $in: userIds }, role: 'student' })
+    .select('email name phone mustChangePassword temporaryPlainPassword')
+    .lean();
+  const userMap = new Map(users.map((user: Record<string, unknown>) => [String(user._id), user]));
+  return profiles.flatMap((profile: Record<string, unknown>) => {
+    const user = userMap.get(String(profile.userId));
+    if (!user) return [];
+    return [{
+      id: String(profile._id),
+      userId: String(profile.userId),
+      payload: buildCounsellorStudentPayload(user, profile),
+      temporaryPassword: (user as { mustChangePassword?: boolean; temporaryPlainPassword?: string }).mustChangePassword
+        ? String((user as { temporaryPlainPassword?: string }).temporaryPlainPassword ?? '') || undefined
+        : undefined,
+    }];
+  });
+}
+
+export function getCounsellorStudentsExcelTemplateBuffer(): Buffer {
+  const XLSX = require('xlsx');
+  const headers = [
+    'ID',
+    'Email',
+    'First name',
+    'Last name',
+    'Name',
+    'Phone',
+    'Country',
+    'City',
+    'Grade level',
+    'GPA',
+    'School name',
+    'Graduation year',
+    'Preferred countries',
+    'Interested faculties',
+  ];
+  const data = [
+    headers,
+    ['', 'student@example.com', 'Example', 'Student', 'Example Student', '+998901234567', 'UZ', 'Tashkent', '11', '4.5', 'Example School', '2026', 'UZ; KZ; TR', 'engineering_technology; computer_science_digital_technologies'],
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'Students');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+export async function getCounsellorStudentsExcelExportBuffer(counsellorUserId: string): Promise<Buffer> {
+  const XLSX = require('xlsx');
+  const rows = await getCounsellorStudentRows(counsellorUserId);
+  const headers = [
+    'ID',
+    'User ID',
+    'Email',
+    'First name',
+    'Last name',
+    'Name',
+    'Phone',
+    'One-time password',
+    'Country',
+    'City',
+    'Grade level',
+    'GPA',
+    'School name',
+    'Graduation year',
+    'Preferred countries',
+    'Interested faculties',
+  ];
+  const data = [
+    headers,
+    ...rows.map((row) => [
+      row.id,
+      row.userId,
+      row.payload.email,
+      row.payload.firstName,
+      row.payload.lastName,
+      row.payload.name,
+      row.payload.phone ?? '',
+      row.temporaryPassword ?? '',
+      row.payload.country ?? '',
+      row.payload.city ?? '',
+      row.payload.gradeLevel ?? '',
+      row.payload.gpa ?? '',
+      row.payload.schoolName ?? '',
+      row.payload.graduationYear ?? '',
+      (row.payload.preferredCountries ?? []).join('; '),
+      (row.payload.interestedFaculties ?? []).join('; '),
+    ]),
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'Students');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+function parseCounsellorStudentsExcel(buffer: Buffer): { rows: ParsedCounsellorStudentExcelRow[]; errors: Array<{ row: number; name: string; message: string }> } {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false });
+  const sheetName = (wb.SheetNames || []).find((name: string) => /student/i.test(name)) || wb.SheetNames?.[0];
+  const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName] || {}) as Record<string, unknown>[];
+  const rows: ParsedCounsellorStudentExcelRow[] = [];
+  const errors: Array<{ row: number; name: string; message: string }> = [];
+  for (let index = 0; index < rawRows.length; index++) {
+    const raw = rawRows[index];
+    const rowNumber = index + 2;
+    const firstName = trimString(raw['First name'] ?? raw.firstName) ?? '';
+    const lastName = trimString(raw['Last name'] ?? raw.lastName ?? raw.Surname ?? raw.surname) ?? '';
+    const name = trimString(raw.Name ?? raw.name) ?? [firstName, lastName].filter(Boolean).join(' ');
+    const email = String(raw.Email ?? raw.email ?? '').trim().toLowerCase();
+    if (!firstName || !lastName) {
+      errors.push({ row: rowNumber, name, message: 'First name and last name are required.' });
+      continue;
+    }
+    rows.push({
+      row: rowNumber,
+      sourceId: trimString(raw.ID ?? raw.id ?? raw['User ID'] ?? raw.userId),
+      body: {
+        email,
+        firstName,
+        lastName,
+        name,
+        phone: trimString(raw.Phone ?? raw.phone),
+        country: trimString(raw.Country ?? raw.country),
+        city: trimString(raw.City ?? raw.city),
+        gradeLevel: trimString(raw['Grade level'] ?? raw.gradeLevel),
+        gpa: parseNumFromText(raw.GPA ?? raw.gpa),
+        schoolName: trimString(raw['School name'] ?? raw.schoolName),
+        graduationYear: parseNumFromText(raw['Graduation year'] ?? raw.graduationYear),
+        preferredCountries: splitList(raw['Preferred countries'] ?? raw.preferredCountries),
+        interestedFaculties: splitList(raw['Interested faculties'] ?? raw.interestedFaculties),
+      },
+    });
+  }
+  return { rows, errors };
+}
+
+async function findCounsellorStudentForImport(counsellorUserId: string, row: ParsedCounsellorStudentExcelRow) {
+  if (row.sourceId && mongoose.Types.ObjectId.isValid(row.sourceId)) {
+    const profileById = await StudentProfile.findOne({
+      $or: [{ _id: row.sourceId }, { userId: row.sourceId }],
+      counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    }).lean();
+    if (profileById) return profileById as Record<string, unknown>;
+  }
+  const userByEmail = await User.findOne({ email: row.body.email, role: 'student' }).select('_id').lean();
+  if (!userByEmail) return undefined;
+  return StudentProfile.findOne({
+    userId: userByEmail._id,
+    counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+  }).lean() as Promise<Record<string, unknown> | null>;
+}
+
+export async function importCounsellorStudentsFromExcel(counsellorUserId: string, buffer: Buffer): Promise<{
+  created: number;
+  updated: number;
+  errors: Array<{ row: number; name: string; message: string }>;
+}> {
+  await assertCounsellorAccount(counsellorUserId);
+  const parsed = parseCounsellorStudentsExcel(buffer);
+  const errors = [...parsed.errors];
+  const usedEmails = new Set<string>();
+  let created = 0;
+  let updated = 0;
+  for (const row of parsed.rows) {
+    try {
+      if (row.body.email) {
+        usedEmails.add(row.body.email.toLowerCase());
+      } else {
+        row.body.email = await makeUniqueGeneratedStudentEmail(row.body.firstName, row.body.lastName, usedEmails);
+      }
+      const existingProfile = await findCounsellorStudentForImport(counsellorUserId, row);
+      if (existingProfile) {
+        const existingUserId = String(existingProfile.userId);
+        await User.findByIdAndUpdate(existingUserId, {
+          email: row.body.email,
+          name: row.body.name,
+          phone: row.body.phone ?? '',
+        });
+        await StudentProfile.findByIdAndUpdate(existingProfile._id, {
+          firstName: row.body.firstName,
+          lastName: row.body.lastName,
+          country: row.body.country,
+          city: row.body.city,
+          gradeLevel: row.body.gradeLevel,
+          gpa: row.body.gpa,
+          schoolName: row.body.schoolName,
+          graduationYear: row.body.graduationYear,
+          preferredCountries: row.body.preferredCountries ?? [],
+          interestedFaculties: row.body.interestedFaculties ?? [],
+        });
+        updated += 1;
+      } else {
+        const duplicate = await User.findOne({ email: row.body.email }).select('_id').lean();
+        if (duplicate) {
+          throw new AppError(409, 'Email already registered outside your students', ErrorCodes.CONFLICT);
+        }
+        const tempPassword = generateTempPassword();
+        const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_ROUNDS);
+        const user = await User.create({
+          email: row.body.email,
+          name: row.body.name,
+          phone: row.body.phone ?? '',
+          passwordHash,
+          role: 'student',
+          emailVerified: true,
+          localPasswordConfigured: true,
+          mustChangePassword: true,
+          temporaryPlainPassword: tempPassword,
+          temporaryPasswordGeneratedAt: new Date(),
+        });
+        await StudentProfile.create({
+          userId: user._id,
+          counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+          firstName: row.body.firstName,
+          lastName: row.body.lastName,
+          country: row.body.country,
+          city: row.body.city,
+          gradeLevel: row.body.gradeLevel,
+          gpa: row.body.gpa,
+          schoolName: row.body.schoolName,
+          graduationYear: row.body.graduationYear,
+          preferredCountries: row.body.preferredCountries ?? [],
+          interestedFaculties: row.body.interestedFaculties ?? [],
+        });
+        await subscriptionService.createForNewUser(String(user._id), 'student');
+        created += 1;
+      }
+    } catch (error: unknown) {
+      errors.push({ row: row.row, name: row.body.name, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { created, updated, errors };
 }
 
 /** Ensure student belongs to this counsellor. */
@@ -285,7 +641,7 @@ export async function getStudentUniversities(
   return getUniversities(studentUserId, query);
 }
 
-/** Generate a new temporary password for a student who hasn't changed it yet. Returns the new password. */
+/** Return the existing one-time password, or create one only for legacy rows that do not have it stored. */
 export async function generateTempPasswordForStudent(counsellorUserId: string, studentUserId: string): Promise<{ temporaryPassword: string }> {
   await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
   const user = await User.findById(studentUserId);
@@ -293,9 +649,18 @@ export async function generateTempPasswordForStudent(counsellorUserId: string, s
   if (!user.mustChangePassword) {
     throw new AppError(400, 'Student has already set their password. Use reset password if needed.', ErrorCodes.VALIDATION);
   }
+  if (user.temporaryPlainPassword) {
+    return { temporaryPassword: user.temporaryPlainPassword };
+  }
   const tempPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_ROUNDS);
-  await User.findByIdAndUpdate(studentUserId, { passwordHash });
+  await User.findByIdAndUpdate(studentUserId, {
+    passwordHash,
+    localPasswordConfigured: true,
+    mustChangePassword: true,
+    temporaryPlainPassword: tempPassword,
+    temporaryPasswordGeneratedAt: new Date(),
+  });
   return { temporaryPassword: tempPassword };
 }
 
@@ -426,6 +791,195 @@ export async function addInterestOnBehalfOfStudent(
   await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
   const { addInterest } = await import('./student.service');
   return addInterest(studentUserId, universityProfileId);
+}
+
+async function getCounsellorStudentProfileContext(counsellorUserId: string) {
+  await assertCounsellorAccount(counsellorUserId);
+  const profiles = await StudentProfile.find({ counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId) })
+    .select('_id userId firstName lastName country')
+    .lean();
+  const userIds = profiles.map((profile: Record<string, unknown>) => profile.userId).filter(Boolean);
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }).select('email name').lean()
+    : [];
+  const userMap = new Map(users.map((user: Record<string, unknown>) => [String(user._id), user]));
+  const profileMap = new Map<string, { userId: string; studentName: string; studentEmail: string; country?: string }>();
+  for (const profile of profiles as Record<string, unknown>[]) {
+    const user = userMap.get(String(profile.userId)) as { email?: string; name?: string } | undefined;
+    const profileName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
+    profileMap.set(String(profile._id), {
+      userId: String(profile.userId ?? ''),
+      studentName: user?.name || profileName || 'Student',
+      studentEmail: user?.email ?? '',
+      country: profile.country != null ? String(profile.country) : undefined,
+    });
+  }
+  return {
+    profileIds: profiles.map((profile: Record<string, unknown>) => profile._id),
+    profileMap,
+  };
+}
+
+export async function listMyApplications(
+  counsellorUserId: string,
+  query: { page?: number; limit?: number; status?: string; studentUserId?: string } = {}
+) {
+  const page = Math.max(1, query.page ?? 1);
+  const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+  const skip = (page - 1) * limit;
+  const { profileIds, profileMap } = await getCounsellorStudentProfileContext(counsellorUserId);
+  if (profileIds.length === 0) return { data: [], total: 0, page, limit, totalPages: 0 };
+
+  let scopedProfileIds = profileIds;
+  if (query.studentUserId && mongoose.Types.ObjectId.isValid(query.studentUserId)) {
+    const profile = await StudentProfile.findOne({
+      userId: query.studentUserId,
+      counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    }).select('_id').lean();
+    scopedProfileIds = profile ? [profile._id] : [];
+  }
+  if (scopedProfileIds.length === 0) return { data: [], total: 0, page, limit, totalPages: 0 };
+
+  const whereProfile: Record<string, unknown> = { studentId: { $in: scopedProfileIds } };
+  const whereCatalog: Record<string, unknown> = { studentId: { $in: scopedProfileIds } };
+  if (query.status) {
+    whereProfile.status = query.status;
+    whereCatalog.status = query.status;
+  }
+
+  const [profileList, catalogList] = await Promise.all([
+    Interest.find(whereProfile)
+      .populate('universityId', 'universityName')
+      .sort({ createdAt: -1 })
+      .lean(),
+    CatalogInterest.find(whereCatalog)
+      .populate('catalogUniversityId', 'universityName')
+      .sort({ createdAt: -1 })
+      .lean(),
+  ]);
+
+  const profileItems = profileList.map((interest: Record<string, unknown>) => {
+    const studentProfileId = String(interest.studentId ?? '');
+    const student = profileMap.get(studentProfileId);
+    const university = interest.universityId as { _id?: unknown; universityName?: string } | undefined;
+    return {
+      id: String(interest._id),
+      source: 'profile' as const,
+      studentProfileId,
+      studentUserId: student?.userId ?? '',
+      studentName: student?.studentName ?? 'Student',
+      studentEmail: student?.studentEmail ?? '',
+      universityId: university?._id != null ? String(university._id) : String(interest.universityId ?? ''),
+      universityName: university?.universityName,
+      status: String(interest.status ?? 'interested'),
+      createdAt: interest.createdAt,
+      updatedAt: interest.updatedAt,
+    };
+  });
+
+  const catalogItems = catalogList.map((interest: Record<string, unknown>) => {
+    const studentProfileId = String(interest.studentId ?? '');
+    const student = profileMap.get(studentProfileId);
+    const university = interest.catalogUniversityId as { _id?: unknown; universityName?: string } | undefined;
+    const rawUniversityId = university?._id != null ? String(university._id) : String(interest.catalogUniversityId ?? '');
+    return {
+      id: `catalog-${interest._id}`,
+      source: 'catalog' as const,
+      studentProfileId,
+      studentUserId: student?.userId ?? '',
+      studentName: student?.studentName ?? 'Student',
+      studentEmail: student?.studentEmail ?? '',
+      universityId: rawUniversityId ? `catalog-${rawUniversityId}` : '',
+      universityName: university?.universityName,
+      status: String(interest.status ?? 'interested'),
+      createdAt: interest.createdAt,
+      updatedAt: interest.updatedAt,
+    };
+  });
+
+  const merged = [...profileItems, ...catalogItems].sort(
+    (a, b) => new Date(b.createdAt as Date | string | undefined ?? 0).getTime() - new Date(a.createdAt as Date | string | undefined ?? 0).getTime()
+  );
+  return {
+    data: merged.slice(skip, skip + limit),
+    total: merged.length,
+    page,
+    limit,
+    totalPages: Math.ceil(merged.length / limit),
+  };
+}
+
+export async function listMyOffers(
+  counsellorUserId: string,
+  query: { page?: number; limit?: number; status?: string; type?: string; studentUserId?: string } = {}
+) {
+  const page = Math.max(1, query.page ?? 1);
+  const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+  const skip = (page - 1) * limit;
+  const { profileIds, profileMap } = await getCounsellorStudentProfileContext(counsellorUserId);
+  if (profileIds.length === 0) return { data: [], total: 0, page, limit, totalPages: 0 };
+
+  let scopedProfileIds = profileIds;
+  if (query.studentUserId && mongoose.Types.ObjectId.isValid(query.studentUserId)) {
+    const profile = await StudentProfile.findOne({
+      userId: query.studentUserId,
+      counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    }).select('_id').lean();
+    scopedProfileIds = profile ? [profile._id] : [];
+  }
+  if (scopedProfileIds.length === 0) return { data: [], total: 0, page, limit, totalPages: 0 };
+
+  const where: Record<string, unknown> = {
+    studentId: { $in: scopedProfileIds },
+    deletedByUniversityAt: null,
+  };
+  if (query.status) where.status = query.status;
+  if (query.type === 'offer' || query.type === 'scholarship') where.type = query.type;
+
+  const [documents, total] = await Promise.all([
+    StudentIssuedDocument.find(where)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('universityId', 'universityName logoUrl city country')
+      .lean(),
+    StudentIssuedDocument.countDocuments(where),
+  ]);
+
+  const data = documents.map((document: Record<string, unknown>) => {
+    const studentProfileId = String(document.studentId ?? '');
+    const student = profileMap.get(studentProfileId);
+    const university = document.universityId as { _id?: unknown; universityName?: string; logoUrl?: string; city?: string; country?: string } | undefined;
+    return {
+      id: String(document._id),
+      type: document.type,
+      status: document.status,
+      title: document.title,
+      universityMessage: document.universityMessage,
+      sentAt: document.sentAt,
+      viewedAt: document.viewedAt,
+      decisionAt: document.decisionAt,
+      postponeUntil: document.postponeUntil,
+      expiresAt: document.expiresAt,
+      createdAt: document.createdAt,
+      updatedAt: document.updatedAt,
+      studentProfileId,
+      studentUserId: student?.userId ?? '',
+      studentName: student?.studentName ?? 'Student',
+      studentEmail: student?.studentEmail ?? '',
+      universityId: university?._id != null ? String(university._id) : String(document.universityId ?? ''),
+      university: university
+        ? {
+            name: university.universityName ?? 'University',
+            logoUrl: university.logoUrl,
+            city: university.city,
+            country: university.country,
+          }
+        : undefined,
+    };
+  });
+
+  return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
 }
 
 /** Search existing students (by email/name) who are not in this counsellor's school. For invite flow. */

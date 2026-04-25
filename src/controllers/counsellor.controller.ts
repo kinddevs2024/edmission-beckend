@@ -1,6 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
 import * as counsellorService from '../services/counsellor.service';
 
+function parseQueryNumber(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined
+  }
+  return undefined
+}
+
 export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
@@ -39,8 +50,8 @@ export async function listSchools(req: Request, res: Response, next: NextFunctio
     const query = (req.query && typeof req.query === 'object') ? req.query : {};
     const data = await counsellorService.listSchools({
       search: typeof query.search === 'string' ? query.search : undefined,
-      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
-      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      page: parseQueryNumber(query.page),
+      limit: parseQueryNumber(query.limit),
     });
     res.json(data);
   } catch (e) {
@@ -89,8 +100,8 @@ export async function getStudentUniversities(req: Request, res: Response, next: 
         : rawUseProfile === '1' || rawUseProfile === 'true';
 
     const data = await counsellorService.getStudentUniversities(req.user.id, req.params.studentUserId, {
-      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
-      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      page: parseQueryNumber(query.page),
+      limit: parseQueryNumber(query.limit),
       country: typeof query.country === 'string' ? query.country : undefined,
       city: typeof query.city === 'string' ? query.city : undefined,
       useProfileFilters,
@@ -109,11 +120,54 @@ export async function listMyStudents(req: Request, res: Response, next: NextFunc
     }
     const query = (req.query && typeof req.query === 'object') ? req.query : {};
     const data = await counsellorService.listMyStudents(req.user.id, {
-      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
-      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      page: parseQueryNumber(query.page),
+      limit: parseQueryNumber(query.limit),
       search: typeof query.search === 'string' ? query.search : undefined,
     });
     res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function downloadStudentsTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const buffer = counsellorService.getCounsellorStudentsExcelTemplateBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="counsellor_students_template.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function downloadStudentsExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const buffer = await counsellorService.getCounsellorStudentsExcelExportBuffer(req.user.id);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="my_students.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function uploadStudentsExcel(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    if (!req.file?.buffer) {
+      res.status(400).json({ message: 'No file uploaded. Use form field "file" with an .xlsx file.' });
+      return;
+    }
+    const result = await counsellorService.importCounsellorStudentsFromExcel(req.user.id, req.file.buffer);
+    res.status(200).json(result);
   } catch (e) {
     next(e);
   }
@@ -215,6 +269,45 @@ export async function addInterestForStudent(req: Request, res: Response, next: N
     const universityId = req.params.universityId; // university profile id
     const data = await counsellorService.addInterestOnBehalfOfStudent(req.user.id, studentUserId, universityId);
     res.status(201).json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function listMyApplications(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const query = (req.query && typeof req.query === 'object') ? req.query : {};
+    const data = await counsellorService.listMyApplications(req.user.id, {
+      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
+      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      status: typeof query.status === 'string' ? query.status : undefined,
+      studentUserId: typeof query.studentUserId === 'string' ? query.studentUserId : undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function listMyOffers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const query = (req.query && typeof req.query === 'object') ? req.query : {};
+    const data = await counsellorService.listMyOffers(req.user.id, {
+      page: typeof query.page === 'string' ? parseInt(query.page, 10) : undefined,
+      limit: typeof query.limit === 'string' ? parseInt(query.limit, 10) : undefined,
+      status: typeof query.status === 'string' ? query.status : undefined,
+      type: typeof query.type === 'string' ? query.type : undefined,
+      studentUserId: typeof query.studentUserId === 'string' ? query.studentUserId : undefined,
+    });
+    res.json(data);
   } catch (e) {
     next(e);
   }

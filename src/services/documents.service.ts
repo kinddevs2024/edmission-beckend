@@ -422,6 +422,31 @@ export async function sendStudentDocument(userId: string, input: SendDocumentInp
     });
   }
 
+  const counsellorUserId = (student as { counsellorUserId?: unknown }).counsellorUserId
+    ? String((student as { counsellorUserId: unknown }).counsellorUserId)
+    : '';
+  if (counsellorUserId) {
+    const studentName = [student.firstName, student.lastName].filter(Boolean).join(' ') || 'Student';
+    await notificationService.createNotification(counsellorUserId, {
+      type: 'document',
+      title: input.type === 'offer' ? 'Student received an Offer' : 'Student received a Scholarship',
+      body: `${studentName} received a new ${input.type} from ${university.universityName ?? 'a university'}.`,
+      referenceType: 'student_document',
+      referenceId: String(documentId),
+      metadata: {
+        documentId: String(documentId),
+        documentType: input.type,
+        studentProfileId: String(student._id),
+        link: '/school/offers',
+      },
+    });
+    await appendEvent(String(documentId), 'university', userId, 'notification_sent', {
+      recipientUserId: counsellorUserId,
+      notificationType: 'document',
+      recipientRole: 'school_counsellor',
+    });
+  }
+
   await Interest.findOneAndUpdate(
     {
       studentId: student._id,

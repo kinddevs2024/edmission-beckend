@@ -87,6 +87,32 @@ router.patch(
   validate(adminValidator.adminPatchUniversityProfileBodySchema, 'body'),
   adminController.updateUniversityProfileByUser
 );
+router.get('/users/:id/counsellor-profile', requireUserManager, validateObjectId('id'), adminController.getCounsellorProfileByUser);
+router.patch(
+  '/users/:id/counsellor-profile',
+  requireUserManager,
+  validateObjectId('id'),
+  validate(counsellorValidator.counsellorProfileSchema.shape.body, 'body'),
+  adminController.updateCounsellorProfileByUser
+);
+router.get(
+  '/users/:id/counsellor-students/export',
+  requireUserManager,
+  validateObjectId('id'),
+  adminController.downloadCounsellorStudentsExcelByUser
+);
+router.post(
+  '/users/:id/counsellor-students/import',
+  requireUserManager,
+  validateObjectId('id'),
+  (req, res, next) => {
+    uploadExcel.single('file')(req, res, (err) => {
+      if (err) return next(err);
+      next();
+    });
+  },
+  adminController.uploadCounsellorStudentsExcelByUser
+);
 
 /** Document templates & issued university→student documents, acting as that university user account. */
 router.get(

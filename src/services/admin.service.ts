@@ -638,6 +638,7 @@ type UserExcelPayload = {
   preferredCountries?: string[];
   interestedFaculties?: string[];
   counsellorUserId?: string;
+  counsellorEmail?: string;
   managedUniversityUserIds?: string[];
   universityMultiManagerApproved?: boolean;
 };
@@ -744,6 +745,7 @@ function userExcelComparable(payload: UserExcelPayload): Record<string, unknown>
     preferredCountries: [...(payload.preferredCountries ?? [])].sort(),
     interestedFaculties: [...(payload.interestedFaculties ?? [])].sort(),
     counsellorUserId: payload.counsellorUserId ?? '',
+    counsellorEmail: payload.counsellorEmail ?? '',
     managedUniversityUserIds: [...(payload.managedUniversityUserIds ?? [])].sort(),
     universityMultiManagerApproved: payload.universityMultiManagerApproved ?? false,
   };
@@ -769,6 +771,7 @@ function makeUserPreviewChanges(current: UserExcelPayload, incoming: UserExcelPa
     preferredCountries: 'Preferred countries',
     interestedFaculties: 'Interested faculties',
     counsellorUserId: 'Counsellor User ID',
+    counsellorEmail: 'Counsellor email',
     managedUniversityUserIds: 'Managed university User IDs',
     universityMultiManagerApproved: 'Multi-manager approved',
   };
@@ -788,9 +791,23 @@ async function getStudentPayloadByUserIds(userIds: string[]): Promise<Map<string
   const result = new Map<string, Partial<UserExcelPayload>>();
   if (!userIds.length) return result;
   const profiles = await StudentProfile.find({ userId: { $in: userIds.map((id) => new mongoose.Types.ObjectId(id)) } }).lean();
+  const counsellorIds = [
+    ...new Set(
+      profiles
+        .map((profile) => String((profile as Record<string, unknown>).counsellorUserId ?? ''))
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    ),
+  ];
+  const counsellors = counsellorIds.length
+    ? await User.find({ _id: { $in: counsellorIds.map((id) => new mongoose.Types.ObjectId(id)) }, role: 'school_counsellor' })
+        .select('email')
+        .lean()
+    : [];
+  const counsellorEmailById = new Map(counsellors.map((user: Record<string, unknown>) => [String(user._id), String(user.email ?? '')]));
   for (const profile of profiles) {
     const row = profile as Record<string, unknown>;
     const userId = String(row.userId ?? '');
+    const counsellorUserId = row.counsellorUserId != null ? String(row.counsellorUserId) : undefined;
     result.set(userId, {
       firstName: String(row.firstName ?? ''),
       lastName: String(row.lastName ?? ''),
@@ -802,7 +819,8 @@ async function getStudentPayloadByUserIds(userIds: string[]): Promise<Map<string
       graduationYear: normalizeNumber(row.graduationYear),
       preferredCountries: Array.isArray(row.preferredCountries) ? row.preferredCountries.map(String).filter(Boolean) : [],
       interestedFaculties: Array.isArray(row.interestedFaculties) ? row.interestedFaculties.map(String).filter(Boolean) : [],
-      counsellorUserId: row.counsellorUserId != null ? String(row.counsellorUserId) : undefined,
+      counsellorUserId,
+      counsellorEmail: counsellorUserId ? counsellorEmailById.get(counsellorUserId) : undefined,
     });
   }
   return result;
@@ -833,6 +851,7 @@ function buildUserExcelPayload(userRaw: Record<string, unknown>, studentPatch?: 
     preferredCountries: studentPatch?.preferredCountries ?? [],
     interestedFaculties: studentPatch?.interestedFaculties ?? [],
     counsellorUserId: studentPatch?.counsellorUserId,
+    counsellorEmail: studentPatch?.counsellorEmail,
     managedUniversityUserIds: Array.isArray(userRaw.managedUniversityUserIds)
       ? userRaw.managedUniversityUserIds.map((id) => String(id)).filter(Boolean)
       : [],
@@ -850,6 +869,19 @@ async function findUserForImport(row: ParsedUserExcelRow) {
     if (byEmail) return byEmail as Record<string, unknown>;
   }
   return undefined;
+}
+
+async function resolveCounsellorUserIdByEmail(email: string): Promise<string> {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return '';
+  const counsellor = await User.findOne({
+    role: 'school_counsellor',
+    email: new RegExp(`^${escapeRegExp(normalized)}$`, 'i'),
+  }).select('_id').lean();
+  if (!counsellor) {
+    throw new AppError(404, `Counsellor not found for email: ${email}`, ErrorCodes.NOT_FOUND);
+  }
+  return String(counsellor._id);
 }
 
 async function ensureStudentProfile(userId: string, payload: UserExcelPayload): Promise<void> {
@@ -997,6 +1029,16 @@ export async function parseUsersExcel(buffer: Buffer): Promise<ParsedUsersExcelR
 
     const languageRaw = String(row['Language'] ?? row['language'] ?? '').trim().toLowerCase();
     const language = ['en', 'ru', 'uz'].includes(languageRaw) ? (languageRaw as 'en' | 'ru' | 'uz') : undefined;
+    const counsellorEmail = normalizeEmail(row['Counsellor email'] ?? row['Counselor email'] ?? row['counsellorEmail'] ?? row['counselorEmail']);
+    let counsellorUserId = trimString(row['Counsellor User ID'] ?? row['counsellorUserId']);
+    if (counsellorEmail) {
+      try {
+        counsellorUserId = await resolveCounsellorUserIdByEmail(counsellorEmail);
+      } catch (error: unknown) {
+        errors.push({ row: rowNumber, name: displayName, message: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+    }
     const body: UserExcelPayload = {
       email,
       generatedEmail,
@@ -1016,7 +1058,8 @@ export async function parseUsersExcel(buffer: Buffer): Promise<ParsedUsersExcelR
       graduationYear: normalizeNumber(row['Graduation year'] ?? row['graduationYear']),
       preferredCountries: splitList(row['Preferred countries'] ?? row['preferredCountries']),
       interestedFaculties: splitList(row['Interested faculties'] ?? row['interestedFaculties']),
-      counsellorUserId: trimString(row['Counsellor User ID'] ?? row['counsellorUserId']),
+      counsellorUserId,
+      counsellorEmail,
       managedUniversityUserIds: splitList(row['Managed university User IDs'] ?? row['managedUniversityUserIds']),
       universityMultiManagerApproved: parseBooleanFromText(row['Multi-manager approved'] ?? row['universityMultiManagerApproved']) ?? false,
     };
@@ -1130,6 +1173,7 @@ export function getUsersExcelTemplateBuffer(): Buffer {
     'Graduation year',
     'Preferred countries',
     'Interested faculties',
+    'Counsellor email',
     'Counsellor User ID',
     'Managed university User IDs',
     'Multi-manager approved',
@@ -1155,6 +1199,7 @@ export function getUsersExcelTemplateBuffer(): Buffer {
       '2026',
       'UZ; KZ; TR',
       'engineering_technology; computer_science_digital_technologies',
+      '',
       '',
       '',
       'no',
@@ -1195,6 +1240,7 @@ export async function getUsersExcelExportBuffer(actor?: { id: string; role: stri
     'Graduation year',
     'Preferred countries',
     'Interested faculties',
+    'Counsellor email',
     'Counsellor User ID',
     'Managed university User IDs',
     'Multi-manager approved',
@@ -1224,6 +1270,7 @@ export async function getUsersExcelExportBuffer(actor?: { id: string; role: stri
         payload.graduationYear ?? '',
         (payload.preferredCountries ?? []).join('; '),
         (payload.interestedFaculties ?? []).join('; '),
+        payload.counsellorEmail ?? '',
         payload.counsellorUserId ?? '',
         (payload.managedUniversityUserIds ?? []).join('; '),
         payload.universityMultiManagerApproved ? 'yes' : 'no',
@@ -1279,6 +1326,66 @@ export async function updateUniversityProfileByUserId(userId: string, patch: Rec
   }
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, filtered, { new: true }).lean();
   return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+}
+
+export async function getCounsellorProfileByUserId(userId: string) {
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(404, 'Counsellor not found', ErrorCodes.NOT_FOUND);
+  }
+  let profile = await CounsellorProfile.findOne({ userId }).lean();
+  if (!profile) {
+    const created = await CounsellorProfile.create({
+      userId,
+      schoolName: '',
+      schoolDescription: '',
+      country: '',
+      city: '',
+      isPublic: true,
+    });
+    profile = created.toObject();
+  }
+  return { ...profile, id: String((profile as { _id: unknown })._id), userId: String((profile as { userId: unknown }).userId) };
+}
+
+export async function updateCounsellorProfileByUserId(
+  userId: string,
+  patch: { schoolName?: string; schoolDescription?: string; country?: string; city?: string; isPublic?: boolean }
+) {
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(404, 'Counsellor not found', ErrorCodes.NOT_FOUND);
+  }
+  const update: Record<string, unknown> = {};
+  if (patch.schoolName !== undefined) update.schoolName = String(patch.schoolName);
+  if (patch.schoolDescription !== undefined) update.schoolDescription = String(patch.schoolDescription);
+  if (patch.country !== undefined) update.country = String(patch.country);
+  if (patch.city !== undefined) update.city = String(patch.city);
+  if (patch.isPublic !== undefined) update.isPublic = Boolean(patch.isPublic);
+  const updated = await CounsellorProfile.findOneAndUpdate(
+    { userId },
+    update,
+    { new: true, upsert: true }
+  ).lean();
+  return updated ? { ...updated, id: String((updated as { _id: unknown })._id), userId: String((updated as { userId: unknown }).userId) } : null;
+}
+
+export async function getCounsellorStudentsExcelExportBufferByUserId(userId: string): Promise<Buffer> {
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(404, 'Counsellor not found', ErrorCodes.NOT_FOUND);
+  }
+  const counsellorService = await import('./counsellor.service');
+  return counsellorService.getCounsellorStudentsExcelExportBuffer(userId);
+}
+
+export async function importCounsellorStudentsFromExcelByUserId(userId: string, buffer: Buffer) {
+  const user = await User.findById(userId).select('role').lean();
+  if (!user || user.role !== 'school_counsellor') {
+    throw new AppError(404, 'Counsellor not found', ErrorCodes.NOT_FOUND);
+  }
+  const counsellorService = await import('./counsellor.service');
+  return counsellorService.importCounsellorStudentsFromExcel(userId, buffer);
 }
 
 async function assertUserRole(userId: string, expectedRole: 'student' | 'university') {

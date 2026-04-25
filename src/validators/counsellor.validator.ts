@@ -36,6 +36,21 @@ export const listMyStudentsQuerySchema = z.object({
   search: z.string().optional(),
 });
 
+export const listMyApplicationsQuerySchema = z.object({
+  page: z.coerce.number().min(1).optional(),
+  limit: z.coerce.number().min(1).max(100).optional(),
+  status: z.enum(['interested', 'under_review', 'chat_opened', 'offer_sent', 'rejected', 'accepted']).optional(),
+  studentUserId: objectIdZod.optional(),
+});
+
+export const listMyOffersQuerySchema = z.object({
+  page: z.coerce.number().min(1).optional(),
+  limit: z.coerce.number().min(1).max(100).optional(),
+  type: z.enum(['offer', 'scholarship']).optional(),
+  status: z.enum(['sent', 'viewed', 'accepted', 'declined', 'postponed', 'expired', 'revoked']).optional(),
+  studentUserId: objectIdZod.optional(),
+});
+
 export const listStudentUniversitiesQuerySchema = z.object({
   page: z.coerce.number().min(1).optional(),
   limit: z.coerce.number().min(1).max(50).optional(),

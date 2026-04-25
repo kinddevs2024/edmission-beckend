@@ -213,6 +213,55 @@ export async function updateUniversityProfileByUser(req: Request, res: Response,
   }
 }
 
+export async function getCounsellorProfileByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.getCounsellorProfileByUserId(req.params.id);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateCounsellorProfileByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const data = await adminService.updateCounsellorProfileByUserId(req.params.id, {
+      schoolName: body.schoolName,
+      schoolDescription: body.schoolDescription,
+      country: body.country,
+      city: body.city,
+      isPublic: body.isPublic,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function downloadCounsellorStudentsExcelByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const buffer = await adminService.getCounsellorStudentsExcelExportBufferByUserId(req.params.id);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="counsellor_students.xlsx"');
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function uploadCounsellorStudentsExcelByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.file?.buffer) {
+      res.status(400).json({ message: 'No file uploaded. Use form field "file" with an .xlsx file.' });
+      return;
+    }
+    const result = await adminService.importCounsellorStudentsFromExcelByUserId(req.params.id, req.file.buffer);
+    res.status(200).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getStudentDocumentsByUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = await adminService.getStudentDocumentsByUserId(req.params.id);
