@@ -104,6 +104,7 @@ export async function getStudentUniversities(req: Request, res: Response, next: 
       limit: parseQueryNumber(query.limit),
       country: typeof query.country === 'string' ? query.country : undefined,
       city: typeof query.city === 'string' ? query.city : undefined,
+      hasScholarship: query.hasScholarship === '1' || query.hasScholarship === 'true' ? true : undefined,
       useProfileFilters,
     });
     res.json(data);

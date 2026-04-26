@@ -836,6 +836,7 @@ export async function getStudentUniversities(
     limit?: number;
     country?: string;
     city?: string;
+    hasScholarship?: boolean;
     useProfileFilters?: boolean;
   },
 ) {
