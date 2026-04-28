@@ -12,6 +12,7 @@ export interface TokenPayload {
   sub: string;
   email: string;
   role: Role;
+  tokenVersion?: number;
   jti?: string;
   iat?: number;
   exp?: number;

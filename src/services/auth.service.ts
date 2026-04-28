@@ -200,15 +200,18 @@ async function issueAuthTokens(user: UserDoc): Promise<{
   accessToken: string;
   refreshToken: string;
 }> {
+  const tokenVersion = typeof user.tokenVersion === 'number' ? user.tokenVersion : 0;
   const accessToken = signAccessToken({
     sub: String(user._id),
     email: user.email,
     role: user.role as Role,
+    tokenVersion,
   });
   const refreshToken = signRefreshToken({
     sub: String(user._id),
     email: user.email,
     role: user.role as Role,
+    tokenVersion,
   });
 
   await RefreshToken.create({
@@ -1503,6 +1506,11 @@ export async function refresh(refreshToken: string) {
   if (!user || user.suspended) {
     throw new AppError(401, 'User not found or suspended', ErrorCodes.UNAUTHORIZED);
   }
+  const tokenVersion = payload.tokenVersion ?? 0;
+  const userTokenVersion = typeof user.tokenVersion === 'number' ? user.tokenVersion : 0;
+  if (tokenVersion !== userTokenVersion) {
+    throw new AppError(401, 'Invalid refresh token', ErrorCodes.UNAUTHORIZED);
+  }
   if (
     payload.iat &&
     user.passwordChangedAt instanceof Date &&
@@ -1515,6 +1523,7 @@ export async function refresh(refreshToken: string) {
     sub: String(user._id),
     email: user.email,
     role: user.role as Role,
+    tokenVersion: userTokenVersion,
   });
 
   const fullUser = await getMe(String(user._id));

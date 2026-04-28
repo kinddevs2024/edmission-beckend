@@ -57,6 +57,7 @@ const userSchema = new mongoose.Schema(
     resetToken: String,
     resetTokenExpires: Date,
     passwordChangedAt: Date,
+    tokenVersion: { type: Number, default: 0 },
     totpSecret: { type: String },
     totpEnabled: { type: Boolean, default: false },
     /** When true, user must change password on next login (e.g. temp password from school counsellor). */

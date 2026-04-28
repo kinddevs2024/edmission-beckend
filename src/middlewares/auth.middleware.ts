@@ -46,8 +46,14 @@ export function authMiddleware(
 
   (async () => {
     const payload = verifyAccessToken(token);
-    const user = await User.findById(payload.sub).select('email role language passwordChangedAt').lean();
+    const user = await User.findById(payload.sub).select('email role language passwordChangedAt tokenVersion').lean();
     if (!user) {
+      next(new AppError(401, 'Invalid or expired token', ErrorCodes.UNAUTHORIZED));
+      return;
+    }
+    const tokenVersion = payload.tokenVersion ?? 0;
+    const userTokenVersion = typeof (user as { tokenVersion?: number }).tokenVersion === 'number' ? (user as { tokenVersion?: number }).tokenVersion : 0;
+    if (tokenVersion !== userTokenVersion) {
       next(new AppError(401, 'Invalid or expired token', ErrorCodes.UNAUTHORIZED));
       return;
     }
@@ -85,8 +91,14 @@ export function optionalAuthMiddleware(
 
   (async () => {
     const payload = verifyAccessToken(token);
-    const user = await User.findById(payload.sub).select('email role language passwordChangedAt').lean();
+    const user = await User.findById(payload.sub).select('email role language passwordChangedAt tokenVersion').lean();
     if (!user) {
+      next();
+      return;
+    }
+    const tokenVersion = payload.tokenVersion ?? 0;
+    const userTokenVersion = typeof (user as { tokenVersion?: number }).tokenVersion === 'number' ? (user as { tokenVersion?: number }).tokenVersion : 0;
+    if (tokenVersion !== userTokenVersion) {
       next();
       return;
     }

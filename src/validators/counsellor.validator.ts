@@ -53,7 +53,7 @@ export const listMyOffersQuerySchema = z.object({
 
 export const listStudentUniversitiesQuerySchema = z.object({
   page: z.coerce.number().min(1).optional(),
-  limit: z.coerce.number().min(1).max(50).optional(),
+  limit: z.coerce.number().min(1).max(300).optional(),
   country: z.string().optional(),
   city: z.string().optional(),
   useProfileFilters: z.union([z.coerce.number().min(0).max(1), z.enum(['true', 'false'])]).optional(),
