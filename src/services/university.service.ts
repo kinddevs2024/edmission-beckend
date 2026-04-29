@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import {
   User,
   StudentProfile,
@@ -756,6 +757,40 @@ export async function getPipeline(
     })
     .sort({ updatedAt: -1 })
     .lean();
+
+  const interestStudentIds = list
+    .map((i: { studentId?: unknown }) => toObjectIdString((i.studentId as { _id?: unknown }) ?? i.studentId))
+    .filter((id): id is string => Boolean(id));
+
+  const chatFilter: Record<string, unknown> = { universityId: profile._id };
+  if (interestStudentIds.length > 0) {
+    chatFilter.studentId = { $nin: interestStudentIds };
+  }
+
+  const chatOnlyList = await Chat.find(chatFilter)
+    .populate({
+      path: 'studentId',
+      select: 'firstName lastName country city avatarUrl userId profileVisibility',
+      populate: { path: 'userId', select: 'email name' },
+    })
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  list = list
+    .concat(
+      chatOnlyList.map((chat) => ({
+        ...chat,
+        _id: (chat as { _id?: unknown })._id,
+        status: 'chat_opened',
+        studentId: (chat as { studentId?: unknown }).studentId,
+        updatedAt: (chat as { updatedAt?: unknown }).updatedAt ?? (chat as { createdAt?: unknown }).createdAt,
+      }))
+    )
+    .sort((a, b) => {
+      const aDate = a.updatedAt ? new Date(String(a.updatedAt)).getTime() : 0;
+      const bDate = b.updatedAt ? new Date(String(b.updatedAt)).getTime() : 0;
+      return bDate - aDate;
+    });
 
   const skills = Array.isArray(query?.skills) ? query.skills.filter(Boolean) : [];
   const interests = Array.isArray(query?.interests) ? query.interests.filter(Boolean) : [];
