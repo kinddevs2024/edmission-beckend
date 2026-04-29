@@ -35,7 +35,7 @@ export async function createCheckoutSession(
     return { error: 'Invalid success or cancel URL' };
   }
 
-  const user = await User.findById(userId).select('email').lean();
+  const user = await User.findById(userId).select('email name phone yandexSub yandexProfile').lean();
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
 
   let priceId: string | null = null;
@@ -47,15 +47,58 @@ export async function createCheckoutSession(
   try {
     const stripe = await import('stripe');
     const stripeClient = new stripe.default(config.stripe.secretKey, { apiVersion: '2023-10-16' });
+    const u = user as {
+      email: string;
+      name?: string;
+      phone?: string;
+      yandexSub?: string;
+      yandexProfile?: {
+        login?: string;
+        psuid?: string;
+        firstName?: string;
+        lastName?: string;
+        displayName?: string;
+        realName?: string;
+        birthday?: string;
+        avatarUrl?: string;
+        phone?: string;
+      };
+    };
+    const billingName = String(
+      u.name || u.yandexProfile?.realName || u.yandexProfile?.displayName || [u.yandexProfile?.firstName, u.yandexProfile?.lastName].filter(Boolean).join(' ')
+    ).trim();
+    const billingPhone = String(u.phone || u.yandexProfile?.phone || '').trim();
+    const metadata = Object.fromEntries(
+      Object.entries({
+        userId,
+        planId,
+        yandexSub: u.yandexSub,
+        yandexLogin: u.yandexProfile?.login,
+        yandexPsuid: u.yandexProfile?.psuid,
+        yandexFirstName: u.yandexProfile?.firstName,
+        yandexLastName: u.yandexProfile?.lastName,
+        yandexBirthday: u.yandexProfile?.birthday,
+        yandexAvatarUrl: u.yandexProfile?.avatarUrl,
+      })
+        .map(([key, value]) => [key, String(value ?? '').trim().slice(0, 500)])
+        .filter(([, value]) => value)
+    );
+    const customer = await stripeClient.customers.create({
+      email: u.email,
+      ...(billingName ? { name: billingName } : {}),
+      ...(billingPhone ? { phone: billingPhone } : {}),
+      metadata,
+    });
     const session = await stripeClient.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: successUrl,
       cancel_url: cancelUrl,
-      customer_email: (user as { email: string }).email,
+      customer: customer.id,
       client_reference_id: userId,
-      metadata: { userId, planId },
+      metadata,
+      subscription_data: { metadata },
     });
     return { url: session.url ?? undefined };
   } catch (e) {

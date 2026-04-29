@@ -221,12 +221,19 @@ async function issueAuthTokens(user: UserDoc): Promise<{
   });
 
   const plainUser = toPlainUser(user) as ReturnType<typeof toPlainUser> & {
+    avatar?: string;
     universityProfile?: { id: string; verified: boolean; universityName?: string };
   };
-  if (user.role === 'university') {
+  if (user.role === 'student') {
+    const sp = await StudentProfile.findOne({ userId: user._id }).select('avatarUrl').lean();
+    const avatar = sp && (sp as { avatarUrl?: string }).avatarUrl ? String((sp as { avatarUrl: string }).avatarUrl).trim() : '';
+    if (avatar) plainUser.avatar = avatar;
+  } else if (user.role === 'university') {
     const up = await UniversityProfile.findOne({ userId: user._id }).lean();
     if (up) {
       const u = up as { _id: unknown; verified?: boolean; universityName?: string };
+      const logoUrl = String((up as { logoUrl?: string }).logoUrl ?? '').trim();
+      if (logoUrl) plainUser.avatar = logoUrl;
       plainUser.universityProfile = { id: String(u._id), verified: !!u.verified, universityName: u.universityName };
     }
   }
@@ -416,12 +423,97 @@ async function exchangeYandexCode(code: string, redirectUri: string): Promise<st
   return json.access_token;
 }
 
-async function fetchYandexLoginInfo(accessToken: string): Promise<{
+type YandexLoginProfile = {
   id: string;
   email: string;
   name: string;
   picture?: string;
-}> {
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  realName?: string;
+  login?: string;
+  psuid?: string;
+  sex?: string;
+  birthday?: string;
+  phone?: string;
+  defaultPhoneId?: string;
+  defaultAvatarId?: string;
+  emails: string[];
+  raw: Record<string, unknown>;
+};
+
+function normalizeOptionalString(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function parseYandexBirthday(value: string | undefined): Date | undefined {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.includes('0000') || value.endsWith('-00')) {
+    return undefined;
+  }
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+function toYandexProfilePatch(profile: YandexLoginProfile) {
+  return {
+    login: profile.login ?? '',
+    psuid: profile.psuid ?? '',
+    firstName: profile.firstName ?? '',
+    lastName: profile.lastName ?? '',
+    displayName: profile.displayName ?? '',
+    realName: profile.realName ?? '',
+    sex: profile.sex ?? '',
+    birthday: profile.birthday ?? '',
+    defaultAvatarId: profile.defaultAvatarId ?? '',
+    avatarUrl: profile.picture ?? '',
+    defaultPhoneId: profile.defaultPhoneId ?? '',
+    phone: profile.phone ?? '',
+    emails: profile.emails,
+    raw: profile.raw,
+    updatedAt: new Date(),
+  };
+}
+
+async function getAvailableYandexPhone(phone: string, currentUserId?: unknown): Promise<string> {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return '';
+  const existing = await User.findOne({ phone: normalized }).select('_id').lean();
+  if (!existing) return normalized;
+  if (currentUserId && String((existing as { _id: unknown })._id) === String(currentUserId)) return normalized;
+  logger.warn({ phone: normalized, currentUserId: currentUserId ? String(currentUserId) : undefined }, 'Yandex phone belongs to another user; not copying to primary phone');
+  return '';
+}
+
+async function applyYandexStudentProfile(userId: unknown, profile: YandexLoginProfile): Promise<void> {
+  const existing = await StudentProfile.findOne({ userId }).select('firstName lastName birthDate avatarUrl').lean();
+  const update: Record<string, unknown> = {};
+  const firstName = normalizeOptionalString(profile.firstName).slice(0, 80);
+  const lastName = normalizeOptionalString(profile.lastName).slice(0, 80);
+  if (!existing || (!normalizeOptionalString((existing as { firstName?: string }).firstName) && firstName)) {
+    update.firstName = firstName;
+  }
+  if (!existing || (!normalizeOptionalString((existing as { lastName?: string }).lastName) && lastName)) {
+    update.lastName = lastName;
+  }
+  if (!existing || (!(existing as { birthDate?: Date }).birthDate && profile.birthday)) {
+    const birthDate = parseYandexBirthday(profile.birthday);
+    if (birthDate) update.birthDate = birthDate;
+  }
+  if (!existing || (!normalizeOptionalString((existing as { avatarUrl?: string }).avatarUrl) && profile.picture)) {
+    update.avatarUrl = profile.picture;
+  }
+
+  if (!existing) {
+    await StudentProfile.create({ userId, ...update });
+    return;
+  }
+  if (Object.keys(update).length > 0) {
+    await StudentProfile.updateOne({ userId }, { $set: update });
+  }
+}
+
+async function fetchYandexLoginInfo(accessToken: string): Promise<YandexLoginProfile> {
   const res = await fetch('https://login.yandex.ru/info?format=json', {
     headers: { Authorization: `OAuth ${accessToken}` },
   });
@@ -437,8 +529,12 @@ async function fetchYandexLoginInfo(accessToken: string): Promise<{
     real_name?: string;
     first_name?: string;
     last_name?: string;
+    psuid?: string;
+    sex?: string | null;
+    birthday?: string | null;
     default_avatar_id?: string;
     is_avatar_empty?: boolean;
+    default_phone?: { id?: string | number; number?: string };
   };
   const id = info.id != null ? String(info.id) : '';
   if (!id) {
@@ -460,20 +556,37 @@ async function fetchYandexLoginInfo(accessToken: string): Promise<{
     info.login ||
     ''
   ).trim();
+  const phone = normalizePhone(String(info.default_phone?.number ?? ''));
   let picture: string | undefined;
   if (!info.is_avatar_empty && info.default_avatar_id) {
     picture = `https://avatars.yandex.net/get-yapic/${info.default_avatar_id}/islands-200`;
   }
-  return { id, email, name, picture };
+  return {
+    id,
+    email,
+    name,
+    picture,
+    firstName: normalizeOptionalString(info.first_name) || undefined,
+    lastName: normalizeOptionalString(info.last_name) || undefined,
+    displayName: normalizeOptionalString(info.display_name) || undefined,
+    realName: normalizeOptionalString(info.real_name) || undefined,
+    login: normalizeOptionalString(info.login) || undefined,
+    psuid: normalizeOptionalString(info.psuid) || undefined,
+    sex: normalizeOptionalString(info.sex) || undefined,
+    birthday: normalizeOptionalString(info.birthday) || undefined,
+    phone: phone || undefined,
+    defaultPhoneId: normalizeOptionalString(info.default_phone?.id) || undefined,
+    defaultAvatarId: normalizeOptionalString(info.default_avatar_id) || undefined,
+    emails: Array.isArray(info.emails) ? info.emails.map((e) => String(e).toLowerCase().trim()).filter(Boolean) : [],
+    raw: info as Record<string, unknown>,
+  };
 }
 
 async function finalizeYandexOAuthProfile(
-  sub: string,
-  email: string,
-  name: string,
-  picture: string | undefined,
+  profile: YandexLoginProfile,
   data: { role?: 'student' | 'university'; acceptTerms?: boolean }
 ) {
+  const { id: sub, email, name } = profile;
   let user = await User.findOne({ yandexSub: sub });
   if (!user) {
     user = await User.findOne({ email });
@@ -500,8 +613,18 @@ async function finalizeYandexOAuthProfile(
       user.name = String(name).trim();
       changed = true;
     }
+    const availablePhone = await getAvailableYandexPhone(profile.phone ?? '', user._id);
+    if (!normalizePhone(String(user.phone ?? '')) && availablePhone) {
+      user.phone = availablePhone;
+      changed = true;
+    }
+    user.set('yandexProfile', toYandexProfilePatch(profile));
+    changed = true;
     if (changed) {
       await user.save();
+    }
+    if (user.role === 'student') {
+      await applyYandexStudentProfile(user._id, profile);
     }
     return issueTokensAfterLoginChecks(user);
   }
@@ -515,6 +638,7 @@ async function finalizeYandexOAuthProfile(
   }
 
   const newUserRole = data.role ?? 'student';
+  const availablePhone = await getAvailableYandexPhone(profile.phone ?? '');
 
   await PendingRegistration.deleteOne({ email });
 
@@ -522,17 +646,22 @@ async function finalizeYandexOAuthProfile(
   const newUser = await User.create({
     email,
     name,
+    phone: availablePhone || undefined,
     passwordHash: oauthPasswordHash,
     role: newUserRole,
     emailVerified: true,
     yandexSub: sub,
+    yandexProfile: toYandexProfilePatch(profile),
     localPasswordConfigured: false,
   });
 
   if (newUserRole === 'student') {
     await StudentProfile.create({
       userId: newUser._id,
-      avatarUrl: picture || undefined,
+      firstName: profile.firstName || undefined,
+      lastName: profile.lastName || undefined,
+      birthDate: parseYandexBirthday(profile.birthday),
+      avatarUrl: profile.picture || undefined,
     });
   }
   await subscriptionService.createForNewUser(String(newUser._id), newUserRole);
@@ -555,8 +684,8 @@ export async function loginWithYandex(data: YandexAuthBody) {
     throw new AppError(401, 'Yandex authorization failed', ErrorCodes.UNAUTHORIZED);
   }
 
-  const { id: sub, email, name, picture } = await fetchYandexLoginInfo(accessToken);
-  return finalizeYandexOAuthProfile(sub, email, name, picture, {
+  const profile = await fetchYandexLoginInfo(accessToken);
+  return finalizeYandexOAuthProfile(profile, {
     role: data.role,
     acceptTerms: data.acceptTerms,
   });
@@ -568,8 +697,8 @@ export async function loginWithYandexAccessToken(data: YandexAccessTokenAuthBody
     throw new AppError(503, 'Yandex sign-in is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
   }
 
-  const { id: sub, email, name, picture } = await fetchYandexLoginInfo(data.accessToken);
-  return finalizeYandexOAuthProfile(sub, email, name, picture, {
+  const profile = await fetchYandexLoginInfo(data.accessToken);
+  return finalizeYandexOAuthProfile(profile, {
     role: data.role,
     acceptTerms: data.acceptTerms,
   });

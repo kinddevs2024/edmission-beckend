@@ -91,7 +91,7 @@ export const config = {
    * Client ID may be duplicated as VITE_YANDEX_CLIENT_ID in edmission-front/.env.
    */
   yandex: {
-    clientId: (process.env.YANDEX_CLIENT_ID || process.env.VITE_YANDEX_CLIENT_ID || '').trim(),
+    clientId: (process.env.YANDEX_CLIENT_ID || process.env.YANDEX_CLIENT || process.env.VITE_YANDEX_CLIENT_ID || '').trim(),
     clientSecret: (process.env.YANDEX_CLIENT_SECRET || '').trim(),
   },
   email: {
