@@ -595,14 +595,15 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
 }
 
 async function syncInterestStatusForChat(studentId: string, universityId: string) {
-  await Interest.findOneAndUpdate(
-    {
-      studentId,
-      universityId,
-      status: 'interested',
-    },
-    { $set: { status: 'chat_opened' } }
-  );
+  const existingInterest = await Interest.findOne({ studentId, universityId }).select('status').lean();
+  if (!existingInterest) {
+    await Interest.create({ studentId, universityId, status: 'chat_opened' });
+    return;
+  }
+
+  if ((existingInterest as { status?: string }).status === 'interested') {
+    await Interest.findByIdAndUpdate((existingInterest as { _id?: unknown })._id, { status: 'chat_opened' });
+  }
 }
 
 export async function updateMessage(chatId: string, messageId: string, userId: string, text: string) {
