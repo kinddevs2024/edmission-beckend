@@ -1105,6 +1105,7 @@ export async function getUniversityById(userId: string, universityId: unknown) {
   const effectiveTagline = pickString((university as { tagline?: string }).tagline, linkedCatalogRecord?.tagline);
   const effectiveEstablishedYear = pickNumber((university as { establishedYear?: number }).establishedYear, linkedCatalogRecord?.establishedYear);
   const effectiveStudentCount = pickNumber((university as { studentCount?: number }).studentCount, linkedCatalogRecord?.studentCount);
+  const effectiveRating = pickNumber((university as { rating?: number }).rating, linkedCatalogRecord?.rating);
   const effectiveFacultyCodes = pickStringArray((university as { facultyCodes?: string[] }).facultyCodes, linkedCatalogRecord?.facultyCodes);
   const effectiveFacultyItems =
     ((university as { facultyItems?: Record<string, string[]> }).facultyItems && Object.keys((university as { facultyItems?: Record<string, string[]> }).facultyItems ?? {}).length > 0)
@@ -1142,6 +1143,7 @@ export async function getUniversityById(userId: string, universityId: unknown) {
     establishedYear: effectiveEstablishedYear,
     foundedYear: effectiveEstablishedYear,
     studentCount: effectiveStudentCount,
+    rating: effectiveRating,
     facultyCodes: effectiveFacultyCodes,
     facultyItems: effectiveFacultyItems,
     targetStudentCountries: effectiveTargetCountries,

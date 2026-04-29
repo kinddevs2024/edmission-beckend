@@ -1,21 +1,22 @@
 export type ProfileVisibility = 'private' | 'public';
 
-/** Treat missing / unknown as private (safe default). */
+/** Treat missing / unknown as public so new student accounts are discoverable by default. */
 export function effectiveProfileVisibility(value: unknown): ProfileVisibility {
-  return value === 'public' ? 'public' : 'private';
+  return value === 'private' ? 'private' : 'public';
 }
 
 /** Strip PII for university discovery / pipeline / dashboard list items. */
 export function redactStudentForUniversityListing(student: Record<string, unknown>): Record<string, unknown> {
   if (effectiveProfileVisibility(student.profileVisibility) === 'public') {
     const pub = { ...student };
+    delete pub.lastName;
+    delete pub.name;
     if (pub.counsellorUserId) {
       delete pub.schoolName;
     }
     return pub;
   }
   const o = { ...student };
-  delete o.firstName;
   delete o.lastName;
   delete o.avatarUrl;
   delete o.userEmail;

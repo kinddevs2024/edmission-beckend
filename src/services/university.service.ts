@@ -273,7 +273,6 @@ export async function getStudents(
     const emailUserIds = emailMatches.map((user) => (user as { _id: unknown })._id);
     const searchOr: Record<string, unknown>[] = [
       { firstName: searchRegex },
-      { lastName: searchRegex },
       { city: searchRegex },
       { country: searchRegex },
       { schoolName: searchRegex },
@@ -642,8 +641,6 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
       : undefined;
 
   if (visibility === 'private') {
-    delete out.firstName;
-    delete out.lastName;
     delete out.avatarUrl;
     delete out.birthDate;
     /** Free text often contains emails, phones, messengers — treat as contact data. */
@@ -658,6 +655,8 @@ export async function getStudentProfileForUniversity(_userId: string, studentId:
       });
     }
   }
+  delete out.lastName;
+  delete out.name;
 
   const profileLangRows = Array.isArray(out.languages)
     ? (out.languages as { language?: string; level?: string }[])
@@ -996,11 +995,8 @@ export async function createOffer(
       throw new AppError(404, 'Offer certificate template not found', ErrorCodes.NOT_FOUND);
     }
     const payload = data.certificateData ?? {};
-    const vis = effectiveProfileVisibility((studentProfile as { profileVisibility?: unknown }).profileVisibility);
     const studentName =
-      vis === 'public'
-        ? [studentProfile.firstName, studentProfile.lastName].filter(Boolean).join(' ') || 'Student'
-        : 'Student';
+      [studentProfile.firstName, studentProfile.lastName].filter(Boolean).join(' ') || 'Student';
     const universityName = profile.universityName ?? 'University';
     const replacements: Record<string, string> = {
       studentName,

@@ -393,7 +393,7 @@ export async function sendChatMessage(req: Request, res: Response, next: NextFun
       res.status(400).json({ error: 'Text is required' });
       return;
     }
-    const result = await adminService.sendChatMessageAsUniversity(req.params.id, req.user.id, text);
+    const result = await adminService.sendChatMessageAsAdmin(req.params.id, req.user.id, text);
     const msg = result.message as Record<string, unknown>;
     const payload = {
       ...msg,
@@ -404,6 +404,15 @@ export async function sendChatMessage(req: Request, res: Response, next: NextFun
     const io = getIO();
     if (io) io.to(`chat:${req.params.id}`).emit('new_message', { chatId: req.params.id, message: payload });
     res.status(201).json(payload);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function deleteChat(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = await adminService.deleteChat(req.params.id);
+    res.json(data);
   } catch (e) {
     next(e);
   }

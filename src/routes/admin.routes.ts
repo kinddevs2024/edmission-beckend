@@ -278,6 +278,7 @@ router.post('/interests/:id/open-chat', requireAdminOnly, validateUniversityId('
 router.get('/chats', validate(adminValidator.chatsQuerySchema, 'query'), adminController.getChats);
 router.get('/chats/:id/messages', validateObjectId('id'), validate(adminValidator.chatMessagesQuerySchema, 'query'), adminController.getChatMessages);
 router.post('/chats/:id/messages', requireAdminOnly, validateObjectId('id'), validate(adminValidator.sendChatMessageSchema.shape.body, 'body'), adminController.sendChatMessage);
+router.delete('/chats/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteChat);
 router.post('/telegram/send', requireAdminOnly, validate(adminValidator.sendTelegramMessageSchema.shape.body, 'body'), adminController.sendTelegramMessage);
 
 router.get('/investors', adminController.getInvestors);

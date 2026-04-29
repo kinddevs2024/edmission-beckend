@@ -189,12 +189,13 @@ function toDateOnlyString(date: Date): string {
 }
 
 export async function getDashboard() {
-  const [users, universities, offers, pendingVerification, subStats] =
+  const [users, universities, offers, pendingVerification, pendingDocuments, subStats] =
     await Promise.all([
       User.countDocuments(),
       UniversityProfile.countDocuments(),
       Offer.countDocuments({ status: "pending" }),
       UniversityProfile.countDocuments({ verified: false }),
+      StudentDocument.countDocuments({ status: "pending" }),
       Subscription.aggregate([
         { $match: { status: "active" } },
         { $group: { _id: "$plan", count: { $sum: 1 } } },
@@ -213,6 +214,7 @@ export async function getDashboard() {
     universities,
     pendingOffers: offers,
     pendingVerification,
+    pendingDocuments,
     subscriptionsByPlan: byPlan,
     mrr: Math.round(mrr * 100) / 100,
   };
@@ -593,6 +595,7 @@ export async function createUser(
     resetToken: inviteToken,
     resetTokenExpires: inviteTokenExpires,
     localPasswordConfigured: !isInvite,
+    temporaryPlainPassword: isInvite ? "" : password,
   });
 
   if (role === "student") {
@@ -657,9 +660,7 @@ export async function getUserById(
   return {
     ...u,
     id: String(doc._id),
-    temporaryPassword: doc.mustChangePassword
-      ? String(doc.temporaryPlainPassword ?? "") || undefined
-      : undefined,
+    temporaryPassword: String(doc.temporaryPlainPassword ?? "") || undefined,
   };
 }
 
@@ -825,7 +826,7 @@ export async function resetUserPassword(
       passwordHash,
       localPasswordConfigured: true,
       mustChangePassword: false,
-      temporaryPlainPassword: "",
+      temporaryPlainPassword: String(newPassword || ""),
       temporaryPasswordGeneratedAt: null,
       resetToken: null,
       resetTokenExpires: null,
@@ -2175,8 +2176,16 @@ export async function listChats(query: {
   }
   const [list, total, universities] = await Promise.all([
     Chat.find(filter)
-      .populate("universityId", "universityName")
-      .populate("studentId", "firstName lastName")
+      .populate({
+        path: "universityId",
+        select: "universityName userId",
+        populate: { path: "userId", select: "email name" },
+      })
+      .populate({
+        path: "studentId",
+        select: "firstName lastName userId",
+        populate: { path: "userId", select: "email name" },
+      })
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -2197,16 +2206,19 @@ export async function listChats(query: {
     const lastName =
       (x.studentId as { lastName?: string } | null | undefined)?.lastName ?? "";
     const studentName = `${firstName} ${lastName}`.trim() || undefined;
-    const universityName = (
-      x.universityId as { universityName?: string } | null | undefined
-    )?.universityName;
+    const studentUser = (x.studentId as { userId?: { email?: string; name?: string } } | null | undefined)?.userId;
+    const university = x.universityId as { universityName?: string; userId?: { email?: string; name?: string } } | null | undefined;
+    const universityName = university?.universityName;
+    const universityUser = university?.userId;
     return {
       ...x,
       id: String(x._id),
       studentId,
       universityId,
       studentName,
+      studentEmail: studentUser?.email ?? "",
       universityName,
+      universityEmail: universityUser?.email ?? "",
     };
   });
   return {
@@ -2287,12 +2299,20 @@ export async function getChatMessages(
   const limit = Math.min(200, Math.max(1, query?.limit ?? 50));
   const chat = await Chat.findById(chatId).lean();
   if (!chat) throw new AppError(404, "Chat not found", ErrorCodes.NOT_FOUND);
-  const [messages, uniProf] = await Promise.all([
-    Message.find({ chatId }).sort({ createdAt: -1 }).limit(limit).lean(),
+  const [messages, uniProf, studentProf] = await Promise.all([
+    Message.find({ chatId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate("senderId", "email name role")
+      .lean(),
     UniversityProfile.findById(
       (chat as { universityId?: unknown }).universityId,
     )
       .select("userId")
+      .lean(),
+    StudentProfile.findById((chat as { studentId?: unknown }).studentId)
+      .select("firstName lastName userId")
+      .populate("userId", "email name")
       .lean(),
   ]);
   const c = chat as {
@@ -2309,45 +2329,83 @@ export async function getChatMessages(
         uniProf?.userId != null
           ? String((uniProf as { userId: unknown }).userId)
           : undefined,
+      studentName: studentProf
+        ? [studentProf.firstName, studentProf.lastName].filter(Boolean).join(" ")
+        : undefined,
+      studentEmail:
+        studentProf && typeof studentProf.userId === "object"
+          ? String((studentProf.userId as { email?: string }).email ?? "")
+          : undefined,
     },
     messages: messages.map((m) => {
       const x = m as Record<string, unknown>;
       const normalizedText = normalizeChatMessageText(x.message ?? x.text);
+      const sender = x.senderId as { _id?: unknown; id?: unknown; email?: string; name?: string; role?: string } | null | undefined;
+      const senderRole = String((x.metadata as { senderRole?: unknown } | undefined)?.senderRole ?? sender?.role ?? "");
       return {
         ...x,
         id: String((m as { _id: unknown })._id),
         message: normalizedText,
         text: normalizedText,
+        senderId: sender ? String(sender._id ?? sender.id ?? "") : toObjectIdString(x.senderId) ?? "",
+        senderEmail: sender?.email ?? "",
+        senderName: sender?.name ?? sender?.email ?? "",
+        senderRole,
+        sentByAdmin: senderRole === "admin" || Boolean((x.metadata as { sentByAdmin?: unknown } | undefined)?.sentByAdmin),
       };
     }),
   };
 }
 
-export async function sendChatMessageAsUniversity(
+export async function sendChatMessageAsAdmin(
   chatId: string,
   adminUserId: string,
   text: string,
 ) {
-  const chat = await Chat.findById(chatId)
-    .populate("universityId", "userId")
-    .lean();
+  const chat = await Chat.findById(chatId).lean();
   if (!chat) throw new AppError(404, "Chat not found", ErrorCodes.NOT_FOUND);
-  const university = (chat as { universityId?: { userId?: unknown } })
-    .universityId;
-  if (
-    !university ||
-    typeof university !== "object" ||
-    !(university as { userId?: unknown }).userId
-  ) {
-    throw new AppError(400, "Chat has no university", ErrorCodes.VALIDATION);
+  const admin = await User.findById(adminUserId).select("email name role").lean();
+  if (!admin || (admin as { role?: string }).role !== "admin") {
+    throw new AppError(403, "Only administrators can send admin chat messages", ErrorCodes.FORBIDDEN);
   }
-  const universityUserId = String((university as { userId: unknown }).userId);
-  const chatService = await import("./chat.service");
-  const result = await chatService.saveMessage(chatId, universityUserId, {
-    text: text.trim(),
+  const messageText = text.trim();
+  if (!messageText) throw new AppError(400, "Message text is required", ErrorCodes.VALIDATION);
+  const msg = await Message.create({
+    chatId,
+    senderId: adminUserId,
     type: "text",
+    message: messageText,
+    metadata: {
+      sentByAdmin: true,
+      senderRole: "admin",
+      senderLabel: "Admin",
+      senderEmail: (admin as { email?: string }).email ?? "",
+    },
   });
-  return result;
+  await Chat.findByIdAndUpdate(chatId, { updatedAt: new Date() });
+  const msgPop = await Message.findById(msg._id).populate("senderId", "email name role").lean();
+  const sender = (msgPop as { senderId?: { _id?: unknown; id?: unknown; email?: string; name?: string; role?: string } } | null)?.senderId;
+  return {
+    message: {
+      ...msgPop,
+      id: String(msg._id),
+      text: messageText,
+      message: messageText,
+      senderId: sender ? String(sender._id ?? sender.id ?? "") : String(adminUserId),
+      senderEmail: sender?.email ?? "",
+      senderName: sender?.name ?? sender?.email ?? "Admin",
+      senderRole: "admin",
+      sentByAdmin: true,
+    },
+  };
+}
+
+export async function deleteChat(chatId: string) {
+  const chat = await Chat.findById(chatId).select("_id").lean();
+  if (!chat) throw new AppError(404, "Chat not found", ErrorCodes.NOT_FOUND);
+  await Message.deleteMany({ chatId });
+  await Chat.deleteOne({ _id: chatId });
+  return { success: true, chatId };
 }
 
 type SendTelegramPayload = {

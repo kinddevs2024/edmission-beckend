@@ -23,12 +23,32 @@ const router = Router();
 
 router.use(maintenanceMiddleware);
 
+function getUploadFrameAncestors(): string {
+  const origins = new Set<string>(["'self'"]);
+  for (const value of [config.frontendUrl, ...config.cors.origin]) {
+    try {
+      const url = new URL(value);
+      origins.add(url.origin);
+    } catch {
+      // Ignore invalid origins; uploads should still be served.
+    }
+  }
+  return Array.from(origins).join(' ');
+}
+
 /** Static uploads - filenames are UUIDs (unguessable). Harden static serving (no directory indexes / dotfiles). */
 router.use(
   '/uploads',
   express.static(path.resolve(config.uploadDir), {
     dotfiles: 'deny',
     index: false,
+    setHeaders: (res) => {
+      // Uploaded PDFs need to render inside the app preview modal. Helmet's global
+      // frame protections are right for API pages, but too strict for static files.
+      res.removeHeader('X-Frame-Options');
+      res.setHeader('Content-Security-Policy', `frame-ancestors ${getUploadFrameAncestors()}`);
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
   })
 );
 
