@@ -776,16 +776,17 @@ export async function getPipeline(
     .sort({ updatedAt: -1 })
     .lean();
 
+  const chatEntries = chatOnlyList.map((chat) => {
+    const item = chat as Record<string, unknown>;
+    return {
+      ...item,
+      status: 'chat_opened' as const,
+      updatedAt: item.updatedAt ?? item.createdAt,
+    } as typeof list[number];
+  });
+
   list = list
-    .concat(
-      chatOnlyList.map((chat) => ({
-        ...chat,
-        _id: (chat as { _id?: unknown })._id,
-        status: 'chat_opened',
-        studentId: (chat as { studentId?: unknown }).studentId,
-        updatedAt: (chat as { updatedAt?: unknown }).updatedAt ?? (chat as { createdAt?: unknown }).createdAt,
-      }))
-    )
+    .concat(chatEntries)
     .sort((a, b) => {
       const aDate = a.updatedAt ? new Date(String(a.updatedAt)).getTime() : 0;
       const bDate = b.updatedAt ? new Date(String(b.updatedAt)).getTime() : 0;
