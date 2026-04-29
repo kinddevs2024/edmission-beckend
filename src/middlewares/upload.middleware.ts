@@ -13,6 +13,10 @@ const ALLOWED_MIMES = [
   'image/svg+xml',
   'image/avif',
   'image/jfif',
+  'image/heic',
+  'image/heif',
+  'image/heic-sequence',
+  'image/heif-sequence',
   'application/pdf',
   'audio/webm',
   'audio/mp4',
@@ -46,6 +50,10 @@ const ALLOWED_EXT = new Set([
   '.svg',
   '.avif',
   '.jfif',
+  '.heic',
+  '.heics',
+  '.heif',
+  '.heifs',
   '.pdf',
   '.webm',
   '.mp4',
@@ -91,7 +99,7 @@ export const uploadSingle = multer({
     cb(
       new AppError(
         400,
-        'Invalid file type. Allowed: images, PDF, video (MP4, WebM, MOV), Office documents (Word, Excel, PowerPoint), text, and audio (WebM, MP4, MP3).',
+        'Invalid file type. Allowed: images (including HEIC/HEIF), PDF, video (MP4, WebM, MOV), Office documents (Word, Excel, PowerPoint), text, and audio (WebM, MP4, MP3).',
         ErrorCodes.VALIDATION
       )
     );
