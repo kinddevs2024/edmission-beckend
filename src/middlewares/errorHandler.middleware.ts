@@ -37,7 +37,29 @@ export function errorHandler(
     return;
   }
 
-  const maybeHttp = err as Error & { statusCode?: number; code?: string; message?: string };
+  const maybeHttp = err as Error & {
+    status?: number;
+    statusCode?: number;
+    code?: string;
+    type?: string;
+    message?: string;
+  };
+  if (
+    maybeHttp.status === 413 ||
+    maybeHttp.statusCode === 413 ||
+    maybeHttp.code === 'LIMIT_FILE_SIZE' ||
+    maybeHttp.type === 'entity.too.large'
+  ) {
+    sendErrorResponse(res, 413, {
+      message:
+        maybeHttp.code === 'LIMIT_FILE_SIZE'
+          ? 'Uploaded file is too large. Maximum upload size is 50 MB.'
+          : 'Request body is too large. Try a smaller file or contact support.',
+      code: ErrorCodes.VALIDATION,
+    });
+    return;
+  }
+
   if (maybeHttp.code === 'ETIMEDOUT' || (maybeHttp.statusCode === 503 && /timeout/i.test(maybeHttp.message || ''))) {
     sendErrorResponse(res, 504, {
       message: 'Request timeout',

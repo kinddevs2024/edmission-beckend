@@ -124,7 +124,7 @@ export const config = {
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true',
   /** Body size, rate limits (production; dev skips limits unless ENABLE_RATE_LIMIT_IN_DEV=true). */
   security: {
-    jsonBodyLimit: process.env.JSON_BODY_LIMIT || '1mb',
+    jsonBodyLimit: process.env.JSON_BODY_LIMIT || '10mb',
     rateLimitGlobalMaxPerMinute: Math.max(50, parseInt(process.env.RATE_LIMIT_GLOBAL_MAX_PER_MINUTE || '400', 10)),
     rateLimitAuthMaxPer15Min: Math.max(10, parseInt(process.env.RATE_LIMIT_AUTH_MAX_PER_15MIN || '60', 10)),
     rateLimitSearchPerMinute: Math.max(10, parseInt(process.env.RATE_LIMIT_SEARCH_PER_MINUTE || '60', 10)),
