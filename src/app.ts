@@ -38,11 +38,11 @@ app.use(helmet({
     : {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", 'https://accounts.google.com', 'https://apis.google.com'],
+          scriptSrc: ["'self'", 'https://accounts.google.com', 'https://apis.google.com', 'https://cdn.jsdelivr.net'],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           imgSrc: ["'self'", 'data:', 'https:'],
-          connectSrc: ["'self'", 'https:'],
+          connectSrc: ["'self'", 'https:', 'wss:'],
           frameSrc: ["'self'", 'https://accounts.google.com', 'https://*.google.com'],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
