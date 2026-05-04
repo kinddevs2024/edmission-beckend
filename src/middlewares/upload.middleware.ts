@@ -33,8 +33,8 @@ const ALLOWED_MIMES = [
   'text/plain',
 ] as const;
 
-/** Flyers and large assets; keep aligned with frontend accept lists. */
-const MAX_SIZE = 50 * 1024 * 1024;
+/** Keep aligned with frontend upload validation. */
+const MAX_SIZE = 10 * 1024 * 1024;
 
 const dir = path.resolve(config.uploadDir);
 if (!fs.existsSync(dir)) {

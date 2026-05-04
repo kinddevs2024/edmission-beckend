@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { objectIdZod } from '../utils/validators';
 
 export const paginationQuery = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
 });
 

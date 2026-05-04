@@ -123,6 +123,45 @@ async function getUnreadCountsByChatIds(chatIds: unknown[], viewerUserId: string
   return map;
 }
 
+async function getApprovedManagerUserIdsForUniversity(universityUserId: string | null): Promise<string[]> {
+  if (!universityUserId || !mongoose.Types.ObjectId.isValid(universityUserId)) return [];
+  const managers = await User.find({
+    role: 'university_multi_manager',
+    universityMultiManagerApproved: true,
+    managedUniversityUserIds: new mongoose.Types.ObjectId(universityUserId),
+  })
+    .select('_id')
+    .lean();
+  return managers.map((manager) => String((manager as { _id: unknown })._id));
+}
+
+async function sendChatTelegram(userId: string, payload: { chatId: string; senderName: string; text: string }) {
+  try {
+    await telegramService.sendChatMessageToTelegram(userId, payload);
+  } catch {
+    /* best effort */
+  }
+}
+
+async function loadChatsAsCounsellorViewer(userId: string): Promise<unknown[]> {
+  const students = await StudentProfile.find({ counsellorUserId: userId }).select('_id').lean();
+  const studentIds = students.map((student) => (student as { _id: unknown })._id);
+  if (studentIds.length === 0) return [];
+
+  const chats = await Chat.find({ studentId: { $in: studentIds } })
+    .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility _id')
+    .populate('universityId', 'universityName logoUrl userId _id')
+    .lean();
+  const chatIds = (chats as { _id: unknown }[]).map((chat) => chat._id);
+  const lastByChat = await getLastMessagesByChatIds(chatIds, userId);
+  for (const chat of chats as Array<Record<string, unknown> & { _id: unknown }>) {
+    chat.lastMessage = lastByChat.get(String(chat._id)) ?? [];
+    chat.isReadOnly = true;
+    chat.readOnlyReason = undefined;
+  }
+  return chats;
+}
+
 async function loadChatsAsUniversityViewer(universityProfile: { _id: unknown }, userId: string): Promise<unknown[]> {
   const chats = await Chat.find({ universityId: universityProfile._id })
     .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility _id')
@@ -226,6 +265,8 @@ export async function getChats(userId: string) {
     chats = await loadChatsAsUniversityViewer(universityProfile as { _id: unknown }, userId);
   } else if (userRole === 'student' && studentProfile) {
     chats = await loadChatsAsStudentViewer(studentProfile as { _id: unknown }, userId);
+  } else if (userRole === 'school_counsellor') {
+    chats = await loadChatsAsCounsellorViewer(userId);
   } else if (studentProfile && !universityProfile && userRole !== 'university') {
     chats = await loadChatsAsStudentViewer(studentProfile as { _id: unknown }, userId);
   } else if (universityProfile && !studentProfile) {
@@ -268,7 +309,12 @@ export async function getMessages(chatId: string, userId: string, query: { page?
   const studentUserId = student ? String((student as Record<string, unknown>).userId) : null;
   const universityUserId = university ? String((university as Record<string, unknown>).userId) : null;
   const participantIds = [studentUserId, universityUserId].filter(Boolean);
-  if (!participantIds.includes(userId)) {
+  const viewer = await User.findById(userId).select('role').lean();
+  const isCounsellorViewer =
+    (viewer as { role?: string } | null)?.role === 'school_counsellor'
+    && student
+    && String((student as { counsellorUserId?: unknown }).counsellorUserId ?? '') === String(userId);
+  if (!participantIds.includes(userId) && !isCounsellorViewer) {
     throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
   }
 
@@ -322,7 +368,12 @@ export async function markRead(chatId: string, userId: string) {
     student ? String((student as Record<string, unknown>).userId) : null,
     university ? String((university as Record<string, unknown>).userId) : null,
   ].filter(Boolean);
-  if (!participantIds.includes(userId)) {
+  const viewer = await User.findById(userId).select('role').lean();
+  const isCounsellorViewer =
+    (viewer as { role?: string } | null)?.role === 'school_counsellor'
+    && student
+    && String((student as { counsellorUserId?: unknown }).counsellorUserId ?? '') === String(userId);
+  if (!participantIds.includes(userId) && !isCounsellorViewer) {
     throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
   }
 
@@ -545,6 +596,15 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
   });
   const msgPop = await Message.findById(msg._id).populate('senderId', 'id email').lean();
 
+  const notifBody = type === 'voice' ? 'Voice message' : type === 'emotion' ? (msgBody || 'Reaction') : (msgBody || '').slice(0, 100);
+  const senderUser = await User.findById(senderId).select('name email').lean();
+  const senderName = String((senderUser as { name?: string; email?: string } | null)?.name || (senderUser as { email?: string } | null)?.email || 'Unknown user');
+  const preview = type === 'voice'
+    ? 'Voice message'
+    : type === 'emotion'
+      ? (msgBody || 'Reaction')
+      : (msgBody || '');
+
   if (recipientId) {
     const notifBody = type === 'voice' ? '🎤 Voice message' : type === 'emotion' ? (msgBody || 'Reaction') : (msgBody || '').slice(0, 100);
     await notificationService.createNotification(recipientId, {
@@ -586,6 +646,33 @@ export async function saveMessage(chatId: string, senderId: string, params: stri
         text: preview,
       })
       .catch(() => {});
+  }
+
+  const extraRecipientIds = new Set<string>();
+  if (student && universityU) {
+    const counsellorUserId = String((student as { counsellorUserId?: unknown }).counsellorUserId ?? '');
+    if (senderId === universityU && counsellorUserId && counsellorUserId !== senderId && counsellorUserId !== recipientId) {
+      extraRecipientIds.add(counsellorUserId);
+    }
+  }
+  for (const managerId of await getApprovedManagerUserIdsForUniversity(universityU)) {
+    if (managerId !== senderId && managerId !== recipientId) extraRecipientIds.add(managerId);
+  }
+
+  for (const extraUserId of extraRecipientIds) {
+    await notificationService.createNotification(extraUserId, {
+      type: 'message',
+      title: 'New message',
+      body: notifBody,
+      referenceType: 'chat',
+      referenceId: String(chatId),
+      metadata: { chatId: String(chatId), mirrored: true },
+    });
+    void sendChatTelegram(extraUserId, {
+      chatId: String(chatId),
+      senderName,
+      text: preview,
+    });
   }
 
   return {

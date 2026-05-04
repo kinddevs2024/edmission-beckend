@@ -303,6 +303,7 @@ export async function patchMe(
       ? {
           emailApplicationUpdates: body.notificationPreferences.emailApplicationUpdates,
           emailTrialReminder: body.notificationPreferences.emailTrialReminder,
+          smsApplicationUpdates: body.notificationPreferences.smsApplicationUpdates,
         }
       : undefined;
     const onboardingTutorialSeen = body.onboardingTutorialSeen && typeof body.onboardingTutorialSeen === 'object'
@@ -321,7 +322,7 @@ export async function patchMe(
           whatsapp: typeof body.socialLinks.whatsapp === 'string' ? body.socialLinks.whatsapp.trim() : undefined,
         }
       : undefined;
-    const patch: { name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } } = { name, phone, notificationPreferences };
+    const patch: { name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean; smsApplicationUpdates?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } } = { name, phone, notificationPreferences };
     if (socialLinks !== undefined) patch.socialLinks = socialLinks;
     if (onboardingTutorialSeen !== undefined && Object.keys(onboardingTutorialSeen).length > 0) {
       patch.onboardingTutorialSeen = onboardingTutorialSeen;

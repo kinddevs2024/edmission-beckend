@@ -14,7 +14,7 @@ const LANGUAGES = ['en', 'ru', 'uz'] as const;
 const userSchema = new mongoose.Schema(
   {
     role: { type: String, required: true, enum: ROLES },
-    language: { type: String, enum: LANGUAGES, default: 'en' },
+    language: { type: String, enum: LANGUAGES, default: 'uz' },
     email: { type: String, required: true, unique: true },
     name: { type: String, default: '' },
     phone: { type: String, default: '' },
@@ -93,6 +93,7 @@ const userSchema = new mongoose.Schema(
     notificationPreferences: {
       emailApplicationUpdates: { type: Boolean, default: true },
       emailTrialReminder: { type: Boolean, default: true },
+      smsApplicationUpdates: { type: Boolean, default: false },
     },
     onboardingTutorialSeen: {
       student: { type: Boolean, default: false },

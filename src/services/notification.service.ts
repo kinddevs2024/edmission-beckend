@@ -238,10 +238,10 @@ function buildNotificationLink(
     case 'message':
       if (!referenceId) return null;
       if (recipientRole === 'student') return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
-      if (recipientRole === 'university') return `/university/chat?chatId=${encodeURIComponent(referenceId)}`;
+      if (recipientRole === 'university' || recipientRole === 'university_multi_manager') return `/university/chat?chatId=${encodeURIComponent(referenceId)}`;
+      if (recipientRole === 'school_counsellor') return `/school/chats?chatId=${encodeURIComponent(referenceId)}`;
       if (
         recipientRole === 'admin'
-        || recipientRole === 'school_counsellor'
         || recipientRole === 'counsellor_coordinator'
         || recipientRole === 'manager'
       ) {
@@ -249,6 +249,8 @@ function buildNotificationLink(
       }
       return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
     case 'offer':
+      if (recipientRole === 'school_counsellor') return '/school/offers';
+      if (recipientRole === 'university' || recipientRole === 'university_multi_manager') return '/university/documents';
       return '/student/offers';
     case 'document':
       return referenceId ? `/student/received-documents/${referenceId}` : '/student/received-documents';

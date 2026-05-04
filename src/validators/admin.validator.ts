@@ -234,7 +234,7 @@ export const updateCatalogUniversitySchema = z.object({
 });
 
 export const usersQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   role: z.string().optional(),
   status: z.enum(['active', 'suspended']).optional(),
@@ -243,25 +243,25 @@ export const usersQuerySchema = z.object({
 });
 
 export const catalogUniversitiesQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   search: z.string().max(100).optional(),
 });
 
 export const offersQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   status: z.string().max(50).optional(),
 });
 
 export const interestsQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   status: z.string().max(50).optional(),
 });
 
 export const chatsQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   universityId: z.string().max(50).optional(),
 });
@@ -291,14 +291,14 @@ export const sendTelegramMessageSchema = z.object({
 });
 
 export const ticketsQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   status: z.string().max(50).optional(),
   role: z.string().max(50).optional(),
 });
 
 export const logsQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   type: z.string().max(50).optional(), // maps to action in ActivityLog
   userId: z.string().max(100).optional(),
@@ -310,7 +310,7 @@ export const analyticsOverviewQuerySchema = z.object({
 });
 
 export const subscriptionsQuerySchema = z.object({
-  page: z.coerce.number().min(1).max(500).optional(),
+  page: z.coerce.number().min(1).max(50_000).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
   role: z.string().max(50).optional(),
   plan: z.string().max(50).optional(),

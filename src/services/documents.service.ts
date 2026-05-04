@@ -479,6 +479,12 @@ export async function getStudentDocument(userId: string, documentId: string) {
     if (String(document.universityId?._id ?? document.universityId) !== String(university._id)) {
       throw new AppError(403, 'Not your document', ErrorCodes.FORBIDDEN);
     }
+  } else if (user.role === 'school_counsellor') {
+    const studentId = String(document.studentId?._id ?? document.studentId);
+    const student = await StudentProfile.findOne({ _id: studentId, counsellorUserId: userId }).select('_id').lean();
+    if (!student) {
+      throw new AppError(403, 'Not your student document', ErrorCodes.FORBIDDEN);
+    }
   } else {
     throw new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN);
   }

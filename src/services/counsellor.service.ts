@@ -51,6 +51,10 @@ function trimString(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function slugEmailPart(value: string): string {
   return value
     .normalize("NFKD")
@@ -673,16 +677,29 @@ async function findCounsellorStudentForImport(
     }).lean();
     if (profileById) return profileById as Record<string, unknown>;
   }
-  const userByEmail = await User.findOne({
-    email: row.body.email,
-    role: "student",
-  })
-    .select("_id")
-    .lean();
-  if (!userByEmail) return undefined;
+  if (row.body.email) {
+    const userByEmail = await User.findOne({
+      email: row.body.email,
+      role: "student",
+    })
+      .select("_id")
+      .lean();
+    if (userByEmail) {
+      const profileByEmail = await StudentProfile.findOne({
+        userId: userByEmail._id,
+        counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+      }).lean();
+      if (profileByEmail) return profileByEmail as Record<string, unknown>;
+    }
+  }
+
+  const firstName = row.body.firstName.trim();
+  const lastName = row.body.lastName.trim();
+  if (!firstName || !lastName) return undefined;
   return StudentProfile.findOne({
-    userId: userByEmail._id,
     counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+    firstName: new RegExp(`^${escapeRegExp(firstName)}$`, "i"),
+    lastName: new RegExp(`^${escapeRegExp(lastName)}$`, "i"),
   }).lean() as Promise<Record<string, unknown> | null>;
 }
 
@@ -704,12 +721,6 @@ export async function importCounsellorStudentsFromExcel(
     try {
       if (row.body.email) {
         usedEmails.add(row.body.email.toLowerCase());
-      } else {
-        row.body.email = await makeUniqueGeneratedStudentEmail(
-          row.body.firstName,
-          row.body.lastName,
-          usedEmails,
-        );
       }
       const existingProfile = await findCounsellorStudentForImport(
         counsellorUserId,
@@ -717,11 +728,12 @@ export async function importCounsellorStudentsFromExcel(
       );
       if (existingProfile) {
         const existingUserId = String(existingProfile.userId);
-        await User.findByIdAndUpdate(existingUserId, {
-          email: row.body.email,
+        const updateUser: Record<string, unknown> = {
           name: row.body.name,
           phone: row.body.phone ?? "",
-        });
+        };
+        if (row.body.email) updateUser.email = row.body.email;
+        await User.findByIdAndUpdate(existingUserId, updateUser);
         await StudentProfile.findByIdAndUpdate(existingProfile._id, {
           firstName: row.body.firstName,
           lastName: row.body.lastName,
@@ -736,6 +748,13 @@ export async function importCounsellorStudentsFromExcel(
         });
         updated += 1;
       } else {
+        if (!row.body.email) {
+          row.body.email = await makeUniqueGeneratedStudentEmail(
+            row.body.firstName,
+            row.body.lastName,
+            usedEmails,
+          );
+        }
         const duplicate = await User.findOne({ email: row.body.email })
           .select("_id")
           .lean();

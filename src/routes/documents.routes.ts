@@ -80,7 +80,7 @@ router.post(
 );
 router.get(
   '/student-documents/:id',
-  requireRole('student', 'university', 'university_multi_manager'),
+  requireRole('student', 'university', 'university_multi_manager', 'school_counsellor'),
   validateObjectId('id'),
   documentsController.getStudentDocument
 );

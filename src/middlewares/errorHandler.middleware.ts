@@ -53,7 +53,7 @@ export function errorHandler(
     sendErrorResponse(res, 413, {
       message:
         maybeHttp.code === 'LIMIT_FILE_SIZE'
-          ? 'Uploaded file is too large. Maximum upload size is 50 MB.'
+          ? 'Uploaded file is too large. Maximum upload size is 10 MB.'
           : 'Request body is too large. Try a smaller file or contact support.',
       code: ErrorCodes.VALIDATION,
     });

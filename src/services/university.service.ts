@@ -32,6 +32,18 @@ function isMongoDuplicateKeyError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && (err as { code: unknown }).code === 11000;
 }
 
+async function getApprovedManagerUserIdsForUniversity(universityUserId: string): Promise<string[]> {
+  if (!mongoose.Types.ObjectId.isValid(universityUserId)) return [];
+  const managers = await User.find({
+    role: 'university_multi_manager',
+    universityMultiManagerApproved: true,
+    managedUniversityUserIds: new mongoose.Types.ObjectId(universityUserId),
+  })
+    .select('_id')
+    .lean();
+  return managers.map((manager) => String((manager as { _id: unknown })._id));
+}
+
 export async function getProfile(userId: string) {
   const profile = await UniversityProfile.findOne({ userId }).lean();
   if (!profile) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
@@ -1081,6 +1093,34 @@ export async function createOffer(
     referenceId: String(offer._id),
     metadata: { offerId: String(offer._id), universityName: profile.universityName },
   });
+
+  const counsellorUserId = String((studentProfile as { counsellorUserId?: unknown }).counsellorUserId ?? '');
+  if (counsellorUserId) {
+    await notificationService.createNotification(counsellorUserId, {
+      type: 'offer',
+      title: 'New offer',
+      body: `${profile.universityName} sent an offer to your student.`,
+      referenceType: 'offer',
+      referenceId: String(offer._id),
+      metadata: {
+        offerId: String(offer._id),
+        universityName: profile.universityName,
+        studentUserId: String(studentProfile.userId),
+      },
+    });
+  }
+
+  for (const managerUserId of await getApprovedManagerUserIdsForUniversity(String(profile.userId))) {
+    if (managerUserId === userId) continue;
+    await notificationService.createNotification(managerUserId, {
+      type: 'offer',
+      title: 'Offer sent',
+      body: `${profile.universityName} sent an offer.`,
+      referenceType: 'offer',
+      referenceId: String(offer._id),
+      metadata: { offerId: String(offer._id), universityName: profile.universityName },
+    });
+  }
 
   return offer.toObject ? offer.toObject() : offer;
 }

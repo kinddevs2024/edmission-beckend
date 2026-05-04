@@ -1702,7 +1702,7 @@ export async function getMe(userId: string) {
     emailVerified?: boolean
     suspended?: boolean
     createdAt?: Date
-    notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }
+    notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean; smsApplicationUpdates?: boolean }
     totpEnabled?: boolean
     mustChangePassword?: boolean
     localPasswordConfigured?: boolean
@@ -1777,7 +1777,11 @@ export async function getMe(userId: string) {
       telegram: Boolean(u.socialLinks?.telegram),
     },
     temporaryPassword: u.mustChangePassword ? String(u.temporaryPlainPassword ?? '') || undefined : undefined,
-    notificationPreferences: u.notificationPreferences ?? { emailApplicationUpdates: true, emailTrialReminder: true },
+    notificationPreferences: {
+      emailApplicationUpdates: u.notificationPreferences?.emailApplicationUpdates ?? true,
+      emailTrialReminder: u.notificationPreferences?.emailTrialReminder ?? true,
+      smsApplicationUpdates: u.notificationPreferences?.smsApplicationUpdates ?? false,
+    },
     onboardingTutorialSeen: u.onboardingTutorialSeen ?? { student: false, university: false },
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
     universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id), verified: (universityProfile as { verified?: boolean }).verified } : null,
@@ -1791,7 +1795,7 @@ export async function getMe(userId: string) {
   };
 }
 
-export async function updateMe(userId: string, data: { name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } }) {
+export async function updateMe(userId: string, data: { name?: string; phone?: string; socialLinks?: { telegram?: string; instagram?: string; linkedin?: string; facebook?: string; whatsapp?: string }; notificationPreferences?: { emailApplicationUpdates?: boolean; emailTrialReminder?: boolean; smsApplicationUpdates?: boolean }; onboardingTutorialSeen?: { student?: boolean; university?: boolean } }) {
   const update: Record<string, unknown> = {};
   if (data.name !== undefined) update.name = String(data.name);
   if (data.phone !== undefined) update.phone = String(data.phone).trim();
