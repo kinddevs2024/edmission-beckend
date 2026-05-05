@@ -2,6 +2,7 @@ export { User } from './User';
 export { PendingRegistration } from './PendingRegistration';
 export { PendingPhoneRegistration } from './PendingPhoneRegistration';
 export { RefreshToken } from './RefreshToken';
+export { MobileWebAuthSession } from './MobileWebAuthSession';
 export { StudentProfile } from './StudentProfile';
 export { CounsellorProfile } from './CounsellorProfile';
 export { SchoolJoinRequest } from './SchoolJoinRequest';

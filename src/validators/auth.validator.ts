@@ -151,6 +151,12 @@ export const refreshSchema = z.object({
   }),
 });
 
+export const mobileWebAuthExchangeSchema = z.object({
+  body: z.object({
+    token: z.string().regex(/^[a-f0-9]{64}$/i, 'Invalid mobile auth token'),
+  }),
+});
+
 export const resendVerificationSchema = z.object({
   body: z.object({
     email: z.string().email(),
@@ -196,5 +202,6 @@ export type TelegramAuthStartBody = z.infer<typeof telegramAuthStartSchema>['bod
 export type TelegramAuthVerifyBody = z.infer<typeof telegramAuthVerifySchema>['body'];
 export type TelegramAuthVerifyLinkBody = z.infer<typeof telegramAuthVerifyLinkSchema>['body'];
 export type TelegramAuthVerifyReadyBody = z.infer<typeof telegramAuthVerifyReadySchema>['body'];
+export type MobileWebAuthExchangeBody = z.infer<typeof mobileWebAuthExchangeSchema>['body'];
 export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>['body'];

@@ -11,6 +11,7 @@ import {
   PendingRegistration,
   PendingPhoneRegistration,
   TelegramAuthSession,
+  MobileWebAuthSession,
 } from '../models';
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
@@ -33,6 +34,7 @@ import type {
   YandexAuthBody,
   YandexAccessTokenAuthBody,
   TelegramAuthStartBody,
+  MobileWebAuthExchangeBody,
 } from '../validators/auth.validator';
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
@@ -43,6 +45,7 @@ const TELEGRAM_WEB_AUTH_SESSION_ID_REGEX = /^[a-f0-9]{32}$/i;
 const TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX = /^[a-f0-9]{48}$/i;
 const TELEGRAM_WEB_AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
 const TELEGRAM_WEB_AUTH_CODE_TTL_MS = 15 * 60 * 1000;
+const MOBILE_WEB_AUTH_SESSION_TTL_MS = 2 * 60 * 1000;
 
 function normalizePhone(raw: string): string {
   const trimmed = String(raw || '').trim();
@@ -847,6 +850,50 @@ function createTelegramWebAuthCode(): string {
 
 function createTelegramWebAuthLinkToken(): string {
   return crypto.randomBytes(24).toString('hex');
+}
+
+function hashMobileWebAuthToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+export async function createMobileWebAuthSession(userId: string) {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+  await assertLoginAllowed(user);
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + MOBILE_WEB_AUTH_SESSION_TTL_MS);
+  await MobileWebAuthSession.create({
+    tokenHash: hashMobileWebAuthToken(token),
+    userId: user._id,
+    expiresAt,
+  });
+
+  return { token, expiresAt: expiresAt.toISOString() };
+}
+
+export async function exchangeMobileWebAuthSession(data: MobileWebAuthExchangeBody) {
+  const tokenHash = hashMobileWebAuthToken(data.token);
+  const session = await MobileWebAuthSession.findOne({
+    tokenHash,
+    usedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+  if (!session) {
+    throw new AppError(401, 'Invalid or expired mobile auth token', ErrorCodes.UNAUTHORIZED);
+  }
+
+  session.usedAt = new Date();
+  await session.save();
+
+  const user = await User.findById(session.userId);
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+
+  return issueTokensAfterLoginChecks(user);
 }
 
 function isMongoDuplicateKeyError(error: unknown): boolean {

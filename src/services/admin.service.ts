@@ -656,11 +656,36 @@ export async function getUserById(
     _id: unknown;
     mustChangePassword?: boolean;
     temporaryPlainPassword?: string;
+    role?: string;
+    managedUniversityUserIds?: unknown[];
   };
+  let managedUniversities:
+    | Array<{ userId: string; universityName: string; logoUrl?: string; verified: boolean }>
+    | undefined;
+  if (doc.role === "university_multi_manager") {
+    const ids = (doc.managedUniversityUserIds ?? [])
+      .map((x) => String(x))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
+    managedUniversities = ids.length
+      ? (
+          await UniversityProfile.find({ userId: { $in: ids } })
+            .select("userId universityName logoUrl verified")
+            .lean()
+        ).map((p) => ({
+          userId: String((p as { userId: unknown }).userId),
+          universityName: String((p as { universityName?: string }).universityName ?? ""),
+          logoUrl: (p as { logoUrl?: string }).logoUrl
+            ? String((p as { logoUrl: string }).logoUrl).trim() || undefined
+            : undefined,
+          verified: Boolean((p as { verified?: boolean }).verified),
+        }))
+      : [];
+  }
   return {
     ...u,
     id: String(doc._id),
     temporaryPassword: String(doc.temporaryPlainPassword ?? "") || undefined,
+    ...(managedUniversities ? { managedUniversities } : {}),
   };
 }
 

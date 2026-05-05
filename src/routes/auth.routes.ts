@@ -15,6 +15,7 @@ import {
   telegramAuthVerifySchema,
   telegramAuthVerifyLinkSchema,
   telegramAuthVerifyReadySchema,
+  mobileWebAuthExchangeSchema,
   googleAuthSchema,
   yandexAuthSchema,
   yandexAccessTokenAuthSchema,
@@ -45,6 +46,12 @@ router.post(
   '/login-phone',
   validate(loginByPhoneSchema.shape.body, 'body'),
   authController.loginByPhone
+);
+router.post('/mobile-web/start', authMiddleware, authController.startMobileWebAuth);
+router.post(
+  '/mobile-web/exchange',
+  validate(mobileWebAuthExchangeSchema.shape.body, 'body'),
+  authController.exchangeMobileWebAuth
 );
 router.post(
   '/phone/start',

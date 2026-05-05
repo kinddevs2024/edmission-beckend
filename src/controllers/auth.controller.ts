@@ -15,6 +15,7 @@ import {
   telegramAuthVerifySchema,
   telegramAuthVerifyLinkSchema,
   telegramAuthVerifyReadySchema,
+  mobileWebAuthExchangeSchema,
   verifyEmailCodeSchema,
   resendVerificationSchema,
   forgotPasswordSchema,
@@ -59,6 +60,38 @@ export async function loginByPhone(
   try {
     const data = loginByPhoneSchema.shape.body.parse(req.body);
     const result = await authService.loginByPhone(data);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function startMobileWebAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ message: 'Authorization required' });
+      return;
+    }
+    const result = await authService.createMobileWebAuthSession(userId);
+    res.status(201).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function exchangeMobileWebAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = mobileWebAuthExchangeSchema.shape.body.parse(req.body);
+    const result = await authService.exchangeMobileWebAuthSession(data);
     res.json(result);
   } catch (e) {
     next(e);
