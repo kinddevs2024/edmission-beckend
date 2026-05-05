@@ -53,7 +53,7 @@ export const updateUserSchema = z.object({
       .optional(),
     emailVerified: z.boolean().optional(),
     suspended: z.boolean().optional(),
-    managedUniversityUserIds: z.array(objectIdZod).max(200).optional(),
+    managedUniversityUserIds: z.array(objectIdZod).max(5000).optional(),
     universityMultiManagerApproved: z.boolean().optional(),
   }).strict(),
 });
