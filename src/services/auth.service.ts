@@ -8,6 +8,7 @@ import {
   RefreshToken,
   StudentProfile,
   UniversityProfile,
+  UniversityCatalog,
   PendingRegistration,
   PendingPhoneRegistration,
   TelegramAuthSession,
@@ -46,6 +47,60 @@ const TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX = /^[a-f0-9]{48}$/i;
 const TELEGRAM_WEB_AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
 const TELEGRAM_WEB_AUTH_CODE_TTL_MS = 15 * 60 * 1000;
 const MOBILE_WEB_AUTH_SESSION_TTL_MS = 2 * 60 * 1000;
+
+async function ensureCatalogUniversityAccountForAuth(catalogId: string): Promise<string | null> {
+  if (!mongoose.Types.ObjectId.isValid(catalogId)) return null;
+  const catalog = await UniversityCatalog.findById(catalogId).lean();
+  if (!catalog) return null;
+
+  const linkedProfileId = String((catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId ?? '');
+  if (mongoose.Types.ObjectId.isValid(linkedProfileId)) {
+    const profile = await UniversityProfile.findById(linkedProfileId).select('userId').lean();
+    if (profile) return String((profile as { userId: unknown }).userId);
+  }
+
+  const technicalEmail = `catalog-${catalogId}@edmission.local`;
+  let technicalUser = await User.findOne({ email: technicalEmail }).select('_id').lean();
+  if (!technicalUser) {
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), BCRYPT_ROUNDS);
+    technicalUser = await User.create({
+      email: technicalEmail,
+      role: 'university',
+      name: String((catalog as { universityName?: string }).universityName ?? ''),
+      passwordHash,
+      emailVerified: true,
+      localPasswordConfigured: false,
+    });
+  }
+
+  let profile = await UniversityProfile.findOne({ userId: (technicalUser as { _id: unknown })._id }).select('_id userId').lean();
+  if (!profile) {
+    profile = await UniversityProfile.create({
+      userId: (technicalUser as { _id: unknown })._id,
+      universityName: String((catalog as { universityName?: string }).universityName ?? ''),
+      tagline: (catalog as { tagline?: string }).tagline,
+      establishedYear: (catalog as { establishedYear?: number }).establishedYear,
+      studentCount: (catalog as { studentCount?: number }).studentCount,
+      country: (catalog as { country?: string }).country,
+      city: (catalog as { city?: string }).city,
+      description: (catalog as { description?: string }).description,
+      rating: (catalog as { rating?: number }).rating,
+      logoUrl: (catalog as { logoUrl?: string }).logoUrl,
+      verified: true,
+      onboardingCompleted: false,
+      facultyCodes: (catalog as { facultyCodes?: string[] }).facultyCodes ?? [],
+      facultyItems: (catalog as { facultyItems?: Record<string, string[]> }).facultyItems ?? undefined,
+      targetStudentCountries: (catalog as { targetStudentCountries?: string[] }).targetStudentCountries ?? [],
+      minLanguageLevel: (catalog as { minLanguageLevel?: string }).minLanguageLevel,
+      tuitionPrice: (catalog as { tuitionPrice?: number }).tuitionPrice,
+    });
+  }
+
+  await UniversityCatalog.findByIdAndUpdate(catalogId, {
+    linkedUniversityProfileId: (profile as { _id: unknown })._id,
+  });
+  return String((technicalUser as { _id: unknown })._id);
+}
 
 function normalizePhone(raw: string): string {
   const trimmed = String(raw || '').trim();
@@ -1781,7 +1836,23 @@ export async function getMe(userId: string) {
       .map((x) => String(x))
       .filter((id) => mongoose.Types.ObjectId.isValid(id));
     if (ids.length) {
-      const profiles = await UniversityProfile.find({ userId: { $in: ids } })
+      const resolvedUserIds: string[] = [];
+      for (const id of ids) {
+        const directProfile = await UniversityProfile.findOne({ userId: id }).select('userId').lean();
+        if (directProfile) {
+          resolvedUserIds.push(String((directProfile as { userId: unknown }).userId));
+          continue;
+        }
+        const catalogUserId = await ensureCatalogUniversityAccountForAuth(id);
+        if (catalogUserId) resolvedUserIds.push(catalogUserId);
+      }
+      const uniqueResolvedUserIds = [...new Set(resolvedUserIds)];
+      if (uniqueResolvedUserIds.length && uniqueResolvedUserIds.join('|') !== ids.join('|')) {
+        await User.findByIdAndUpdate(u._id, {
+          managedUniversityUserIds: uniqueResolvedUserIds.map((id) => new mongoose.Types.ObjectId(id)),
+        }).catch(() => undefined);
+      }
+      const profiles = await UniversityProfile.find({ userId: { $in: uniqueResolvedUserIds } })
         .select('userId universityName logoUrl verified')
         .lean();
       managedUniversities = profiles.map((p) => ({
