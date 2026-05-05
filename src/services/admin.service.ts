@@ -353,6 +353,144 @@ export async function assertUniversityUserAccount(userId: string) {
   }
 }
 
+async function createUniversityProfileFromCatalogForUser(
+  catalog: Record<string, unknown>,
+  userId: unknown,
+) {
+  const profile = await UniversityProfile.create({
+    userId,
+    universityName: String(catalog.universityName ?? ""),
+    tagline: catalog.tagline,
+    establishedYear: catalog.establishedYear,
+    studentCount: catalog.studentCount,
+    country: catalog.country,
+    city: catalog.city,
+    description: catalog.description,
+    rating: catalog.rating,
+    logoUrl: catalog.logoUrl,
+    verified: true,
+    onboardingCompleted: false,
+    facultyCodes: Array.isArray(catalog.facultyCodes)
+      ? catalog.facultyCodes
+      : [],
+    facultyItems: catalog.facultyItems ?? undefined,
+    targetStudentCountries: Array.isArray(catalog.targetStudentCountries)
+      ? catalog.targetStudentCountries
+      : [],
+    minLanguageLevel: catalog.minLanguageLevel,
+    tuitionPrice: catalog.tuitionPrice,
+  });
+
+  for (const p of (Array.isArray(catalog.programs) ? catalog.programs : []) as Array<Record<string, unknown>>) {
+    await Program.create({
+      universityId: profile._id,
+      name: p.name ?? "",
+      degreeLevel: p.degreeLevel ?? "",
+      field: p.field ?? "",
+      durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
+      tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
+      language: p.language != null ? String(p.language) : undefined,
+      entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
+    });
+  }
+
+  for (const s of (Array.isArray(catalog.scholarships) ? catalog.scholarships : []) as Array<Record<string, unknown>>) {
+    const maxSlots = s.maxSlots != null ? Number(s.maxSlots) : 1;
+    await Scholarship.create({
+      universityId: profile._id,
+      name: s.name ?? "",
+      coveragePercent: s.coveragePercent != null ? Number(s.coveragePercent) : 0,
+      maxSlots,
+      remainingSlots: maxSlots,
+      deadline: s.deadline ? new Date(s.deadline as string) : undefined,
+      eligibility: s.eligibility != null ? String(s.eligibility) : undefined,
+    });
+  }
+
+  for (const faculty of (Array.isArray(catalog.customFaculties) ? catalog.customFaculties : []) as Array<Record<string, unknown>>) {
+    await Faculty.create({
+      universityId: profile._id,
+      name: faculty.name ?? "",
+      description: faculty.description != null ? String(faculty.description) : "",
+      items: Array.isArray(faculty.items)
+        ? faculty.items.map((item) => String(item)).filter(Boolean)
+        : [],
+      order: faculty.order != null ? Number(faculty.order) : 0,
+    });
+  }
+
+  for (const document of (Array.isArray(catalog.documents) ? catalog.documents : []) as Array<Record<string, unknown>>) {
+    if (!document.documentType || !document.fileUrl) continue;
+    await UniversityDocument.create({
+      universityId: profile._id,
+      documentType: String(document.documentType),
+      fileUrl: String(document.fileUrl),
+      status: document.status != null ? String(document.status) : undefined,
+      reviewedBy: document.reviewedBy != null ? String(document.reviewedBy) : undefined,
+      reviewedAt: document.reviewedAt ? new Date(document.reviewedAt as string) : undefined,
+    });
+  }
+
+  return profile;
+}
+
+async function ensureUniversityUserAccountFromCatalog(catalogId: string): Promise<string> {
+  const catalog = await UniversityCatalog.findById(catalogId).lean();
+  if (!catalog) {
+    throw new AppError(
+      400,
+      "managedUniversityUserIds must reference university accounts or catalog universities",
+      ErrorCodes.VALIDATION,
+    );
+  }
+
+  const linkedProfileId = (catalog as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId;
+  if (linkedProfileId && mongoose.Types.ObjectId.isValid(String(linkedProfileId))) {
+    const linkedProfile = await UniversityProfile.findById(linkedProfileId)
+      .select("userId")
+      .lean();
+    const linkedUserId = linkedProfile ? String((linkedProfile as { userId: unknown }).userId) : "";
+    if (linkedUserId && mongoose.Types.ObjectId.isValid(linkedUserId)) return linkedUserId;
+  }
+
+  const existingProfile = await UniversityProfile.findOne({
+    universityName: (catalog as { universityName?: string }).universityName,
+    country: (catalog as { country?: string }).country,
+    city: (catalog as { city?: string }).city,
+  })
+    .select("_id userId")
+    .lean();
+  if (existingProfile) {
+    await UniversityCatalog.findByIdAndUpdate(catalogId, {
+      linkedUniversityProfileId: (existingProfile as { _id: unknown })._id,
+    });
+    return String((existingProfile as { userId: unknown }).userId);
+  }
+
+  const technicalEmail = `catalog-${catalogId}@edmission.local`;
+  let user = await User.findOne({ email: technicalEmail }).select("_id").lean();
+  if (!user) {
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10);
+    user = await User.create({
+      email: technicalEmail,
+      role: "university",
+      name: String((catalog as { universityName?: string }).universityName ?? ""),
+      passwordHash,
+      emailVerified: true,
+      localPasswordConfigured: false,
+    });
+  }
+
+  const profile = await createUniversityProfileFromCatalogForUser(
+    catalog as unknown as Record<string, unknown>,
+    (user as { _id: unknown })._id,
+  );
+  await UniversityCatalog.findByIdAndUpdate(catalogId, {
+    linkedUniversityProfileId: profile._id,
+  });
+  return String((user as { _id: unknown })._id);
+}
+
 export async function getUsers(
   query: {
     page?: number;
@@ -763,37 +901,34 @@ export async function updateUser(
       );
     }
     if (patch.managedUniversityUserIds !== undefined) {
-      const ids = [
+      const inputIds = [
         ...new Set(
           patch.managedUniversityUserIds
             .map((x) => String(x).trim())
             .filter(Boolean),
         ),
       ];
-      for (const id of ids) {
+      for (const id of inputIds) {
         if (!mongoose.Types.ObjectId.isValid(id)) {
           throw new AppError(
             400,
-            "Invalid university user id in managedUniversityUserIds",
+            "Invalid university or catalog id in managedUniversityUserIds",
             ErrorCodes.VALIDATION,
           );
         }
       }
-      if (ids.length) {
-        const uniUsers = await User.find({
-          _id: { $in: ids },
-          role: "university",
-        })
+      const resolvedUserIds: string[] = [];
+      for (const id of inputIds) {
+        const uniUser = await User.findOne({ _id: id, role: "university" })
           .select("_id")
           .lean();
-        if (uniUsers.length !== ids.length) {
-          throw new AppError(
-            400,
-            "managedUniversityUserIds must reference existing university accounts",
-            ErrorCodes.VALIDATION,
-          );
+        if (uniUser) {
+          resolvedUserIds.push(String((uniUser as { _id: unknown })._id));
+          continue;
         }
+        resolvedUserIds.push(await ensureUniversityUserAccountFromCatalog(id));
       }
+      const ids = [...new Set(resolvedUserIds)];
       update.managedUniversityUserIds = ids.map(
         (id) => new mongoose.Types.ObjectId(id),
       );
@@ -3027,11 +3162,28 @@ export async function getCatalogUniversities(query: {
       .lean(),
     UniversityCatalog.countDocuments(filter),
   ]);
+  const linkedProfileIds = list
+    .map((u) => String((u as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId ?? ""))
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const linkedProfiles = linkedProfileIds.length
+    ? await UniversityProfile.find({ _id: { $in: linkedProfileIds } })
+        .select("_id userId")
+        .lean()
+    : [];
+  const linkedUserByProfileId = new Map(
+    linkedProfiles.map((p) => [
+      String((p as { _id: unknown })._id),
+      String((p as { userId: unknown }).userId),
+    ]),
+  );
   return {
     data: list.map((u) => ({
       ...u,
       id: String((u as { _id: unknown })._id),
       name: (u as { universityName?: string }).universityName ?? "",
+      linkedUniversityUserId: linkedUserByProfileId.get(
+        String((u as { linkedUniversityProfileId?: unknown }).linkedUniversityProfileId ?? ""),
+      ),
     })),
     total,
     page,
