@@ -36,6 +36,7 @@ import type {
   YandexAccessTokenAuthBody,
   TelegramAuthStartBody,
   MobileWebAuthExchangeBody,
+  ResetPasswordTelegramCodeBody,
 } from '../validators/auth.validator';
 import { DEFAULT_ADMIN_EMAIL, DEFAULT_ADMIN_PASSWORD, DEFAULT_ADMIN_NAME } from '../config/defaultAdmin';
 
@@ -959,6 +960,42 @@ export async function createTelegramMobileAppAuthLink(
   };
 }
 
+export async function createTelegramVerifiedPhoneAuthLink(payload: {
+  phone: string;
+  telegramChatId: string;
+  telegramUsername?: string;
+}): Promise<{ ok: boolean; message: string; loginLink?: string; expiresAt?: string }> {
+  const normalizedPhone = normalizePhone(payload.phone);
+  const normalizedChatId = normalizeTelegramChatId(payload.telegramChatId);
+  if (!normalizedPhone || !normalizedChatId) {
+    return { ok: false, message: 'Phone number is invalid. Try sharing contact again.' };
+  }
+
+  const user = await User.findOne({ phone: normalizedPhone });
+  if (!user) {
+    return { ok: false, message: 'No Edmission account was found for this phone number.' };
+  }
+  const role = String(user.role ?? '');
+  if (role !== 'student' && role !== 'university') {
+    return { ok: false, message: 'Telegram login is available only for student and university accounts.' };
+  }
+
+  await linkTelegramToUser(String(user._id), {
+    chatId: normalizedChatId,
+    username: payload.telegramUsername,
+    phone: normalizedPhone,
+  });
+  const mobileAuth = await createMobileWebAuthSession(String(user._id));
+  return {
+    ok: true,
+    message: 'Telegram phone confirmed. Open Edmission:',
+    loginLink: toPublicSiteUrl(
+      `/mobile-app-auth?token=${encodeURIComponent(mobileAuth.token)}&next=${encodeURIComponent(getDefaultPathForRole(role))}`
+    ),
+    expiresAt: mobileAuth.expiresAt,
+  };
+}
+
 export async function exchangeMobileWebAuthSession(data: MobileWebAuthExchangeBody) {
   const tokenHash = hashMobileWebAuthToken(data.token);
   const now = new Date();
@@ -1015,17 +1052,17 @@ async function unlinkTelegramFromOtherUsers(chatId: string, exceptUserId?: strin
   });
 }
 
-export async function authenticateTelegramCredentials(email: string, password: string) {
-  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+export async function authenticateTelegramCredentials(identifier: string, password: string) {
+  const normalizedIdentifier = String(identifier ?? '').toLowerCase().trim();
   const rawPassword = String(password ?? '');
-  if (!normalizedEmail || !rawPassword.trim()) {
-    throw new AppError(400, 'Email and password are required', ErrorCodes.VALIDATION);
+  if (!normalizedIdentifier || !rawPassword.trim()) {
+    throw new AppError(400, 'Email/phone and password are required', ErrorCodes.VALIDATION);
   }
-  if (normalizedEmail.length > 254 || rawPassword.length > 256) {
+  if (normalizedIdentifier.length > 254 || rawPassword.length > 256) {
     throw new AppError(400, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
 
-  const user = await findUserByEmailCaseInsensitive(normalizedEmail);
+  const user = await findUserByLoginIdentifier(normalizedIdentifier);
   if (!user) {
     await bcrypt.compare(rawPassword, TELEGRAM_DUMMY_PASSWORD_HASH).catch(() => false);
     throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
@@ -1034,17 +1071,17 @@ export async function authenticateTelegramCredentials(email: string, password: s
     throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
   }
 
-  const valid = await bcrypt.compare(rawPassword, user.passwordHash);
-  if (!valid) {
-    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
-  }
-
   if (user.localPasswordConfigured === false) {
     throw new AppError(
       400,
-      'This account has no local password yet. Set a password on the website first.',
+      'This account has no local password yet. Set a password first.',
       ErrorCodes.VALIDATION
     );
+  }
+
+  const valid = await bcrypt.compare(rawPassword, user.passwordHash);
+  if (!valid) {
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
   }
 
   if (user.localPasswordConfigured !== true) {
@@ -1175,7 +1212,7 @@ export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
     throw new AppError(409, 'Phone already registered', ErrorCodes.CONFLICT);
   }
 
-  const verifyCode = generatePhoneVerifyCode();
+  const verifyCode = `reg_${new mongoose.Types.ObjectId().toHexString()}`;
   const verifyCodeExpires = new Date(Date.now() + 10 * 60 * 1000);
 
   const fullName = [data.firstName?.trim(), data.lastName?.trim()].filter(Boolean).join(' ').trim();
@@ -1200,14 +1237,17 @@ export async function startPhoneRegistration(data: PhoneRegisterStartBody) {
     { upsert: true, new: true }
   );
 
+  const botUsername = config.telegram.botUsername.trim();
+  const deepLink = botUsername ? `https://t.me/${botUsername}?start=${encodeURIComponent(verifyCode)}` : '';
+
   return {
     registrationId: String((pending as { _id: unknown })._id),
     phone: normalizedPhone,
     verification: {
-      method: 'code',
-      code: verifyCode,
+      method: 'telegram',
+      code: config.nodeEnv === 'production' ? '' : verifyCode,
       expiresAt: verifyCodeExpires.toISOString(),
-      deepLink: '',
+      deepLink,
     },
   };
 }
@@ -1225,7 +1265,7 @@ export async function getPhoneRegistrationStatus(registrationId: string) {
   };
 }
 
-export async function completePhoneRegistration(data: { registrationId: string; code: string; password: string }) {
+export async function completePhoneRegistration(data: { registrationId: string; code?: string; password: string }) {
   const pending = await PendingPhoneRegistration.findById(data.registrationId);
   if (!pending) {
     throw new AppError(404, 'Registration request not found or expired', ErrorCodes.NOT_FOUND);
@@ -1249,7 +1289,8 @@ export async function completePhoneRegistration(data: { registrationId: string; 
   }
 
   const code = String(data.code ?? '').trim();
-  if (String(pending.verifyCode ?? '').trim() !== code) {
+  const verifiedViaTelegram = Boolean((pending as { verifiedViaTelegram?: boolean }).verifiedViaTelegram);
+  if (!verifiedViaTelegram && String(pending.verifyCode ?? '').trim() !== code) {
     const failedAttempts = Number((pending as { verifyFailedAttempts?: number }).verifyFailedAttempts ?? 0) + 1;
     const nextLockedUntil = failedAttempts >= VERIFY_CODE_MAX_ATTEMPTS
       ? new Date(Date.now() + VERIFY_CODE_LOCK_MS)
@@ -1327,7 +1368,8 @@ export async function completePhoneRegistration(data: { registrationId: string; 
 export async function verifyPhoneRegistrationByTelegram(
   verifyCode: string,
   telegramChatId: string,
-  telegramUsername: string
+  telegramUsername: string,
+  phone?: string
 ): Promise<{ ok: boolean; message: string }> {
   const normalizedVerifyCode = String(verifyCode ?? '').trim();
   const normalizedChatId = normalizeTelegramChatId(telegramChatId);
@@ -1342,6 +1384,15 @@ export async function verifyPhoneRegistrationByTelegram(
 
   if (!pending) {
     return { ok: false, message: 'Registration code is invalid or expired.' };
+  }
+
+  const expectedPhone = normalizePhone(String(pending.phone ?? ''));
+  const sharedPhone = normalizePhone(String(phone ?? ''));
+  if (!sharedPhone || sharedPhone !== expectedPhone) {
+    return {
+      ok: false,
+      message: 'This Telegram phone does not match the phone entered on the website. Send the same phone number or start again.',
+    };
   }
 
   pending.verifiedViaTelegram = true;
@@ -1564,6 +1615,77 @@ export async function issueTelegramWebsiteAuthCode(payload: {
     loginLink: toPublicSiteUrl(
       `/auth/telegram?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(session.loginLinkToken)}`
     ),
+  };
+}
+
+export async function getTelegramLoginRequirement(identifier: string): Promise<{
+  exists: boolean;
+  localPasswordConfigured: boolean;
+}> {
+  const normalizedIdentifier = String(identifier ?? '').toLowerCase().trim();
+  if (!normalizedIdentifier) return { exists: false, localPasswordConfigured: true };
+  const user = await findUserByLoginIdentifier(normalizedIdentifier);
+  if (!user) return { exists: false, localPasswordConfigured: true };
+  return {
+    exists: true,
+    localPasswordConfigured: user.localPasswordConfigured !== false,
+  };
+}
+
+export async function createTelegramPasswordResetLink(payload: {
+  identifier: string;
+  telegramChatId: string;
+  telegramUsername?: string;
+  verifiedPhoneContact?: boolean;
+}): Promise<{ ok: boolean; message: string; resetLink?: string }> {
+  const identifier = String(payload.identifier ?? '').trim();
+  const normalizedChatId = normalizeTelegramChatId(payload.telegramChatId);
+  if (!identifier || !normalizedChatId) {
+    return { ok: false, message: 'Login session expired. Tap Login again.' };
+  }
+
+  const user = await findUserByLoginIdentifier(identifier);
+  if (!user) {
+    return { ok: true, message: 'If this account exists, password reset instructions were prepared.' };
+  }
+
+  const linkedChatId = normalizeTelegramChatId(String(user.telegram?.chatId ?? user.socialLinks?.telegram ?? ''));
+  const identifierPhone = normalizePhone(identifier);
+  const userPhone = normalizePhone(String(user.phone ?? ''));
+  const verifiedByLinkedTelegram = linkedChatId && linkedChatId === normalizedChatId;
+  const verifiedByOwnPhoneContact =
+    payload.verifiedPhoneContact === true && identifierPhone && userPhone && identifierPhone === userPhone;
+
+  if (!verifiedByLinkedTelegram && !verifiedByOwnPhoneContact) {
+    return {
+      ok: false,
+      message: 'For safety, send your own phone number with the Telegram button first, then tap Forgot password again.',
+    };
+  }
+
+  if (verifiedByOwnPhoneContact && !verifiedByLinkedTelegram) {
+    await linkTelegramToUser(String(user._id), {
+      chatId: normalizedChatId,
+      username: payload.telegramUsername,
+      phone: userPhone,
+    });
+  }
+
+  if (userPhone) {
+    const issued = await issueTelegramPhoneCode(userPhone);
+    if (!issued) {
+      return { ok: false, message: 'Could not create reset code. Try again.' };
+    }
+    return {
+      ok: true,
+      message: `Your Edmission password reset code is ${issued.code}. Return to the website, enter this code, and create a new password.`,
+    };
+  }
+
+  await forgotPassword(identifier);
+  return {
+    ok: true,
+    message: 'Password reset instructions were sent to your email.',
   };
 }
 
@@ -2156,9 +2278,43 @@ export async function verifyEmailByCode(email: string, code: string) {
   return issueAuthTokens(user);
 }
 
-export async function forgotPassword(identifier: string): Promise<{ success: true; resetLink?: string }> {
+export async function forgotPassword(identifier: string): Promise<{
+  success: true;
+  resetLink?: string;
+  mode?: 'email' | 'telegram_code';
+  phone?: string;
+  expiresAt?: string;
+}> {
   const user = await findUserByLoginIdentifier(identifier);
   if (!user) return { success: true };
+
+  const normalizedIdentifierPhone = normalizePhone(identifier);
+  const userPhone = normalizePhone(String(user.phone ?? ''));
+  if (normalizedIdentifierPhone && userPhone && normalizedIdentifierPhone === userPhone) {
+    const chatId = normalizeTelegramChatId(String(user.telegram?.chatId ?? user.socialLinks?.telegram ?? ''));
+    if (!chatId || !config.telegram.botToken) {
+      throw new AppError(400, 'This phone is not linked to Telegram yet. Use Telegram login first.', ErrorCodes.VALIDATION);
+    }
+    const issued = await issueTelegramPhoneCode(userPhone);
+    if (!issued) {
+      throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+    }
+    try {
+      await sendTelegramMessage(
+        chatId,
+        `Your Edmission password reset code is ${issued.code}. It expires in ${Math.max(1, Math.round(config.telegram.otpTtlMs / 60000))} minute(s).`
+      );
+    } catch (error) {
+      logger.warn({ error, userId: String(user._id) }, 'Failed to deliver password reset code by Telegram');
+      throw new AppError(503, 'Could not send Telegram code. Try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
+    }
+    return {
+      success: true,
+      mode: 'telegram_code',
+      phone: userPhone,
+      expiresAt: new Date(Date.now() + config.telegram.otpTtlMs).toISOString(),
+    };
+  }
 
   const resetToken = uuidv4();
   const resetLink = emailService.buildResetPasswordLink(resetToken);
@@ -2193,7 +2349,7 @@ export async function forgotPassword(identifier: string): Promise<{ success: tru
     return { success: true, resetLink };
   }
 
-  return { success: true };
+  return { success: true, mode: 'email' };
 }
 
 export async function resetPassword(token: string, newPassword: string) {
@@ -2205,6 +2361,26 @@ export async function resetPassword(token: string, newPassword: string) {
     throw new AppError(400, 'Invalid or expired reset token', ErrorCodes.VALIDATION);
   }
   const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  await User.findByIdAndUpdate(user._id, {
+    passwordHash,
+    resetToken: null,
+    resetTokenExpires: null,
+    localPasswordConfigured: true,
+    mustChangePassword: false,
+    temporaryPlainPassword: '',
+    temporaryPasswordGeneratedAt: null,
+    passwordChangedAt: new Date(),
+  });
+  await RefreshToken.deleteMany({ userId: user._id });
+  return { success: true };
+}
+
+export async function resetPasswordWithTelegramCode(data: ResetPasswordTelegramCodeBody) {
+  const user = await verifyTelegramPhoneCode(data.phone, data.code);
+  if (!user) {
+    throw new AppError(401, 'Invalid credentials', ErrorCodes.UNAUTHORIZED);
+  }
+  const passwordHash = await bcrypt.hash(data.newPassword, BCRYPT_ROUNDS);
   await User.findByIdAndUpdate(user._id, {
     passwordHash,
     resetToken: null,

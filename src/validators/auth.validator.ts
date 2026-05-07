@@ -59,7 +59,7 @@ export const phoneRegisterStatusSchema = z.object({
 export const phoneRegisterCompleteSchema = z.object({
   body: z.object({
     registrationId: z.string().length(24, 'Invalid registration id'),
-    code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+    code: z.string().optional().default(''),
     password: passwordSchema,
   }),
 });
@@ -176,6 +176,14 @@ export const resetPasswordSchema = z.object({
   }),
 });
 
+export const resetPasswordTelegramCodeSchema = z.object({
+  body: z.object({
+    phone: phoneSchema,
+    code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+    newPassword: passwordSchema,
+  }),
+});
+
 export const setPasswordSchema = z.object({
   body: z.object({
     newPassword: passwordSchema,
@@ -205,3 +213,4 @@ export type TelegramAuthVerifyReadyBody = z.infer<typeof telegramAuthVerifyReady
 export type MobileWebAuthExchangeBody = z.infer<typeof mobileWebAuthExchangeSchema>['body'];
 export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>['body'];
+export type ResetPasswordTelegramCodeBody = z.infer<typeof resetPasswordTelegramCodeSchema>['body'];

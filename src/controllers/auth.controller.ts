@@ -20,6 +20,7 @@ import {
   resendVerificationSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  resetPasswordTelegramCodeSchema,
   setPasswordSchema,
   changePasswordSchema,
 } from '../validators/auth.validator';
@@ -435,6 +436,20 @@ export async function resetPassword(
   try {
     const { token, newPassword } = resetPasswordSchema.shape.body.parse(req.body);
     await authService.resetPassword(token, newPassword);
+    res.json({ success: true });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function resetPasswordWithTelegramCode(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const data = resetPasswordTelegramCodeSchema.shape.body.parse(req.body);
+    await authService.resetPasswordWithTelegramCode(data);
     res.json({ success: true });
   } catch (e) {
     next(e);

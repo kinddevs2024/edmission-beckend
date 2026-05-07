@@ -23,6 +23,7 @@ import {
   resendVerificationSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  resetPasswordTelegramCodeSchema,
   setPasswordSchema,
   changePasswordSchema,
 } from '../validators/auth.validator';
@@ -135,6 +136,11 @@ router.post(
   '/reset-password',
   validate(resetPasswordSchema.shape.body, 'body'),
   authController.resetPassword
+);
+router.post(
+  '/reset-password/telegram-code',
+  validate(resetPasswordTelegramCodeSchema.shape.body, 'body'),
+  authController.resetPasswordWithTelegramCode
 );
 router.post(
   '/set-password',
