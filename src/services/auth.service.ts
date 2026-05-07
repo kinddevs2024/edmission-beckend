@@ -46,7 +46,9 @@ const TELEGRAM_WEB_AUTH_SESSION_ID_REGEX = /^[a-f0-9]{32}$/i;
 const TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX = /^[a-f0-9]{48}$/i;
 const TELEGRAM_WEB_AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
 const TELEGRAM_WEB_AUTH_CODE_TTL_MS = 15 * 60 * 1000;
+const TELEGRAM_WEB_AUTH_LINK_REPLAY_WINDOW_MS = 60 * 1000;
 const MOBILE_WEB_AUTH_SESSION_TTL_MS = 2 * 60 * 1000;
+const MOBILE_WEB_AUTH_REPLAY_WINDOW_MS = 60 * 1000;
 
 async function ensureCatalogUniversityAccountForAuth(catalogId: string): Promise<string | null> {
   if (!mongoose.Types.ObjectId.isValid(catalogId)) return null;
@@ -929,19 +931,54 @@ export async function createMobileWebAuthSession(userId: string) {
   return { token, expiresAt: expiresAt.toISOString() };
 }
 
+export async function createTelegramMobileAppAuthLink(
+  telegramChatId: string,
+  nextPath = '/'
+): Promise<{ url: string; expiresAt: string }> {
+  const normalizedChatId = normalizeTelegramChatId(telegramChatId);
+  if (!normalizedChatId) {
+    throw new AppError(400, 'Telegram chat id is invalid', ErrorCodes.VALIDATION);
+  }
+
+  const user = await User.findOne({
+    $or: [{ 'telegram.chatId': normalizedChatId }, { 'socialLinks.telegram': normalizedChatId }],
+  }).select('_id');
+  if (!user) {
+    throw new AppError(404, 'Telegram is not linked to an Edmission account', ErrorCodes.NOT_FOUND);
+  }
+
+  const auth = await createMobileWebAuthSession(String(user._id));
+  const safeNext = String(nextPath ?? '').startsWith('/') && !String(nextPath ?? '').startsWith('//')
+    ? String(nextPath)
+    : '/';
+  return {
+    url: toPublicSiteUrl(
+      `/mobile-app-auth?token=${encodeURIComponent(auth.token)}&next=${encodeURIComponent(safeNext)}`
+    ),
+    expiresAt: auth.expiresAt,
+  };
+}
+
 export async function exchangeMobileWebAuthSession(data: MobileWebAuthExchangeBody) {
   const tokenHash = hashMobileWebAuthToken(data.token);
+  const now = new Date();
+  const replayAfter = new Date(Date.now() - MOBILE_WEB_AUTH_REPLAY_WINDOW_MS);
   const session = await MobileWebAuthSession.findOne({
     tokenHash,
-    usedAt: null,
-    expiresAt: { $gt: new Date() },
+    expiresAt: { $gt: now },
+    $or: [
+      { usedAt: null },
+      { usedAt: { $gte: replayAfter } },
+    ],
   });
   if (!session) {
     throw new AppError(401, 'Invalid or expired mobile auth token', ErrorCodes.UNAUTHORIZED);
   }
 
-  session.usedAt = new Date();
-  await session.save();
+  if (!session.usedAt) {
+    session.usedAt = now;
+    await session.save();
+  }
 
   const user = await User.findById(session.userId);
   if (!user) {
@@ -1530,6 +1567,62 @@ export async function issueTelegramWebsiteAuthCode(payload: {
   };
 }
 
+function getDefaultPathForRole(role?: string): string {
+  if (role === 'student') return '/student/chat';
+  if (role === 'university' || role === 'university_multi_manager') return '/university/chat';
+  if (role === 'school_counsellor') return '/school/chats';
+  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/chats';
+  return '/notifications';
+}
+
+function extractTelegramAuthLinkToken(loginLink?: string): string {
+  const raw = String(loginLink ?? '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    return String(parsed.searchParams.get('token') ?? '').trim().toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+export async function completeTelegramWebsiteAuthFromBot(payload: {
+  sessionId: string;
+  telegramChatId: string;
+  phone: string;
+  telegramUsername?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}): Promise<{ ok: boolean; message: string; loginLink?: string; expiresAt?: string }> {
+  const issued = await issueTelegramWebsiteAuthCode(payload);
+  if (!issued.ok) {
+    return { ok: false, message: issued.message };
+  }
+
+  const token = extractTelegramAuthLinkToken(issued.loginLink);
+  if (!TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX.test(token)) {
+    return { ok: false, message: 'Could not create login link. Start again.' };
+  }
+
+  const result = await verifyTelegramWebsiteAuthLink({ sessionId: payload.sessionId, token });
+  const userId = String(result.user?.id ?? '').trim();
+  if (!userId) {
+    return { ok: false, message: 'Could not finish Telegram login. Start again.' };
+  }
+
+  const mobileAuth = await createMobileWebAuthSession(userId);
+  const nextPath = getDefaultPathForRole(result.user?.role);
+  return {
+    ok: true,
+    message: 'Login link created.',
+    loginLink: toPublicSiteUrl(
+      `/mobile-app-auth?token=${encodeURIComponent(mobileAuth.token)}&next=${encodeURIComponent(nextPath)}`
+    ),
+    expiresAt: mobileAuth.expiresAt,
+  };
+}
+
 async function finalizeTelegramWebsiteAuthSession(session: {
   phone?: string;
   telegramId?: number | null;
@@ -1661,17 +1754,28 @@ export async function verifyTelegramWebsiteAuthLink(payload: {
       $set: {
         consumedAt: now,
         code: '',
-        loginLinkToken: '',
       },
     },
     { new: true }
   );
 
-  if (!session) {
+  const replaySession = session
+    ? null
+    : await TelegramAuthSession.findOne({
+        sessionId,
+        loginLinkToken: normalizedToken,
+        consumedAt: { $gte: new Date(Date.now() - TELEGRAM_WEB_AUTH_LINK_REPLAY_WINDOW_MS) },
+        expiresAt: { $gt: now },
+        phone: { $type: 'string', $ne: '' },
+        telegramId: { $type: 'number' },
+      });
+
+  const finalSession = session ?? replaySession;
+  if (!finalSession) {
     throw new AppError(400, 'Invalid or expired login link', ErrorCodes.VALIDATION);
   }
 
-  return finalizeTelegramWebsiteAuthSession(session);
+  return finalizeTelegramWebsiteAuthSession(finalSession);
 }
 
 export async function verifyTelegramWebsiteAuthReady(payload: {

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Chat, TelegramChatPreference, TelegramMessageLink, User } from '../models';
+import { Chat, MobileWebAuthSession, TelegramChatPreference, TelegramMessageLink, User } from '../models';
 import { config } from '../config';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
@@ -28,6 +28,7 @@ type BotLang = 'ru' | 'en' | 'uz';
 let pollingTimer: NodeJS.Timeout | null = null;
 let updateOffset = 0;
 let pollingInProgress = false;
+const MOBILE_WEB_AUTH_SESSION_TTL_MS = 2 * 60 * 1000;
 
 function hasTelegramConfigured(): boolean {
   return Boolean(config.telegram.botToken);
@@ -36,6 +37,21 @@ function hasTelegramConfigured(): boolean {
 function getBotLink(): string {
   const username = config.telegram.botUsername;
   return username ? `https://t.me/${username}` : 'https://t.me/';
+}
+
+function hashMobileWebAuthToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function createMobileAppAuthUrl(userId: string, nextPath: string): Promise<string> {
+  const token = crypto.randomBytes(32).toString('hex');
+  await MobileWebAuthSession.create({
+    tokenHash: hashMobileWebAuthToken(token),
+    userId,
+    expiresAt: new Date(Date.now() + MOBILE_WEB_AUTH_SESSION_TTL_MS),
+  });
+  const safeNext = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/';
+  return toPublicSiteUrl(`/mobile-app-auth?token=${encodeURIComponent(token)}&next=${encodeURIComponent(safeNext)}`);
 }
 
 async function telegramGet(method: string, query: Record<string, string | number>): Promise<any> {
@@ -74,20 +90,24 @@ async function sendTelegramText(
   options?: { replyMarkup?: Record<string, unknown> }
 ): Promise<{ ok?: boolean; result?: { message_id?: number } } | null> {
   if (!hasTelegramConfigured()) return null;
-  try {
-    const result = await telegramPost('sendMessage', {
-      chat_id: chatId,
-      text,
-      ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
-    });
-    if (!result?.ok) {
-      logger.warn({ result }, 'Telegram sendMessage failed');
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const result = await telegramPost('sendMessage', {
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+        ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
+      });
+      if (result?.ok) return result;
+      logger.warn({ result, attempt }, 'Telegram sendMessage failed');
+    } catch (error) {
+      logger.warn({ error, attempt }, 'Telegram sendMessage exception');
     }
-    return result;
-  } catch (error) {
-    logger.warn({ error }, 'Telegram sendMessage exception');
-    return null;
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+    }
   }
+  return null;
 }
 
 async function getChatLanguage(chatId: string): Promise<{ lang: BotLang; selected: boolean }> {
@@ -458,23 +478,30 @@ export async function unlinkTelegram(userId: string): Promise<void> {
 
 export async function sendChatMessageToTelegram(recipientUserId: string, payload: { chatId: string; senderName: string; text: string }): Promise<void> {
   if (!hasTelegramConfigured()) return;
-  const user = await User.findById(recipientUserId).select('telegram.chatId role').lean();
-  const chatId = ((user as { telegram?: { chatId?: string } } | null)?.telegram?.chatId || '').trim();
+  const user = await User.findById(recipientUserId).select('telegram.chatId socialLinks.telegram role').lean();
+  const chatId = (
+    (user as { telegram?: { chatId?: string } } | null)?.telegram?.chatId
+    || (user as { socialLinks?: { telegram?: string } } | null)?.socialLinks?.telegram
+    || ''
+  ).trim();
   if (!chatId) return;
   const role = String((user as { role?: string } | null)?.role ?? '');
   const appChatId = String(payload.chatId ?? '').trim();
   const siteLink =
     role === 'student'
-      ? toPublicSiteUrl(`/student/chat?chatId=${encodeURIComponent(appChatId)}`)
+      ? `/student/chat?chatId=${encodeURIComponent(appChatId)}`
       : role === 'university'
-        ? toPublicSiteUrl(`/university/chat?chatId=${encodeURIComponent(appChatId)}`)
+        ? `/university/chat?chatId=${encodeURIComponent(appChatId)}`
         : '';
+  const openLink = siteLink
+    ? await createMobileAppAuthUrl(recipientUserId, siteLink).catch(() => toPublicSiteUrl(siteLink))
+    : '';
 
   const text = [
     `New message from ${payload.senderName}`,
     '',
     payload.text || '(empty message)',
-    siteLink ? `Open in Edmission: ${siteLink}` : '',
+    openLink ? `Open in Edmission: ${openLink}` : '',
   ].join('\n');
 
   const sent = await sendTelegramText(chatId, text.slice(0, 3900));
@@ -506,6 +533,7 @@ type TelegramParseMode = 'Markdown' | 'MarkdownV2' | 'HTML';
 type TelegramKeyboardButton = {
   text: string;
   request_contact?: boolean;
+  web_app?: { url: string };
 };
 
 type TelegramReplyKeyboard = {
@@ -518,6 +546,7 @@ type TelegramInlineKeyboardButton = {
   text: string;
   url?: string;
   callback_data?: string;
+  web_app?: { url: string };
 };
 
 type TelegramInlineKeyboard = {
@@ -566,6 +595,7 @@ export async function sendTelegramMessage(
   const payload: Record<string, unknown> = {
     chat_id: normalizedChatId,
     text: messageText,
+    disable_web_page_preview: true,
   };
   if (parseMode) payload.parse_mode = parseMode;
   if (replyMarkup) {

@@ -3,7 +3,7 @@ import { config } from '../config';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { toPublicSiteUrl } from '../utils/publicSiteUrl';
-import { sendTelegramKeyboard, sendTelegramMessage } from './telegram.service';
+import { removeTelegramKeyboard, sendTelegramKeyboard, sendTelegramMessage } from './telegram.service';
 import * as authService from './auth.service';
 import * as notificationService from './notification.service';
 
@@ -32,6 +32,10 @@ type BotState = {
   telegramAuthPhone?: string;
   telegramAuthFirstName?: string;
   telegramAuthLastName?: string;
+  pendingStartPayload?: string;
+  pendingStartUsername?: string;
+  pendingStartFirstName?: string;
+  pendingStartLastName?: string;
   username?: string;
   updatedAt: number;
 };
@@ -50,7 +54,7 @@ const sessionByChatId = new Map<string, BotState>();
 const lastActionAtByChatId = new Map<string, number>();
 const loginGuardByChatId = new Map<string, { failedCount: number; windowStartedAt: number; lockedUntil: number }>();
 const SESSION_TTL_MS = 10 * 60 * 1000;
-const MIN_ACTION_INTERVAL_MS = 700;
+const MIN_ACTION_INTERVAL_MS = 150;
 const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
@@ -70,7 +74,7 @@ const MENU_HELP = 'Help';
 const MENU_BACK = 'Back';
 const MENU_SKIP_EMAIL = 'Skip email';
 
-const MENU_OPEN_SITE = 'Open website';
+const MENU_OPEN_SITE = 'Open app';
 const MENU_RECENT = 'Recent messages';
 const MENU_MARK_VIEWED = 'Mark as viewed';
 const MENU_REPLY_HELP = 'How to reply';
@@ -134,8 +138,77 @@ const LANGUAGE_CHOICES: Array<{ key: BotLang; labels: string[] }> = [
   { key: 'en', labels: ['en', 'english', 'английский', 'ingliz'] },
 ];
 
+const I18N_OVERRIDE: Partial<Record<BotLang, Partial<Record<keyof (typeof I18N)['en'], string>>>> = {
+  en: {
+    askNamePrompt: 'Please send your name to start registration.',
+    sharePhonePrompt: 'Now share your phone number to finish registration.',
+    doneOpenWebsite: 'Registration is ready. Open Edmission:',
+    openWebsite: 'Open Edmission',
+  },
+  ru: {
+    languageSaved: 'Язык сохранён.',
+    askNamePrompt: 'Отправьте ваше имя, чтобы начать регистрацию.',
+    sharePhonePrompt: 'Теперь отправьте номер телефона, чтобы завершить регистрацию.',
+    sharePhoneButton: 'Отправить номер телефона',
+    doneOpenWebsite: 'Регистрация готова. Откройте Edmission:',
+    openWebsite: 'Открыть Edmission',
+    back: 'Назад',
+    chooseAction: 'У вас уже есть аккаунт?',
+    haveAccount: 'Есть аккаунт',
+    noAccount: 'Нет аккаунта',
+    sessionExpiredRestart: 'Сессия истекла. Начинаю регистрацию заново.',
+    invalidSessionRestart: 'Неверная сессия входа. Начинаю регистрацию заново.',
+  },
+  uz: {
+    askNamePrompt: "Ro'yxatdan o'tish uchun ismingizni yuboring.",
+    sharePhonePrompt: "Endi ro'yxatdan o'tishni yakunlash uchun telefon raqamingizni yuboring.",
+    doneOpenWebsite: 'Registratsiya tayyor. Edmissionni oching:',
+    openWebsite: 'Edmissionni ochish',
+  },
+};
+
 function siteUrl(path: string): string {
   return toPublicSiteUrl(path);
+}
+
+function defaultAppPathForRole(role?: string): string {
+  if (role === 'student') return '/student/chat';
+  if (role === 'university' || role === 'university_multi_manager') return '/university/chat';
+  if (role === 'school_counsellor') return '/school/chats';
+  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/chats';
+  return config.telegram.notificationsPath;
+}
+
+async function createOpenAppLink(chatId: string, role?: string, nextPath?: string): Promise<string> {
+  const path = nextPath || defaultAppPathForRole(role);
+  try {
+    const authLink = await authService.createTelegramMobileAppAuthLink(chatId, path);
+    return authLink.url;
+  } catch (error) {
+    logger.warn({ error, chatId }, 'Failed to create Telegram app auth link');
+    return siteUrl(path);
+  }
+}
+
+function openAppInlineKeyboard(url: string, text = 'Open app') {
+  if (!url.startsWith('https://')) {
+    return {
+      inline_keyboard: [[{ text, url }]],
+    };
+  }
+  return {
+    inline_keyboard: [[{ text, web_app: { url } }, { text: 'Open in browser', url }]],
+  };
+}
+
+function openAppReplyButton(url: string): { text: string; web_app?: { url: string } } {
+  if (!url.startsWith('https://')) return { text: MENU_OPEN_SITE };
+  return { text: MENU_OPEN_SITE, web_app: { url } };
+}
+
+async function sendOpenAppAndClearKeyboard(chatId: string, state: BotState, url: string): Promise<void> {
+  await removeTelegramKeyboard(chatId, t(state, 'doneOpenWebsite')).catch(() => {});
+  await sendTelegramMessage(chatId, t(state, 'doneOpenWebsite'), undefined, openAppInlineKeyboard(url, t(state, 'openWebsite')));
 }
 
 function normalizeInput(input: string): string {
@@ -148,11 +221,16 @@ function getLang(state: BotState): BotLang {
 
 function t(state: BotState, key: keyof (typeof I18N)['en']): string {
   const lang = getLang(state);
+  const override = I18N_OVERRIDE[lang]?.[key];
+  if (override) return override;
   return I18N[lang][key] || I18N.en[key];
 }
 
 function resolveLanguageChoice(input: string): BotLang | null {
   const normalized = normalizeInput(input);
+  if (normalized.includes('рус')) return 'ru';
+  if (normalized.includes('english') || normalized === 'en') return 'en';
+  if (normalized.includes("o'zbek") || normalized.includes('ozbek') || normalized.includes('uzbek') || normalized === 'uz') return 'uz';
   for (const option of LANGUAGE_CHOICES) {
     if (option.labels.includes(normalized)) return option.key;
   }
@@ -222,6 +300,10 @@ function resetSession(chatId: string): void {
     telegramAuthPhone: undefined,
     telegramAuthFirstName: undefined,
     telegramAuthLastName: undefined,
+    pendingStartPayload: undefined,
+    pendingStartUsername: undefined,
+    pendingStartFirstName: undefined,
+    pendingStartLastName: undefined,
   });
 }
 
@@ -316,6 +398,12 @@ async function showLanguageMenu(chatId: string): Promise<void> {
   ]);
 }
 
+async function showLanguageMenuLocalized(chatId: string): Promise<void> {
+  await sendTelegramKeyboard(chatId, 'Tilni tanlang / Выберите язык / Choose language:', [
+    [{ text: "O'zbek" }, { text: 'Русский' }, { text: 'English' }],
+  ]);
+}
+
 async function beginTelegramWebsiteRegistrationFlow(
   chatId: string,
   username?: string,
@@ -339,23 +427,30 @@ async function beginTelegramWebsiteRegistrationFlow(
 
   if (bind.ready && bind.loginLink) {
     resetSession(chatId);
-    await sendTelegramMessage(chatId, t(state, 'doneOpenWebsite'), undefined, {
-      inline_keyboard: [[{ text: t(state, 'openWebsite'), url: bind.loginLink }]],
-    });
+    await sendOpenAppAndClearKeyboard(chatId, state, bind.loginLink);
     return;
   }
 
   setSession(chatId, {
-    mode: 'await_telegram_auth_contact',
+    mode: 'await_telegram_auth_name',
     pendingEmail: undefined,
     telegramAuthSessionId: started.sessionId,
     telegramAuthPhone: undefined,
+    telegramAuthFirstName: undefined,
+    telegramAuthLastName: undefined,
     username,
   });
-  await sendTelegramKeyboard(chatId, 'Share your phone number to continue registration.', [
-    [{ text: t(state, 'sharePhoneButton'), request_contact: true }],
-    [{ text: t(state, 'back') }],
-  ]);
+  const suggestedName = [String(firstName ?? '').trim(), String(lastName ?? '').trim()]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  await sendTelegramKeyboard(
+    chatId,
+    suggestedName
+      ? `${t(state, 'askNamePrompt')}\nFor example: ${suggestedName}`
+      : t(state, 'askNamePrompt'),
+    [[{ text: t(state, 'back') }]]
+  );
 }
 
 async function showLoggedInMenu(chatId: string, intro?: string): Promise<void> {
@@ -365,11 +460,12 @@ async function showLoggedInMenu(chatId: string, intro?: string): Promise<void> {
     return;
   }
   const name = String(user.name ?? '').trim() || 'there';
+  const openUrl = await createOpenAppLink(chatId, String(user.role ?? ''));
   const line =
     intro ??
     `You are signed in as ${name}. New site messages will arrive here.`;
   await sendTelegramKeyboard(chatId, line, [
-    [{ text: MENU_OPEN_SITE }, { text: MENU_RECENT }],
+    [openAppReplyButton(openUrl), { text: MENU_RECENT }],
     [{ text: MENU_MARK_VIEWED }, { text: MENU_REPLY_HELP }],
     [{ text: MENU_DISCONNECT }, { text: MENU_HELP }],
   ]);
@@ -413,6 +509,19 @@ async function handleStart(
 ): Promise<void> {
   const state = getSession(chatId);
   const normalizedPayload = String(payload ?? '').trim();
+  if (!state.lang) {
+    setSession(chatId, {
+      mode: 'idle',
+      pendingStartPayload: normalizedPayload,
+      pendingStartUsername: username,
+      pendingStartFirstName: firstName,
+      pendingStartLastName: lastName,
+      username,
+    });
+    await showLanguageMenuLocalized(chatId);
+    return;
+  }
+
   if (normalizedPayload.toUpperCase().startsWith(TELEGRAM_WEB_AUTH_START_PREFIX)) {
     const sessionId = normalizedPayload.slice(TELEGRAM_WEB_AUTH_START_PREFIX.length).trim().toLowerCase();
     if (!TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(sessionId)) {
@@ -440,23 +549,30 @@ async function handleStart(
 
     if (bind.ready && bind.loginLink) {
       resetSession(chatId);
-      await sendTelegramMessage(chatId, t(state, 'doneOpenWebsite'), undefined, {
-        inline_keyboard: [[{ text: t(state, 'openWebsite'), url: bind.loginLink }]],
-      });
+      await sendOpenAppAndClearKeyboard(chatId, state, bind.loginLink);
       return;
     }
 
     setSession(chatId, {
-      mode: 'await_telegram_auth_contact',
+      mode: 'await_telegram_auth_name',
       pendingEmail: undefined,
       telegramAuthSessionId: sessionId,
       telegramAuthPhone: undefined,
+      telegramAuthFirstName: undefined,
+      telegramAuthLastName: undefined,
       username,
     });
-    await sendTelegramKeyboard(chatId, t(state, 'sharePhonePrompt'), [
-      [{ text: t(state, 'sharePhoneButton'), request_contact: true }],
-      [{ text: t(state, 'back') }],
-    ]);
+    const suggestedName = [String(firstName ?? '').trim(), String(lastName ?? '').trim()]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    await sendTelegramKeyboard(
+      chatId,
+      suggestedName
+        ? `${t(state, 'askNamePrompt')}\nFor example: ${suggestedName}`
+        : t(state, 'askNamePrompt'),
+      [[{ text: t(state, 'back') }]]
+    );
     return;
   }
 
@@ -468,11 +584,7 @@ async function handleStart(
       await showLoggedInMenu(chatId, `Welcome back, ${name}.`);
       return;
     }
-    if (!state.lang) {
-      await showLanguageMenu(chatId);
-      return;
-    }
-    await showGuestMenu(chatId);
+    await beginTelegramWebsiteRegistrationFlow(chatId, username, firstName, lastName);
     return;
   }
 
@@ -704,11 +816,13 @@ async function handleTextMessage(
   firstName?: string,
   lastName?: string
 ): Promise<void> {
-  if (isRateLimited(chatId)) return;
   const normalized = text.trim();
   if (!normalized) return;
 
   const state = getSession(chatId);
+  const isStatefulInput = normalized.startsWith('/start') || state.mode !== 'idle' || Boolean(replyToMessageId);
+  if (!isStatefulInput && isRateLimited(chatId)) return;
+
   if (state.mode !== 'await_login_password' && normalized.length > MAX_TEXT_LENGTH) {
     await sendTelegramMessage(chatId, `Message is too long. Maximum ${MAX_TEXT_LENGTH} characters.`);
     return;
@@ -722,17 +836,33 @@ async function handleTextMessage(
     return;
   }
 
-  if (!state.lang) {
+  if (!state.lang && state.mode === 'idle') {
     const linkedBeforeLang = await authService.findUserByTelegramChatId(chatId);
-    if (!linkedBeforeLang) {
+    if (!linkedBeforeLang || state.pendingStartPayload !== undefined) {
       const selectedLang = resolveLanguageChoice(normalized);
       if (!selectedLang) {
-        await showLanguageMenu(chatId);
+        await showLanguageMenuLocalized(chatId);
         return;
       }
-      setSession(chatId, { lang: selectedLang, mode: 'idle' });
+      const hasPendingStart = state.pendingStartPayload !== undefined;
+      const pendingPayload = String(state.pendingStartPayload ?? '');
+      const pendingUsername = state.pendingStartUsername ?? username;
+      const pendingFirstName = state.pendingStartFirstName ?? firstName;
+      const pendingLastName = state.pendingStartLastName ?? lastName;
+      setSession(chatId, {
+        lang: selectedLang,
+        mode: 'idle',
+        pendingStartPayload: undefined,
+        pendingStartUsername: undefined,
+        pendingStartFirstName: undefined,
+        pendingStartLastName: undefined,
+      });
       const nextState = getSession(chatId);
-      await sendTelegramMessage(chatId, t(nextState, 'languageSaved'));
+      await removeTelegramKeyboard(chatId, t(nextState, 'languageSaved')).catch(() => {});
+      if (hasPendingStart) {
+        await handleStart(chatId, pendingPayload, pendingUsername, pendingFirstName, pendingLastName);
+        return;
+      }
       await showGuestMenu(chatId);
       return;
     }
@@ -785,13 +915,9 @@ async function handleTextMessage(
   if (linkedUser) {
     if (normalized === MENU_OPEN_SITE) {
       const role = String(linkedUser.role ?? '');
-      const openPath =
-        role === 'student'
-          ? '/student/chat'
-          : role === 'university'
-            ? '/university/chat'
-            : config.telegram.notificationsPath;
-      await sendTelegramMessage(chatId, `Open website: ${siteUrl(openPath)}`);
+      const openPath = defaultAppPathForRole(role);
+      const openUrl = await createOpenAppLink(chatId, role, openPath);
+      await sendTelegramMessage(chatId, 'Open Edmission:', undefined, openAppInlineKeyboard(openUrl));
       await showLoggedInMenu(chatId);
       return;
     }
@@ -887,7 +1013,6 @@ async function handleContactMessage(
   firstName?: string,
   lastName?: string
 ): Promise<void> {
-  if (isRateLimited(chatId)) return;
   const state = getSession(chatId);
   let sessionId = String(state.telegramAuthSessionId ?? '').trim().toLowerCase();
   const inPhoneCollectionMode =
@@ -941,6 +1066,31 @@ async function handleContactMessage(
     return;
   }
 
+  if (String(state.telegramAuthFirstName ?? '').trim() || String(state.telegramAuthLastName ?? '').trim()) {
+    const result = await authService.completeTelegramWebsiteAuthFromBot({
+      sessionId,
+      telegramChatId: chatId,
+      phone: phoneInput,
+      telegramUsername: username ?? state.username,
+      firstName: state.telegramAuthFirstName,
+      lastName: state.telegramAuthLastName,
+    });
+
+    if (!result.ok) {
+      resetSession(chatId);
+      await sendTelegramMessage(chatId, result.message);
+      return;
+    }
+
+    resetSession(chatId);
+    if (result.loginLink) {
+      await sendOpenAppAndClearKeyboard(chatId, sessionState, result.loginLink);
+      return;
+    }
+    await sendTelegramMessage(chatId, 'Done. Return to the website.');
+    return;
+  }
+
   setSession(chatId, {
     mode: 'await_telegram_auth_name',
     telegramAuthSessionId: sessionId,
@@ -985,7 +1135,6 @@ async function handleTelegramAuthNameMessage(
 ): Promise<void> {
   const sessionState = getSession(chatId);
   let sessionId = String(state.telegramAuthSessionId ?? '').trim().toLowerCase();
-  const phoneInput = String(state.telegramAuthPhone ?? '').trim();
 
   if (!TELEGRAM_WEB_AUTH_SESSION_ID_REGEX.test(sessionId)) {
     const restoredSessionId = await authService.findLatestTelegramWebsiteAuthSessionIdByChatId(chatId);
@@ -997,22 +1146,8 @@ async function handleTelegramAuthNameMessage(
     await beginTelegramWebsiteRegistrationFlow(chatId, username, firstName, lastName);
     return;
   }
-  if (!PHONE_INPUT_REGEX.test(phoneInput)) {
-    setSession(chatId, {
-      mode: 'await_telegram_auth_contact',
-      telegramAuthSessionId: sessionId,
-      telegramAuthPhone: undefined,
-      username: username ?? state.username,
-    });
-    await sendTelegramKeyboard(chatId, 'Please share your phone number first.', [
-      [{ text: 'Share phone number', request_contact: true }],
-      [{ text: MENU_BACK }],
-    ]);
-    return;
-  }
-
   if (PHONE_INPUT_REGEX.test(rawName)) {
-    await sendTelegramKeyboard(chatId, 'Phone is already saved. Now send your name.', [[{ text: MENU_BACK }]]);
+    await sendTelegramKeyboard(chatId, 'Please send your name first. Phone number comes next.', [[{ text: MENU_BACK }]]);
     return;
   }
 
@@ -1025,16 +1160,39 @@ async function handleTelegramAuthNameMessage(
   }
 
   const nameParts = splitNameForSession(resolvedName);
+  const savedPhoneInput = String(state.telegramAuthPhone ?? '').trim();
+  if (PHONE_INPUT_REGEX.test(savedPhoneInput)) {
+    const result = await authService.completeTelegramWebsiteAuthFromBot({
+      sessionId,
+      telegramChatId: chatId,
+      phone: savedPhoneInput,
+      telegramUsername: username ?? state.username,
+      firstName: nameParts.firstName,
+      lastName: nameParts.lastName,
+    });
+    resetSession(chatId);
+    if (!result.ok) {
+      await sendTelegramMessage(chatId, result.message);
+      return;
+    }
+    if (result.loginLink) {
+      await sendOpenAppAndClearKeyboard(chatId, sessionState, result.loginLink);
+      return;
+    }
+    await sendTelegramMessage(chatId, 'Done. Return to the website.');
+    return;
+  }
+
   setSession(chatId, {
-    mode: 'await_telegram_auth_email',
+    mode: 'await_telegram_auth_contact',
     telegramAuthSessionId: sessionId,
-    telegramAuthPhone: phoneInput,
+    telegramAuthPhone: undefined,
     telegramAuthFirstName: nameParts.firstName,
     telegramAuthLastName: nameParts.lastName,
     username: username ?? state.username,
   });
-  await sendTelegramKeyboard(chatId, t(sessionState, 'askEmailPrompt'), [
-    [{ text: t(sessionState, 'skipEmail') }],
+  await sendTelegramKeyboard(chatId, t(sessionState, 'sharePhonePrompt'), [
+    [{ text: t(sessionState, 'sharePhoneButton'), request_contact: true }],
     [{ text: MENU_BACK }],
   ]);
 }
@@ -1071,7 +1229,7 @@ async function handleTelegramAuthEmailMessage(
     return;
   }
 
-  const result = await authService.issueTelegramWebsiteAuthCode({
+  const result = await authService.completeTelegramWebsiteAuthFromBot({
     sessionId,
     telegramChatId: chatId,
     phone: phoneInput,
@@ -1089,9 +1247,7 @@ async function handleTelegramAuthEmailMessage(
 
   resetSession(chatId);
   if (result.loginLink) {
-    await sendTelegramMessage(chatId, t(sessionState, 'doneOpenWebsite'), undefined, {
-      inline_keyboard: [[{ text: t(sessionState, 'openWebsite'), url: result.loginLink }]],
-    });
+    await sendOpenAppAndClearKeyboard(chatId, sessionState, result.loginLink);
     return;
   }
   await sendTelegramMessage(chatId, 'Done. Return to the website.');
