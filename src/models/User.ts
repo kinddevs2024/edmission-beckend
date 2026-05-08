@@ -50,6 +50,8 @@ const userSchema = new mongoose.Schema(
     googleSub: { type: String, sparse: true, unique: true },
     /** Yandex ID (numeric string from login.yandex.ru/info); set when user signs in with Yandex */
     yandexSub: { type: String, sparse: true, unique: true },
+    /** Apple account subject (OpenID); set when user signs in with Apple */
+    appleSub: { type: String, sparse: true, unique: true },
     yandexProfile: {
       login: { type: String, default: '' },
       psuid: { type: String, default: '' },
@@ -68,6 +70,13 @@ const userSchema = new mongoose.Schema(
       updatedAt: { type: Date },
     },
     emailVerified: { type: Boolean, default: false },
+    emailLink: {
+      email: { type: String, default: '' },
+      code: { type: String, default: '' },
+      codeExpiresAt: { type: Date },
+      codeAttempts: { type: Number, default: 0 },
+      codeLockedUntil: { type: Date },
+    },
     suspended: { type: Boolean, default: false },
     verifyToken: String,
     verifyTokenExpires: Date,

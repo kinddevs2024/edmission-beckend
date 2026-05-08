@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
@@ -32,6 +33,7 @@ import type {
   PhoneCodeVerifyBody,
   PhoneRegisterStartBody,
   GoogleAuthBody,
+  AppleAuthBody,
   YandexAuthBody,
   YandexAccessTokenAuthBody,
   TelegramAuthStartBody,
@@ -129,9 +131,8 @@ function isRealEmail(value: unknown): boolean {
 
 function getPublicEmail(doc: { email?: string; phone?: string }): string {
   const email = String(doc.email ?? '').trim();
-  const phone = String(doc.phone ?? '').trim();
-  if (phone && (isPhonePlaceholderEmail(email) || email === phone)) return phone;
-  return email;
+  if (isRealEmail(email)) return email;
+  return '';
 }
 
 function escapeRegExp(value: string): string {
@@ -154,17 +155,19 @@ function findUserByLoginIdentifier(identifier: string) {
   return findUserByEmailCaseInsensitive(raw);
 }
 
-function hasOAuthLinked(u: { googleSub?: string | null; yandexSub?: string | null }): boolean {
+function hasOAuthLinked(u: { googleSub?: string | null; yandexSub?: string | null; appleSub?: string | null }): boolean {
   const g = u.googleSub != null && String(u.googleSub).trim() !== '';
   const y = u.yandexSub != null && String(u.yandexSub).trim() !== '';
-  return g || y;
+  const a = u.appleSub != null && String(u.appleSub).trim() !== '';
+  return g || y || a;
 }
 
-/** OAuth (Google/Yandex) account without an explicit user-chosen login password (legacy: field missing). */
+/** OAuth (Google/Yandex/Apple) account without an explicit user-chosen login password (legacy: field missing). */
 function computeMustSetLocalPassword(u: {
   localPasswordConfigured?: boolean | null;
   googleSub?: string | null;
   yandexSub?: string | null;
+  appleSub?: string | null;
 }): boolean {
   if (u.localPasswordConfigured === true) return false;
   return hasOAuthLinked(u);
@@ -203,6 +206,7 @@ function toPlainUser(doc: {
   localPasswordConfigured?: boolean | null
   googleSub?: string | null
   yandexSub?: string | null
+  appleSub?: string | null
   temporaryPlainPassword?: string | null
   onboardingTutorialSeen?: { student?: boolean; university?: boolean } | null
 }) {
@@ -227,6 +231,7 @@ function toPlainUser(doc: {
       phone: Boolean(doc.phone),
       google: Boolean(doc.googleSub),
       yandex: Boolean(doc.yandexSub),
+      apple: Boolean(doc.appleSub),
       telegram: Boolean(doc.socialLinks?.telegram),
     },
     temporaryPassword: doc.mustChangePassword ? String(doc.temporaryPlainPassword ?? '') || undefined : undefined,
@@ -398,6 +403,247 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
     await StudentProfile.create({
       userId: newUser._id,
       avatarUrl: picture || undefined,
+    });
+  }
+  await subscriptionService.createForNewUser(String(newUser._id), newUserRole);
+
+  return issueAuthTokens(newUser);
+}
+
+type AppleIdTokenClaims = {
+  iss?: string;
+  aud?: string;
+  exp?: number;
+  sub?: string;
+  email?: string;
+  email_verified?: boolean | string;
+  is_private_email?: boolean | string;
+};
+
+type AppleJwk = crypto.JsonWebKey & { kid?: string; alg?: string };
+
+let appleJwksCache: { keys: AppleJwk[]; expiresAt: number } | null = null;
+
+function getApplePrivateKey(): string {
+  if (config.apple.privateKeyBase64) {
+    return Buffer.from(config.apple.privateKeyBase64, 'base64').toString('utf8').replace(/\\n/g, '\n');
+  }
+  return config.apple.privateKey.replace(/\\n/g, '\n');
+}
+
+function createAppleClientSecret(): string {
+  const privateKey = getApplePrivateKey();
+  if (!config.apple.clientId || !config.apple.teamId || !config.apple.keyId || !privateKey) {
+    throw new AppError(503, 'Apple sign-in is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+  return jwt.sign({}, privateKey, {
+    algorithm: 'ES256',
+    keyid: config.apple.keyId,
+    issuer: config.apple.teamId,
+    audience: 'https://appleid.apple.com',
+    subject: config.apple.clientId,
+    expiresIn: '180d',
+  });
+}
+
+function assertAppleRedirectUri(redirectUri: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(redirectUri);
+  } catch {
+    throw new AppError(400, 'Invalid redirect URI', ErrorCodes.VALIDATION);
+  }
+
+  const pathNorm = parsed.pathname.replace(/\/$/, '') || '';
+  const webStyleOk = pathNorm.endsWith('/auth/apple/callback');
+  const nativeEdmissionOk =
+    parsed.protocol === 'edmission:' &&
+    parsed.hostname === 'auth' &&
+    pathNorm.replace(/\/$/, '') === '/apple/callback';
+  const expoGoOk = parsed.protocol === 'exp:' && /\/auth\/apple\/callback$/.test(pathNorm);
+
+  if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+    if (!webStyleOk) {
+      throw new AppError(400, 'Invalid redirect path', ErrorCodes.VALIDATION);
+    }
+    const allowedOrigins = new Set<string>();
+    const fe = config.frontendUrl.trim();
+    if (fe) {
+      try {
+        allowedOrigins.add(new URL(fe).origin);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const o of config.cors.origin) {
+      try {
+        allowedOrigins.add(new URL(o).origin);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!allowedOrigins.has(parsed.origin)) {
+      throw new AppError(400, 'Redirect URI origin not allowed', ErrorCodes.VALIDATION);
+    }
+    return;
+  }
+
+  if (nativeEdmissionOk || expoGoOk) return;
+  throw new AppError(400, 'Redirect URI origin not allowed', ErrorCodes.VALIDATION);
+}
+
+async function exchangeAppleCode(code: string, redirectUri: string): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    client_id: config.apple.clientId,
+    client_secret: createAppleClientSecret(),
+    redirect_uri: redirectUri,
+  });
+  const res = await fetch('https://appleid.apple.com/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const json = (await res.json()) as {
+    id_token?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (!res.ok || !json.id_token) {
+    logger.warn({ err: json.error, desc: json.error_description }, 'Apple token exchange failed');
+    throw new AppError(401, 'Apple authorization failed', ErrorCodes.UNAUTHORIZED);
+  }
+  return json.id_token;
+}
+
+async function getAppleJwks(): Promise<AppleJwk[]> {
+  if (appleJwksCache && appleJwksCache.expiresAt > Date.now()) return appleJwksCache.keys;
+  const res = await fetch('https://appleid.apple.com/auth/keys');
+  if (!res.ok) {
+    throw new AppError(503, 'Could not load Apple public keys', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+  const json = (await res.json()) as { keys?: AppleJwk[] };
+  const keys = Array.isArray(json.keys) ? json.keys : [];
+  appleJwksCache = { keys, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+  return keys;
+}
+
+async function verifyAppleIdToken(idToken: string): Promise<AppleIdTokenClaims> {
+  const decoded = jwt.decode(idToken, { complete: true }) as
+    | { header?: { kid?: string; alg?: string }; payload?: unknown }
+    | null;
+  const kid = decoded?.header?.kid;
+  if (!kid) {
+    throw new AppError(401, 'Invalid Apple credential', ErrorCodes.UNAUTHORIZED);
+  }
+  const key = (await getAppleJwks()).find((k) => k.kid === kid);
+  if (!key) {
+    appleJwksCache = null;
+    throw new AppError(401, 'Invalid Apple credential', ErrorCodes.UNAUTHORIZED);
+  }
+  const publicKey = crypto.createPublicKey({ key, format: 'jwk' });
+  try {
+    return jwt.verify(idToken, publicKey, {
+      algorithms: ['RS256'],
+      issuer: 'https://appleid.apple.com',
+      audience: config.apple.clientId,
+    }) as AppleIdTokenClaims;
+  } catch {
+    throw new AppError(401, 'Invalid Apple credential', ErrorCodes.UNAUTHORIZED);
+  }
+}
+
+function isAppleEmailVerified(value: boolean | string | undefined): boolean {
+  return value === true || String(value).toLowerCase() === 'true';
+}
+
+function getAppleDisplayName(data: AppleAuthBody): string {
+  const firstName = String(data.user?.name?.firstName ?? '').trim();
+  const lastName = String(data.user?.name?.lastName ?? '').trim();
+  return [firstName, lastName].filter(Boolean).join(' ').trim();
+}
+
+export async function loginWithApple(data: AppleAuthBody) {
+  if (!config.apple.clientId || !config.apple.teamId || !config.apple.keyId || !getApplePrivateKey()) {
+    throw new AppError(503, 'Apple sign-in is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+
+  assertAppleRedirectUri(data.redirectUri);
+
+  const idToken = await exchangeAppleCode(data.code, data.redirectUri);
+  const payload = await verifyAppleIdToken(idToken);
+  const sub = String(payload.sub ?? '').trim();
+  if (!sub) {
+    throw new AppError(400, 'Invalid Apple account', ErrorCodes.VALIDATION);
+  }
+
+  const tokenEmail = String(payload.email ?? '').toLowerCase().trim();
+  const submittedEmail = String(data.user?.email ?? '').toLowerCase().trim();
+  const email = tokenEmail || submittedEmail;
+  const name = getAppleDisplayName(data);
+
+  let user = await User.findOne({ appleSub: sub });
+  if (!user && email) {
+    user = await User.findOne({ email });
+  }
+
+  if (user) {
+    if (['admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
+      throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
+    }
+    if (user.suspended) {
+      throw new AppError(403, 'Account suspended. Contact support.', ErrorCodes.FORBIDDEN);
+    }
+    if (user.appleSub && user.appleSub !== sub) {
+      throw new AppError(403, 'This account is linked to a different Apple ID.', ErrorCodes.FORBIDDEN);
+    }
+    let changed = false;
+    if (!user.appleSub) {
+      user.appleSub = sub;
+      user.emailVerified = true;
+      user.localPasswordConfigured = true;
+      changed = true;
+    }
+    if (!String(user.name ?? '').trim() && name) {
+      user.name = name;
+      changed = true;
+    }
+    if (changed) await user.save();
+    return issueTokensAfterLoginChecks(user);
+  }
+
+  if (!email) {
+    throw new AppError(400, 'Apple account has no email', ErrorCodes.VALIDATION);
+  }
+  if (!isAppleEmailVerified(payload.email_verified)) {
+    throw new AppError(400, 'Apple email is not verified', ErrorCodes.VALIDATION);
+  }
+  if (data.acceptTerms !== true) {
+    throw new AppError(
+      404,
+      'No account for this sign-in. Please register first.',
+      ErrorCodes.OAUTH_SIGNUP_REQUIRED
+    );
+  }
+
+  const newUserRole = data.role ?? 'student';
+  await PendingRegistration.deleteOne({ email });
+
+  const oauthPasswordHash = await bcrypt.hash(`oauth-apple:${sub}:${uuidv4()}`, BCRYPT_ROUNDS);
+  const newUser = await User.create({
+    email,
+    name,
+    passwordHash: oauthPasswordHash,
+    role: newUserRole,
+    emailVerified: true,
+    appleSub: sub,
+    localPasswordConfigured: false,
+  });
+
+  if (newUserRole === 'student') {
+    await StudentProfile.create({
+      userId: newUser._id,
     });
   }
   await subscriptionService.createForNewUser(String(newUser._id), newUserRole);
@@ -1119,7 +1365,7 @@ export async function loginByPhone(data: LoginByPhoneBody) {
   return issueTokensAfterLoginChecks(user);
 }
 
-export async function startPhoneCodeAuth(data: PhoneCodeStartBody) {
+export async function startPhoneCodeAuth(data: PhoneCodeStartBody & { language?: string }) {
   const normalizedPhone = normalizePhone(data.phone);
   if (!normalizedPhone) {
     throw new AppError(400, 'Invalid phone', ErrorCodes.VALIDATION);
@@ -1131,31 +1377,10 @@ export async function startPhoneCodeAuth(data: PhoneCodeStartBody) {
     if (role !== 'student' && role !== 'university') {
       throw new AppError(403, 'Phone code login is available only for student and university accounts.', ErrorCodes.FORBIDDEN);
     }
-    const chatId = normalizeTelegramChatId(String(existing.telegram?.chatId ?? existing.socialLinks?.telegram ?? ''));
-    if (chatId && config.telegram.botToken) {
-      const issued = await issueTelegramPhoneCode(normalizedPhone);
-      if (!issued) {
-        throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
-      }
-      try {
-        await sendTelegramMessage(
-          chatId,
-          `Your Edmission login code is ${issued.code}. It expires in ${Math.max(1, Math.round(config.telegram.otpTtlMs / 60000))} minute(s).`
-        );
-      } catch (error) {
-        logger.warn({ error, userId: String(existing._id) }, 'Failed to deliver phone login code by Telegram');
-        throw new AppError(503, 'Could not send Telegram code. Try Telegram login instead.', ErrorCodes.SERVICE_UNAVAILABLE);
-      }
-      return {
-        mode: 'login' as const,
-        phone: normalizedPhone,
-        delivery: 'telegram' as const,
-        expiresAt: new Date(Date.now() + config.telegram.otpTtlMs).toISOString(),
-      };
-    }
-
     const started = await startTelegramWebsiteAuthSession({
       role: role === 'university' ? 'university' : 'student',
+      phone: normalizedPhone,
+      language: data.language,
     });
     return {
       mode: 'telegram_required' as const,
@@ -1163,7 +1388,7 @@ export async function startPhoneCodeAuth(data: PhoneCodeStartBody) {
       sessionId: started.sessionId,
       deepLink: started.deepLink,
       expiresAt: started.expiresAt,
-      message: 'This phone is not linked to Telegram yet. Open the bot to confirm it once.',
+      message: 'Open Telegram and share this phone number to sign in.',
     };
   }
 
@@ -1173,6 +1398,8 @@ export async function startPhoneCodeAuth(data: PhoneCodeStartBody) {
 
   const started = await startTelegramWebsiteAuthSession({
     role: data.role === 'university' ? 'university' : 'student',
+    phone: normalizedPhone,
+    language: data.language,
   });
   return {
     mode: 'register' as const,
@@ -1405,7 +1632,7 @@ export async function verifyPhoneRegistrationByTelegram(
 }
 
 export async function startTelegramWebsiteAuthSession(
-  payload: TelegramAuthStartBody = {}
+  payload: TelegramAuthStartBody & { language?: string } = {}
 ): Promise<{
   sessionId: string;
   deepLink: string;
@@ -1420,10 +1647,14 @@ export async function startTelegramWebsiteAuthSession(
     const sessionId = createTelegramWebAuthSessionId();
     const expiresAt = new Date(Date.now() + TELEGRAM_WEB_AUTH_SESSION_TTL_MS);
     const role = payload.role === 'university' ? 'university' : 'student';
+    const phone = payload.phone ? normalizePhone(payload.phone) : '';
+    const language = payload.language === 'ru' || payload.language === 'uz' ? payload.language : 'en';
     try {
       await TelegramAuthSession.create({
         sessionId,
         role,
+        language,
+        expectedPhone: phone,
         expiresAt,
       });
       return {
@@ -1475,6 +1706,15 @@ export async function bindTelegramWebsiteAuthSession(payload: {
     String(linkedUser?.phone ?? linkedUser?.telegram?.phone ?? '')
   );
   const linkedName = String(linkedUser?.name ?? '').trim().slice(0, 120);
+  const currentSession = await TelegramAuthSession.findOne({
+    sessionId,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  })
+    .select('expectedPhone')
+    .lean();
+  const expectedPhone = normalizePhone(String((currentSession as { expectedPhone?: unknown } | null)?.expectedPhone ?? ''));
+  const canUseLinkedPhone = Boolean(linkedPhone && (!expectedPhone || expectedPhone === linkedPhone));
 
   const setPatch: Record<string, unknown> = {
     telegramId,
@@ -1484,7 +1724,7 @@ export async function bindTelegramWebsiteAuthSession(payload: {
   if (resolvedName) {
     setPatch.name = resolvedName;
   }
-  if (linkedPhone) {
+  if (canUseLinkedPhone) {
     setPatch.phone = linkedPhone;
     setPatch.loginLinkToken = createTelegramWebAuthLinkToken();
   }
@@ -1503,7 +1743,7 @@ export async function bindTelegramWebsiteAuthSession(payload: {
     return { ok: false, message: 'Session expired. Return to website and tap Telegram login again.' };
   }
 
-  if (linkedPhone) {
+  if (canUseLinkedPhone) {
     const loginLinkToken = String(session.loginLinkToken ?? '').trim().toLowerCase();
     if (loginLinkToken && TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX.test(loginLinkToken)) {
       return {
@@ -1546,6 +1786,20 @@ export async function findLatestTelegramWebsiteAuthSessionIdByChatId(
   return sessionId || null;
 }
 
+export async function getTelegramWebsiteAuthSessionLanguage(sessionIdInput: string): Promise<'en' | 'ru' | 'uz'> {
+  const sessionId = normalizeTelegramWebAuthSessionId(sessionIdInput);
+  if (!sessionId) return 'en';
+  const row = await TelegramAuthSession.findOne({
+    sessionId,
+    consumedAt: null,
+    expiresAt: { $gt: new Date() },
+  })
+    .select('language')
+    .lean();
+  const language = String((row as { language?: unknown } | null)?.language ?? '').trim();
+  return language === 'ru' || language === 'uz' ? language : 'en';
+}
+
 export async function issueTelegramWebsiteAuthCode(payload: {
   sessionId: string;
   telegramChatId: string;
@@ -1584,6 +1838,14 @@ export async function issueTelegramWebsiteAuthCode(payload: {
 
   if (!session) {
     return { ok: false, message: 'Session expired. Return to website and start Telegram login again.' };
+  }
+
+  const expectedPhone = normalizePhone(String((session as { expectedPhone?: unknown }).expectedPhone ?? ''));
+  if (expectedPhone && expectedPhone !== normalizedPhone) {
+    return {
+      ok: false,
+      message: 'This Telegram phone does not match the phone entered on the website. Send the same phone number or start again.',
+    };
   }
 
   const firstName = String(payload.firstName ?? '').trim();
@@ -1697,17 +1959,6 @@ function getDefaultPathForRole(role?: string): string {
   return '/notifications';
 }
 
-function extractTelegramAuthLinkToken(loginLink?: string): string {
-  const raw = String(loginLink ?? '').trim();
-  if (!raw) return '';
-  try {
-    const parsed = new URL(raw);
-    return String(parsed.searchParams.get('token') ?? '').trim().toLowerCase();
-  } catch {
-    return '';
-  }
-}
-
 export async function completeTelegramWebsiteAuthFromBot(payload: {
   sessionId: string;
   telegramChatId: string;
@@ -1721,27 +1972,11 @@ export async function completeTelegramWebsiteAuthFromBot(payload: {
   if (!issued.ok) {
     return { ok: false, message: issued.message };
   }
-
-  const token = extractTelegramAuthLinkToken(issued.loginLink);
-  if (!TELEGRAM_WEB_AUTH_LINK_TOKEN_REGEX.test(token)) {
-    return { ok: false, message: 'Could not create login link. Start again.' };
-  }
-
-  const result = await verifyTelegramWebsiteAuthLink({ sessionId: payload.sessionId, token });
-  const userId = String(result.user?.id ?? '').trim();
-  if (!userId) {
-    return { ok: false, message: 'Could not finish Telegram login. Start again.' };
-  }
-
-  const mobileAuth = await createMobileWebAuthSession(userId);
-  const nextPath = getDefaultPathForRole(result.user?.role);
   return {
     ok: true,
-    message: 'Login link created.',
-    loginLink: toPublicSiteUrl(
-      `/mobile-app-auth?token=${encodeURIComponent(mobileAuth.token)}&next=${encodeURIComponent(nextPath)}`
-    ),
-    expiresAt: mobileAuth.expiresAt,
+    message: 'Telegram confirmation received.',
+    loginLink: issued.loginLink,
+    expiresAt: issued.expiresAt,
   };
 }
 
@@ -2009,7 +2244,7 @@ export async function logout(userId: string, refreshToken?: string) {
 export async function getMe(userId: string) {
   const user = await User.findById(userId)
     .select(
-      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured temporaryPlainPassword googleSub yandexSub onboardingTutorialSeen managedUniversityUserIds universityMultiManagerApproved'
+      'email name role phone socialLinks emailVerified suspended createdAt notificationPreferences totpEnabled mustChangePassword localPasswordConfigured temporaryPlainPassword googleSub yandexSub appleSub onboardingTutorialSeen managedUniversityUserIds universityMultiManagerApproved'
     )
     .lean();
   if (!user) {
@@ -2037,6 +2272,7 @@ export async function getMe(userId: string) {
     temporaryPlainPassword?: string | null
     googleSub?: string | null
     yandexSub?: string | null
+    appleSub?: string | null
     onboardingTutorialSeen?: { student?: boolean; university?: boolean }
   };
   const studentAvatar = studentProfile && (studentProfile as { avatarUrl?: string }).avatarUrl
@@ -2118,6 +2354,7 @@ export async function getMe(userId: string) {
       phone: Boolean(u.phone),
       google: Boolean(u.googleSub),
       yandex: Boolean(u.yandexSub),
+      apple: Boolean(u.appleSub),
       telegram: Boolean(u.socialLinks?.telegram),
     },
     temporaryPassword: u.mustChangePassword ? String(u.temporaryPlainPassword ?? '') || undefined : undefined,
@@ -2163,6 +2400,107 @@ export async function updateMe(userId: string, data: { name?: string; phone?: st
   }
   if (Object.keys(update).length === 0) return getMe(userId);
   await User.findByIdAndUpdate(userId, update);
+  return getMe(userId);
+}
+
+export async function startLinkEmail(userId: string, email: string): Promise<{ success: true; email: string; expiresAt: string }> {
+  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+  if (!isRealEmail(normalizedEmail)) {
+    throw new AppError(400, 'Invalid email', ErrorCodes.VALIDATION);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+
+  const currentEmail = String(user.email ?? '').toLowerCase().trim();
+  if (isRealEmail(currentEmail) && currentEmail === normalizedEmail && user.emailVerified) {
+    return { success: true, email: normalizedEmail, expiresAt: new Date(Date.now() + CODE_VALIDITY_MS).toISOString() };
+  }
+
+  const existing = await findUserByEmailCaseInsensitive(normalizedEmail);
+  if (existing && String(existing._id) !== String(user._id)) {
+    throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
+  }
+
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + CODE_VALIDITY_MS);
+  user.set('emailLink.email', normalizedEmail);
+  user.set('emailLink.code', code);
+  user.set('emailLink.codeExpiresAt', expiresAt);
+  user.set('emailLink.codeAttempts', 0);
+  user.set('emailLink.codeLockedUntil', null);
+  await user.save();
+
+  const sent = await emailService.sendVerificationCodeEmail(normalizedEmail, code);
+  if (!sent && config.email.enabled) {
+    user.set('emailLink.email', '');
+    user.set('emailLink.code', '');
+    user.set('emailLink.codeExpiresAt', null);
+    await user.save().catch(() => undefined);
+    throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
+  }
+  if (!sent) {
+    logger.info({ userId, email: normalizedEmail, code }, 'Email disabled: link email code (use in dev)');
+  }
+
+  return { success: true, email: normalizedEmail, expiresAt: expiresAt.toISOString() };
+}
+
+export async function verifyLinkEmail(userId: string, email: string, code: string) {
+  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+  const normalizedCode = String(code ?? '').trim();
+  if (!isRealEmail(normalizedEmail) || !/^\d{6}$/.test(normalizedCode)) {
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  }
+
+  const pendingEmail = String(user.get('emailLink.email') ?? '').toLowerCase().trim();
+  const pendingCode = String(user.get('emailLink.code') ?? '').trim();
+  const expires = new Date(user.get('emailLink.codeExpiresAt') ?? 0).getTime();
+  const lockedUntil = new Date(user.get('emailLink.codeLockedUntil') ?? 0).getTime();
+  const now = Date.now();
+
+  if (lockedUntil > now) {
+    const waitSec = Math.ceil((lockedUntil - now) / 1000);
+    throw new AppError(429, `Too many invalid attempts. Please wait ${waitSec} seconds or request a new code.`, ErrorCodes.RATE_LIMIT);
+  }
+
+  if (!pendingEmail || pendingEmail !== normalizedEmail || !pendingCode || !expires || expires <= now) {
+    throw new AppError(400, 'Invalid or expired code', ErrorCodes.VALIDATION);
+  }
+
+  if (pendingCode !== normalizedCode) {
+    const failedAttempts = Number(user.get('emailLink.codeAttempts') ?? 0) + 1;
+    const nextLockedUntil = failedAttempts >= VERIFY_CODE_MAX_ATTEMPTS ? new Date(Date.now() + VERIFY_CODE_LOCK_MS) : null;
+    user.set('emailLink.codeAttempts', failedAttempts);
+    user.set('emailLink.codeLockedUntil', nextLockedUntil);
+    await user.save();
+    if (nextLockedUntil) {
+      const waitSec = Math.ceil((nextLockedUntil.getTime() - Date.now()) / 1000);
+      throw new AppError(429, `Too many invalid attempts. Please wait ${waitSec} seconds or request a new code.`, ErrorCodes.RATE_LIMIT);
+    }
+    throw new AppError(400, 'Invalid code', ErrorCodes.VALIDATION);
+  }
+
+  const existing = await findUserByEmailCaseInsensitive(normalizedEmail);
+  if (existing && String(existing._id) !== String(user._id)) {
+    throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
+  }
+
+  user.email = normalizedEmail;
+  user.emailVerified = true;
+  user.set('emailLink.email', '');
+  user.set('emailLink.code', '');
+  user.set('emailLink.codeExpiresAt', null);
+  user.set('emailLink.codeAttempts', 0);
+  user.set('emailLink.codeLockedUntil', null);
+  await user.save();
   return getMe(userId);
 }
 

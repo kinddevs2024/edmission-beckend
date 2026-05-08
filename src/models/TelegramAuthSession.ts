@@ -4,11 +4,13 @@ const telegramAuthSessionSchema = new mongoose.Schema(
   {
     sessionId: { type: String, required: true, unique: true },
     role: { type: String, enum: ['student', 'university'], default: 'student' },
+    language: { type: String, enum: ['en', 'ru', 'uz'], default: 'en' },
     telegramId: { type: Number },
     telegramUsername: { type: String, default: '' },
     name: { type: String, default: '' },
     firstName: { type: String, default: '' },
     lastName: { type: String, default: '' },
+    expectedPhone: { type: String, default: '' },
     phone: { type: String, default: '' },
     email: { type: String, default: '' },
     code: { type: String, default: '' },

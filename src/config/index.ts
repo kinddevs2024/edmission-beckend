@@ -94,6 +94,17 @@ export const config = {
     clientId: (process.env.YANDEX_CLIENT_ID || process.env.YANDEX_CLIENT || process.env.VITE_YANDEX_CLIENT_ID || '').trim(),
     clientSecret: (process.env.YANDEX_CLIENT_SECRET || '').trim(),
   },
+  /**
+   * Sign in with Apple (web Services ID). Client ID may be duplicated as VITE_APPLE_CLIENT_ID
+   * in edmission-front/.env. Private key can be APPLE_PRIVATE_KEY with escaped \n or APPLE_PRIVATE_KEY_BASE64.
+   */
+  apple: {
+    clientId: (process.env.APPLE_CLIENT_ID || process.env.VITE_APPLE_CLIENT_ID || '').trim(),
+    teamId: (process.env.APPLE_TEAM_ID || '').trim(),
+    keyId: (process.env.APPLE_KEY_ID || '').trim(),
+    privateKey: (process.env.APPLE_PRIVATE_KEY || '').trim(),
+    privateKeyBase64: (process.env.APPLE_PRIVATE_KEY_BASE64 || '').trim(),
+  },
   email: {
     from: process.env.EMAIL_FROM || 'noreply@edmission.com',
     sendgridApiKey: process.env.SENDGRID_API_KEY || '',

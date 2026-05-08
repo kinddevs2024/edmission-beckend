@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service';
 import * as twoFactorService from '../services/twoFactor.service';
-import type { GoogleAuthBody, YandexAuthBody, YandexAccessTokenAuthBody } from '../validators/auth.validator';
+import type { AppleAuthBody, GoogleAuthBody, YandexAuthBody, YandexAccessTokenAuthBody } from '../validators/auth.validator';
 import {
   loginSchema,
   loginByPhoneSchema,
@@ -23,6 +23,8 @@ import {
   resetPasswordTelegramCodeSchema,
   setPasswordSchema,
   changePasswordSchema,
+  linkEmailStartSchema,
+  linkEmailVerifySchema,
 } from '../validators/auth.validator';
 
 export async function register(
@@ -106,7 +108,7 @@ export async function startPhoneCodeAuth(
 ): Promise<void> {
   try {
     const data = phoneCodeStartSchema.shape.body.parse(req.body);
-    const result = await authService.startPhoneCodeAuth(data);
+    const result = await authService.startPhoneCodeAuth({ ...data, language: req.locale });
     res.status(201).json(result);
   } catch (e) {
     next(e);
@@ -182,6 +184,19 @@ export async function googleAuth(
   }
 }
 
+export async function appleAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await authService.loginWithApple(req.body as AppleAuthBody);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function yandexAuth(
   req: Request,
   res: Response,
@@ -215,7 +230,7 @@ export async function startTelegramAuth(
 ): Promise<void> {
   try {
     const data = telegramAuthStartSchema.shape.body.parse(req.body);
-    const result = await authService.startTelegramWebsiteAuthSession(data);
+    const result = await authService.startTelegramWebsiteAuthSession({ ...data, language: req.locale });
     res.status(201).json(result);
   } catch (e) {
     next(e);
@@ -486,6 +501,42 @@ export async function changePassword(
     }
     const { currentPassword, newPassword } = changePasswordSchema.shape.body.parse(req.body);
     const result = await authService.changePassword(req.user.id, currentPassword, newPassword);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function startLinkEmail(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = linkEmailStartSchema.shape.body.parse(req.body);
+    const result = await authService.startLinkEmail(req.user.id, data.email);
+    res.status(201).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function verifyLinkEmail(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = linkEmailVerifySchema.shape.body.parse(req.body);
+    const result = await authService.verifyLinkEmail(req.user.id, data.email, data.code);
     res.json(result);
   } catch (e) {
     next(e);

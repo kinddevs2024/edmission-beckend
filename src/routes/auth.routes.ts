@@ -17,6 +17,7 @@ import {
   telegramAuthVerifyReadySchema,
   mobileWebAuthExchangeSchema,
   googleAuthSchema,
+  appleAuthSchema,
   yandexAuthSchema,
   yandexAccessTokenAuthSchema,
   verifyEmailCodeSchema,
@@ -26,6 +27,8 @@ import {
   resetPasswordTelegramCodeSchema,
   setPasswordSchema,
   changePasswordSchema,
+  linkEmailStartSchema,
+  linkEmailVerifySchema,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -81,6 +84,11 @@ router.post(
   '/google',
   validate(googleAuthSchema.shape.body, 'body'),
   authController.googleAuth
+);
+router.post(
+  '/apple',
+  validate(appleAuthSchema.shape.body, 'body'),
+  authController.appleAuth
 );
 router.post(
   '/yandex',
@@ -153,6 +161,18 @@ router.post(
   authMiddleware,
   validate(changePasswordSchema.shape.body, 'body'),
   authController.changePassword
+);
+router.post(
+  '/link-email/start',
+  authMiddleware,
+  validate(linkEmailStartSchema.shape.body, 'body'),
+  authController.startLinkEmail
+);
+router.post(
+  '/link-email/verify',
+  authMiddleware,
+  validate(linkEmailVerifySchema.shape.body, 'body'),
+  authController.verifyLinkEmail
 );
 router.post('/2fa/setup', authMiddleware, authController.setup2FA);
 router.post('/2fa/verify', authMiddleware, authController.verify2FA);

@@ -119,6 +119,28 @@ export const yandexAccessTokenAuthSchema = z.object({
   }),
 });
 
+/** Sign in / sign up with Apple (authorization code from Sign in with Apple JS). */
+export const appleAuthSchema = z.object({
+  body: z.object({
+    code: z.string().min(4, 'Invalid authorization code'),
+    redirectUri: z.string().url('Invalid redirect URI'),
+    idToken: z.string().min(20, 'Invalid identity token').optional(),
+    user: z
+      .object({
+        name: z
+          .object({
+            firstName: z.string().optional(),
+            lastName: z.string().optional(),
+          })
+          .optional(),
+        email: z.string().email().optional(),
+      })
+      .optional(),
+    role: z.enum(['student', 'university']).optional(),
+    acceptTerms: z.boolean().optional(),
+  }),
+});
+
 export const telegramAuthVerifySchema = z.object({
   body: z.object({
     sessionId: z.string().regex(/^[a-f0-9]{32}$/i, 'Invalid session id'),
@@ -129,6 +151,7 @@ export const telegramAuthVerifySchema = z.object({
 export const telegramAuthStartSchema = z.object({
   body: z.object({
     role: z.enum(['student', 'university']).optional(),
+    phone: phoneSchema.optional(),
   }),
 });
 
@@ -197,6 +220,19 @@ export const changePasswordSchema = z.object({
   }),
 });
 
+export const linkEmailStartSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
+export const linkEmailVerifySchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  }),
+});
+
 export type RegisterBody = z.infer<typeof registerSchema>['body'];
 export type LoginBody = z.infer<typeof loginSchema>['body'];
 export type LoginByPhoneBody = z.infer<typeof loginByPhoneSchema>['body'];
@@ -206,6 +242,7 @@ export type PhoneRegisterStartBody = z.infer<typeof phoneRegisterStartSchema>['b
 export type GoogleAuthBody = z.infer<typeof googleAuthSchema>['body'];
 export type YandexAuthBody = z.infer<typeof yandexAuthSchema>['body'];
 export type YandexAccessTokenAuthBody = z.infer<typeof yandexAccessTokenAuthSchema>['body'];
+export type AppleAuthBody = z.infer<typeof appleAuthSchema>['body'];
 export type TelegramAuthStartBody = z.infer<typeof telegramAuthStartSchema>['body'];
 export type TelegramAuthVerifyBody = z.infer<typeof telegramAuthVerifySchema>['body'];
 export type TelegramAuthVerifyLinkBody = z.infer<typeof telegramAuthVerifyLinkSchema>['body'];
@@ -214,3 +251,5 @@ export type MobileWebAuthExchangeBody = z.infer<typeof mobileWebAuthExchangeSche
 export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>['body'];
 export type ResetPasswordTelegramCodeBody = z.infer<typeof resetPasswordTelegramCodeSchema>['body'];
+export type LinkEmailStartBody = z.infer<typeof linkEmailStartSchema>['body'];
+export type LinkEmailVerifyBody = z.infer<typeof linkEmailVerifySchema>['body'];
