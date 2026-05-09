@@ -5,6 +5,7 @@ import * as globalFacultyService from '../services/globalFaculty.service';
 import * as settingsService from '../services/settings.service';
 import * as documentsService from '../services/documents.service';
 import * as universityService from '../services/university.service';
+import { getBotStatus } from '../services/botStatus.state';
 
 export async function getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -497,15 +498,28 @@ export async function getHealth(req: Request, res: Response, next: NextFunction)
     if (mongoose.connection.readyState !== 1) {
       throw new Error('Database not connected');
     }
+    const bot = getBotStatus();
+
+    const services = [
+      { name: 'Database', status: 'up', message: 'Connected' },
+      {
+        name: 'Telegram Bot',
+        status: bot.isActive ? 'up' : 'down',
+        message: `Logic: ${bot.version} | Last poll: ${bot.lastPollTime ? new Date(bot.lastPollTime).toLocaleTimeString() : 'never'}`,
+      },
+    ];
+
     res.json({
-      status: 'ok',
-      database: 'connected',
+      status: bot.isActive ? 'ok' : 'degraded',
+      services,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {
     next(e);
   }
 }
+
+
 
 export async function getSubscriptions(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {

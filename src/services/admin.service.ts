@@ -42,6 +42,7 @@ import * as emailService from "./email.service";
 import * as telegramService from "./telegram.service";
 import { config } from "../config";
 import { v4 as uuidv4 } from "uuid";
+import { getBotStatus } from "./botStatus.state";
 
 const BCRYPT_ROUNDS = 12;
 const INVITE_TOKEN_EXPIRES_MS = 7 * 24 * 60 * 60 * 1000;
@@ -217,6 +218,7 @@ export async function getDashboard() {
     pendingDocuments,
     subscriptionsByPlan: byPlan,
     mrr: Math.round(mrr * 100) / 100,
+    telegramBot: getBotStatus(),
   };
 }
 

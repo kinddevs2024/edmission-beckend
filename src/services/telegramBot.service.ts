@@ -6,6 +6,8 @@ import { toPublicSiteUrl } from '../utils/publicSiteUrl';
 import { removeTelegramKeyboard, sendTelegramKeyboard, sendTelegramMessage } from './telegram.service';
 import * as authService from './auth.service';
 import * as notificationService from './notification.service';
+import { setBotStatus } from './botStatus.state';
+
 
 type TelegramUpdate = {
   update_id: number;
@@ -52,7 +54,10 @@ type LinkedUserLean = {
 };
 
 let botStarted = false;
+let lastPollTime: Date | null = null;
+const LOGIC_VERSION = '2026-05-09 07:30';
 let updateOffset = 0;
+
 const sessionByChatId = new Map<string, BotState>();
 const lastActionAtByChatId = new Map<string, number>();
 const loginGuardByChatId = new Map<string, { failedCount: number; windowStartedAt: number; lockedUntil: number }>();
@@ -70,6 +75,12 @@ const TELEGRAM_WEB_AUTH_START_PREFIX = 'LOGIN_';
 const TELEGRAM_WEB_AUTH_SESSION_ID_REGEX = /^[a-f0-9]{32}$/i;
 const PHONE_INPUT_REGEX = /^\+?[0-9()\-\s]{7,20}$/;
 let lastCleanupAt = 0;
+
+const LANGUAGE_CHOICES: { key: BotLang; labels: string[] }[] = [
+  { key: 'uz', labels: ["o'zbek", 'ozbek', 'uzbek', 'uz'] },
+  { key: 'ru', labels: ['русский', 'рус', 'ru'] },
+  { key: 'en', labels: ['english', 'en'] },
+];
 
 const MENU_LOGIN = 'Login';
 const MENU_REGISTER = 'Register';
@@ -946,7 +957,7 @@ async function handleStart(
   const user = (await authService.findUserByTelegramChatId(chatId)) as LinkedUserLean | null;
   if (user) {
     const name = String(user.name ?? '').trim() || 'there';
-    await showLoggedInMenu(chatId, tr(await getSession(chatId), 'welcomeBack', { name }));
+    await showLoggedInMenu(chatId, { intro: tr(await getSession(chatId), 'welcomeBack', { name }) });
     return;
   }
   await sendTelegramMessage(chatId, t(await getSession(chatId), 'registerThenLogin'));
@@ -1545,7 +1556,7 @@ async function handleContactMessage(
       const name = String(user.name ?? '').trim() || 'there';
       const updatedState = await syncUserLanguage(chatId);
       await showLoggedInMenu(chatId, {
-        intro: tr(updatedState, 'loginSuccess', { email: String(user.email || user.phone || '') }),
+        intro: tr(updatedState, 'loginSuccess', { email: String(user.email || '') }),
       });
       return;
     }
@@ -1832,8 +1843,14 @@ async function pollUpdates(): Promise<void> {
     return;
   }
 
+  lastPollTime = new Date();
+  setBotStatus({ lastPollTime: new Date(), pollingInProgress: false });
   setImmediate(() => void pollUpdates());
 }
+
+// Removed local getBotHealth - now using botStatus.state
+
+
 
 async function clearTelegramWebhookForPolling(token: string): Promise<void> {
   try {
@@ -1864,6 +1881,9 @@ export function startTelegramBotPolling(): void {
     return;
   }
   botStarted = true;
-  logger.info('Telegram bot polling started');
+  setBotStatus({ isActive: true });
+  logger.info('Starting Telegram bot polling (Logic Updated: 2026-05-09 07:30)...');
+
+
   void clearTelegramWebhookForPolling(token).finally(() => void pollUpdates());
 }
