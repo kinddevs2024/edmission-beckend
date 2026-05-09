@@ -24,7 +24,6 @@ const absoluteOrRelativeUrlSchema = z.string().min(1).refine(
 const passwordSchema = z
   .string()
   .min(8, 'Password must be at least 8 characters')
-  .refine((p) => /[A-Z]/.test(p), 'Password must contain at least one uppercase letter')
   .refine((p) => /[a-z]/.test(p), 'Password must contain at least one lowercase letter')
   .refine((p) => /\d/.test(p), 'Password must contain at least one number');
 

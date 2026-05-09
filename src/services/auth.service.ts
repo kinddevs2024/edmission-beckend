@@ -132,8 +132,9 @@ function isRealEmail(value: unknown): boolean {
 
 function getPublicEmail(doc: { email?: string; phone?: string }): string {
   const email = String(doc.email ?? '').trim();
+  const phone = String(doc.phone ?? '').trim();
   if (isRealEmail(email)) return email;
-  return '';
+  return phone || '';
 }
 
 function escapeRegExp(value: string): string {
@@ -264,6 +265,35 @@ async function assertLoginAllowed(user: { email: string; emailVerified?: boolean
 
 type UserDoc = InstanceType<typeof User>;
 
+async function clearTelegramPasswordGate(user: UserDoc): Promise<void> {
+  const telegramChatId = String(user.telegram?.chatId || user.socialLinks?.telegram || '').trim();
+  const hasTemporaryPassword = String(user.temporaryPlainPassword ?? '').trim() !== '';
+  if (
+    telegramChatId &&
+    user.localPasswordConfigured !== true &&
+    !hasTemporaryPassword &&
+    user.mustChangePassword
+  ) {
+    user.mustChangePassword = false;
+    await user.save();
+  }
+}
+
+async function usePhoneAsInternalEmail(user: UserDoc, phone: string): Promise<boolean> {
+  const normalizedPhone = normalizePhone(phone);
+  const currentEmail = String(user.email ?? '').trim();
+  if (!normalizedPhone || isRealEmail(currentEmail) || currentEmail === normalizedPhone) {
+    return false;
+  }
+  const conflict = await User.exists({
+    _id: { $ne: user._id },
+    email: normalizedPhone,
+  });
+  if (conflict) return false;
+  user.email = normalizedPhone;
+  return true;
+}
+
 async function issueAuthTokens(user: UserDoc): Promise<{
   user: ReturnType<typeof toPlainUser> & { universityProfile?: { id: string; verified: boolean; universityName?: string } };
   accessToken: string;
@@ -315,6 +345,7 @@ async function issueAuthTokens(user: UserDoc): Promise<{
 }
 
 async function issueTokensAfterLoginChecks(user: UserDoc) {
+  await clearTelegramPasswordGate(user);
   await assertLoginAllowed(user);
   return issueAuthTokens(user);
 }
@@ -1211,6 +1242,7 @@ export async function createTelegramMobileAppAuthLink(
     throw new AppError(404, 'Telegram is not linked to an Edmission account', ErrorCodes.NOT_FOUND);
   }
 
+  await MobileWebAuthSession.deleteMany({ userId: user._id, persistent: true });
   const auth = await createMobileWebAuthSession(String(user._id), {
     persistent: true,
     ttlMs: TELEGRAM_MOBILE_APP_AUTH_SESSION_TTL_MS,
@@ -1281,7 +1313,11 @@ export async function exchangeMobileWebAuthSession(data: MobileWebAuthExchangeBo
     throw new AppError(401, 'Invalid or expired mobile auth token', ErrorCodes.UNAUTHORIZED);
   }
 
-  if (!session.persistent && !session.usedAt) {
+  if (session.persistent) {
+    session.usedAt = now;
+    session.expiresAt = new Date(Date.now() + TELEGRAM_MOBILE_APP_AUTH_SESSION_TTL_MS);
+    await session.save();
+  } else if (!session.usedAt) {
     session.usedAt = now;
     await session.save();
   }
@@ -1996,10 +2032,10 @@ export async function createTelegramPasswordResetLink(payload: {
 }
 
 function getDefaultPathForRole(role?: string): string {
-  if (role === 'student') return '/student/chat';
-  if (role === 'university' || role === 'university_multi_manager') return '/university/chat';
-  if (role === 'school_counsellor') return '/school/chats';
-  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/chats';
+  if (role === 'student') return '/student/dashboard';
+  if (role === 'university' || role === 'university_multi_manager') return '/university/dashboard';
+  if (role === 'school_counsellor') return '/school/dashboard';
+  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/dashboard';
   return '/notifications';
 }
 
@@ -2100,8 +2136,12 @@ async function finalizeTelegramWebsiteAuthSession(session: {
       existingByPhone.name = fullName;
     }
     if (existingByPhone.localPasswordConfigured !== true) {
-      existingByPhone.mustChangePassword = true;
+      const hasTemporaryPassword = String(existingByPhone.temporaryPlainPassword ?? '').trim() !== '';
+      if (!hasTemporaryPassword) {
+        existingByPhone.mustChangePassword = false;
+      }
     }
+    await usePhoneAsInternalEmail(existingByPhone, phone);
     existingByPhone.language = language;
     await existingByPhone.save();
     return issueTokensAfterLoginChecks(existingByPhone);
@@ -3046,39 +3086,66 @@ export async function registerFromTelegram(payload: {
       phone,
     });
     const language = normalizeAuthLanguage(payload.language);
+    let changed = false;
     if (existing.language !== language) {
       existing.language = language;
+      changed = true;
+    }
+    if (!String(existing.name ?? '').trim()) {
+      existing.name = String(payload.fullName ?? '').trim();
+      changed = true;
+    }
+    if (existing.localPasswordConfigured !== true) {
+      const hasTemporaryPassword = String(existing.temporaryPlainPassword ?? '').trim() !== '';
+      if (!hasTemporaryPassword && existing.mustChangePassword) {
+        existing.mustChangePassword = false;
+        changed = true;
+      }
+    }
+    if (await usePhoneAsInternalEmail(existing, phone)) {
+      changed = true;
+    }
+    if (changed) {
       await existing.save();
     }
     return { userId: String(existing._id), created: false };
   }
   const emailCandidate = String(payload.email ?? '').toLowerCase().trim();
-  const useProvidedEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailCandidate);
-  if (useProvidedEmail) {
-    const existingByEmail = await User.findOne({ email: emailCandidate });
-    if (existingByEmail) {
-      const existingPhone = normalizePhone(String(existingByEmail.phone ?? ''));
-      if (existingPhone && existingPhone !== phone) {
-        throw new AppError(409, 'Email already registered with a different phone', ErrorCodes.CONFLICT);
-      }
-      await linkTelegramToUser(String(existingByEmail._id), {
-        chatId,
-        username: payload.username,
-        phone,
-      });
-      if (!existingPhone) {
-        existingByEmail.phone = phone;
-      }
-      if (!String(existingByEmail.name ?? '').trim()) {
-        existingByEmail.name = String(payload.fullName ?? '').trim();
-      }
-      existingByEmail.language = normalizeAuthLanguage(payload.language);
-      await existingByEmail.save();
-      return { userId: String(existingByEmail._id), created: false };
+  const useProvidedEmail = isRealEmail(emailCandidate);
+  const fallbackEmail = phone;
+  const emailCandidates = useProvidedEmail
+    ? [emailCandidate, fallbackEmail, makePhonePlaceholderEmail(phone)]
+    : [fallbackEmail, makePhonePlaceholderEmail(phone)];
+  const existingByEmail = await User.findOne({ email: { $in: emailCandidates } });
+  if (existingByEmail) {
+    const existingPhone = normalizePhone(String(existingByEmail.phone ?? ''));
+    if (existingPhone && existingPhone !== phone) {
+      throw new AppError(409, 'Email already registered with a different phone', ErrorCodes.CONFLICT);
     }
+    await linkTelegramToUser(String(existingByEmail._id), {
+      chatId,
+      username: payload.username,
+      phone,
+    });
+    if (!existingPhone) {
+      existingByEmail.phone = phone;
+    }
+    if (!String(existingByEmail.name ?? '').trim()) {
+      existingByEmail.name = String(payload.fullName ?? '').trim();
+    }
+    existingByEmail.language = normalizeAuthLanguage(payload.language);
+    if (existingByEmail.localPasswordConfigured !== true) {
+      const hasTemporaryPassword = String(existingByEmail.temporaryPlainPassword ?? '').trim() !== '';
+      if (!hasTemporaryPassword) {
+        existingByEmail.mustChangePassword = false;
+      }
+    }
+    await usePhoneAsInternalEmail(existingByEmail, phone);
+    await existingByEmail.save();
+    return { userId: String(existingByEmail._id), created: false };
   }
   const passwordHash = await bcrypt.hash(`tg:${chatId}:${uuidv4()}`, BCRYPT_ROUNDS);
-  const email = useProvidedEmail ? emailCandidate : `tg_${chatId}_${Date.now()}@telegram.local`;
+  const email = useProvidedEmail ? emailCandidate : fallbackEmail;
   const role = payload.role === 'university' ? 'university' : 'student';
   const user = await User.create({
     role,
@@ -3090,7 +3157,7 @@ export async function registerFromTelegram(payload: {
     passwordHash,
     emailVerified: true,
     localPasswordConfigured: false,
-    mustChangePassword: true,
+    mustChangePassword: false,
     telegram: {
       chatId,
       username: String(payload.username ?? '').trim(),

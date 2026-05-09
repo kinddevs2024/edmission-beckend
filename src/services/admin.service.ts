@@ -123,10 +123,23 @@ function isPhonePlaceholderEmail(value: unknown): boolean {
   );
 }
 
+function isTelegramPlaceholderEmail(value: unknown): boolean {
+  return /^tg_\d+_\d+@telegram\.local$/i.test(String(value ?? "").trim());
+}
+
+function isInternalPlaceholderEmail(value: unknown): boolean {
+  const email = String(value ?? "").trim().toLowerCase();
+  return (
+    isPhonePlaceholderEmail(email) ||
+    isTelegramPlaceholderEmail(email) ||
+    email.endsWith(".local")
+  );
+}
+
 function getPublicUserEmail(user: { email?: string; phone?: string }): string {
   const email = String(user.email ?? "").trim();
   const phone = String(user.phone ?? "").trim();
-  if (phone && (isPhonePlaceholderEmail(email) || email === phone))
+  if (phone && (isInternalPlaceholderEmail(email) || email === phone))
     return phone;
   return email;
 }
@@ -521,20 +534,92 @@ export async function getUsers(
   let where: Record<string, unknown> = baseWhere;
   if (searchRaw) {
     const rx = safeRegExp(searchRaw, "i", 100);
-    const profileRows = await StudentProfile.find({
-      $or: [{ firstName: rx }, { lastName: rx }],
-    })
-      .select("userId")
-      .limit(200)
-      .lean();
-    const userIdsFromProfiles = profileRows
+    const numericSearch = Number(searchRaw);
+    const hasNumericSearch = Number.isFinite(numericSearch);
+    const studentProfileOr: Record<string, unknown>[] = [
+      { firstName: rx },
+      { lastName: rx },
+      { country: rx },
+      { city: rx },
+      { gradeLevel: rx },
+      { languageLevel: rx },
+      { schoolName: rx },
+      { educationStatus: rx },
+      { targetDegreeLevel: rx },
+      { skills: rx },
+      { interests: rx },
+      { hobbies: rx },
+      { interestedFaculties: rx },
+      { preferredCountries: rx },
+      { budgetCurrency: rx },
+    ];
+    const universityProfileOr: Record<string, unknown>[] = [
+      { universityName: rx },
+      { tagline: rx },
+      { country: rx },
+      { city: rx },
+      { description: rx },
+      { facultyCodes: rx },
+      { targetStudentCountries: rx },
+      { minLanguageLevel: rx },
+    ];
+    const counsellorProfileOr: Record<string, unknown>[] = [
+      { schoolName: rx },
+      { schoolDescription: rx },
+      { country: rx },
+      { city: rx },
+    ];
+    if (hasNumericSearch) {
+      studentProfileOr.push(
+        { gpa: numericSearch },
+        { graduationYear: numericSearch },
+        { budgetAmount: numericSearch },
+      );
+      universityProfileOr.push(
+        { establishedYear: numericSearch },
+        { studentCount: numericSearch },
+        { tuitionPrice: numericSearch },
+      );
+    }
+    const [studentProfileRows, universityProfileRows, counsellorProfileRows] =
+      await Promise.all([
+        StudentProfile.find({ $or: studentProfileOr })
+          .select("userId")
+          .limit(200)
+          .lean(),
+        UniversityProfile.find({ $or: universityProfileOr })
+          .select("userId")
+          .limit(200)
+          .lean(),
+        CounsellorProfile.find({ $or: counsellorProfileOr })
+          .select("userId")
+          .limit(200)
+          .lean(),
+      ]);
+    const userIdsFromProfiles = [
+      ...studentProfileRows,
+      ...universityProfileRows,
+      ...counsellorProfileRows,
+    ]
       .map((p) => (p as { userId?: unknown }).userId)
       .filter(
         (id): id is mongoose.Types.ObjectId =>
           Boolean(id) && mongoose.Types.ObjectId.isValid(String(id)),
       )
       .map((id) => new mongoose.Types.ObjectId(String(id)));
-    const orClause: Record<string, unknown>[] = [{ email: rx }, { name: rx }];
+    const orClause: Record<string, unknown>[] = [
+      { email: rx },
+      { name: rx },
+      { phone: rx },
+      { role: rx },
+      { "socialLinks.telegram": rx },
+      { "telegram.chatId": rx },
+      { "telegram.username": rx },
+      { "telegram.phone": rx },
+    ];
+    if (mongoose.Types.ObjectId.isValid(searchRaw)) {
+      orClause.push({ _id: new mongoose.Types.ObjectId(searchRaw) });
+    }
     if (userIdsFromProfiles.length) {
       orClause.push({ _id: { $in: userIdsFromProfiles } });
     }

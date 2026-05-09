@@ -28,7 +28,7 @@ type BotLang = 'ru' | 'en' | 'uz';
 let pollingTimer: NodeJS.Timeout | null = null;
 let updateOffset = 0;
 let pollingInProgress = false;
-const MOBILE_WEB_AUTH_SESSION_TTL_MS = 2 * 60 * 1000;
+const TELEGRAM_MOBILE_APP_AUTH_SESSION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
 function hasTelegramConfigured(): boolean {
   return Boolean(config.telegram.botToken);
@@ -45,10 +45,12 @@ function hashMobileWebAuthToken(token: string): string {
 
 async function createMobileAppAuthUrl(userId: string, nextPath: string): Promise<string> {
   const token = crypto.randomBytes(32).toString('hex');
+  await MobileWebAuthSession.deleteMany({ userId, persistent: true });
   await MobileWebAuthSession.create({
     tokenHash: hashMobileWebAuthToken(token),
     userId,
-    expiresAt: new Date(Date.now() + MOBILE_WEB_AUTH_SESSION_TTL_MS),
+    expiresAt: new Date(Date.now() + TELEGRAM_MOBILE_APP_AUTH_SESSION_TTL_MS),
+    persistent: true,
   });
   const safeNext = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/';
   return toPublicSiteUrl(`/mobile-app-auth?token=${encodeURIComponent(token)}&next=${encodeURIComponent(safeNext)}`);
@@ -460,6 +462,7 @@ export async function getTelegramStatus(userId: string): Promise<{ connected: bo
 }
 
 export async function unlinkTelegram(userId: string): Promise<void> {
+  await MobileWebAuthSession.deleteMany({ userId, persistent: true });
   await User.updateOne(
     { _id: userId },
     {

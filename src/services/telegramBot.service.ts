@@ -327,10 +327,8 @@ function openAppInlineKeyboard(url: string, text = 'Open app', browserText = 'Op
   };
 }
 
-function openAppReplyButton(state: BotState, url: string): { text: string; web_app?: { url: string } } {
-  const text = localizedMenuText(state, 'openWebsite', MENU_OPEN_SITE);
-  if (!url.startsWith('https://')) return { text };
-  return { text, web_app: { url } };
+function openAppReplyButton(state: BotState): { text: string } {
+  return { text: localizedMenuText(state, 'openWebsite', MENU_OPEN_SITE) };
 }
 
 async function sendOpenAppAndClearKeyboard(chatId: string, state: BotState, url: string): Promise<void> {
@@ -789,12 +787,11 @@ async function showLoggedInMenu(chatId: string, options?: { intro?: string; skip
   if (options?.skipMessage) return;
 
   const name = String(user.name ?? '').trim() || 'there';
-  const openUrl = await createOpenAppLink(chatId, String(user.role ?? ''));
   const line =
     options?.intro ??
     tr(state, 'signedInAs', { name });
   await sendTelegramKeyboard(chatId, line, [
-    [openAppReplyButton(state, openUrl), { text: t(state, 'recentMessages') }],
+    [openAppReplyButton(state), { text: t(state, 'recentMessages') }],
     [{ text: t(state, 'markViewed') }, { text: t(state, 'replyHelp') }],
     [{ text: t(state, 'disconnectTelegram') }, { text: t(state, 'help') }],
   ]);
@@ -1323,10 +1320,6 @@ async function handleTextMessage(
   }
 
   if (state.mode === 'await_phone_registration_contact') {
-    if (PHONE_INPUT_REGEX.test(normalized)) {
-      await handlePhoneRegistrationContactMessage(chatId, normalized, username);
-      return;
-    }
     await sendTelegramKeyboard(chatId, phoneRegistrationContactPrompt(state), [
       [{ text: loginIdentifierButton(state), request_contact: true }],
       [{ text: t(state, 'back') }],
@@ -1335,10 +1328,6 @@ async function handleTextMessage(
   }
 
   if (state.mode === 'await_telegram_auth_contact') {
-    if (PHONE_INPUT_REGEX.test(normalized)) {
-      await handleContactMessage(chatId, normalized, username, firstName, lastName);
-      return;
-    }
     await sendTelegramKeyboard(chatId, t(state, 'sharePhonePrompt'), [
       [{ text: t(state, 'sharePhoneButton'), request_contact: true }],
       [{ text: t(state, 'back') }],
@@ -1814,7 +1803,7 @@ async function pollUpdates(): Promise<void> {
       if (!chatId) continue;
       try {
         if (typeof phone === 'string' && phone.trim()) {
-          if (contactUserId != null && String(contactUserId) !== chatId) {
+          if (contactUserId == null || String(contactUserId) !== chatId) {
             await sendTelegramMessage(chatId, t(await getSession(chatId), 'ownPhoneRequired'));
             continue;
           }
