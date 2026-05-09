@@ -6,6 +6,7 @@ const mobileWebAuthSessionSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     expiresAt: { type: Date, required: true },
     usedAt: { type: Date, default: null },
+    persistent: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

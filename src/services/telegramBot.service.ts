@@ -334,8 +334,10 @@ function openAppReplyButton(state: BotState, url: string): { text: string; web_a
 }
 
 async function sendOpenAppAndClearKeyboard(chatId: string, state: BotState, url: string): Promise<void> {
-  await removeTelegramKeyboard(chatId, t(state, 'doneOpenWebsite')).catch(() => {});
   await sendTelegramMessage(chatId, t(state, 'doneOpenWebsite'), undefined, openAppInlineKeyboard(url, t(state, 'openWebsite'), t(state, 'openInBrowser')));
+  await showLoggedInMenu(chatId).catch((error) => {
+    logger.warn({ error, chatId }, 'Failed to show Telegram logged-in menu after open-app link');
+  });
 }
 
 function normalizeInput(input: string): string {
