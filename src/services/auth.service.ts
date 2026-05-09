@@ -1967,7 +1967,30 @@ export async function completeTelegramWebsiteAuthFromBot(payload: {
   firstName?: string;
   lastName?: string;
   email?: string;
+  language?: string;
 }): Promise<{ ok: boolean; message: string; loginLink?: string; expiresAt?: string }> {
+
+  const fullName = [String(payload.firstName ?? '').trim(), String(payload.lastName ?? '').trim()]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  // Perform immediate registration/linking so the bot recognizes the user instantly
+  try {
+    await registerFromTelegram({
+      chatId: payload.telegramChatId,
+      phone: payload.phone,
+      fullName: fullName || 'User',
+      email: payload.email,
+      username: payload.telegramUsername,
+      role: 'student',
+      language: payload.language,
+    });
+  } catch (error) {
+    logger.error({ error, payload }, 'Immediate registration from bot failed, but continuing with session');
+  }
+
+
   const issued = await issueTelegramWebsiteAuthCode(payload);
   if (!issued.ok) {
     return { ok: false, message: issued.message };
@@ -1979,6 +2002,7 @@ export async function completeTelegramWebsiteAuthFromBot(payload: {
     expiresAt: issued.expiresAt,
   };
 }
+
 
 async function finalizeTelegramWebsiteAuthSession(session: {
   phone?: string;
@@ -2947,6 +2971,8 @@ export async function registerFromTelegram(payload: {
   email?: string;
   username?: string;
   role?: 'student' | 'university';
+  language?: string;
+
 }) {
   const chatId = normalizeTelegramChatId(payload.chatId);
   if (!chatId) throw new AppError(400, 'Telegram chat id is required', ErrorCodes.VALIDATION);
@@ -2990,7 +3016,8 @@ export async function registerFromTelegram(payload: {
   const role = payload.role === 'university' ? 'university' : 'student';
   const user = await User.create({
     role,
-    language: 'en',
+    language: payload.language || 'en',
+
     email,
     name: String(payload.fullName ?? '').trim(),
     phone,

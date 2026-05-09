@@ -9,6 +9,7 @@ const telegramChatPreferenceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-telegramChatPreferenceSchema.index({ telegramChatId: 1 }, { unique: true });
+// Index on telegramChatId is already defined with unique: true in the schema field definition
+
 
 export const TelegramChatPreference = mongoose.model('TelegramChatPreference', telegramChatPreferenceSchema);

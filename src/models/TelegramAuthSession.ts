@@ -22,7 +22,8 @@ const telegramAuthSessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-telegramAuthSessionSchema.index({ sessionId: 1 }, { unique: true });
+// Index on sessionId is already defined with unique: true in the schema field definition
+
 telegramAuthSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 telegramAuthSessionSchema.index({ telegramId: 1 });
 

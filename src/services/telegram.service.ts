@@ -588,6 +588,8 @@ export async function sendTelegramMessage(
   }
 
   const messageText = String(text ?? '').trim();
+
+
   if (!messageText) {
     throw new AppError(400, 'Telegram text is required', ErrorCodes.VALIDATION);
   }

@@ -41,3 +41,4 @@ export { DocumentTemplateAsset } from './DocumentTemplateAsset';
 export { StudentIssuedDocument } from './StudentIssuedDocument';
 export { StudentDocumentEvent } from './StudentDocumentEvent';
 export { UniversityFlyer } from './UniversityFlyer';
+export { TelegramBotSession } from './TelegramBotSession';
