@@ -91,10 +91,7 @@ async function start() {
       else logger.warn('DeepSeek API key set but health check failed');
     }).catch(() => logger.warn('DeepSeek API health check failed'));
   } else {
-    aiProvider.healthCheck().then((ok) => {
-      if (ok) logger.info({ model: aiProvider.getModelName() }, 'Ollama reachable — AI chat ready');
-      else logger.warn('Ollama not reachable — set DEEPSEEK_API_KEY or start Ollama; AI chat will return 503 until then');
-    }).catch(() => logger.warn('Ollama not reachable'));
+    logger.info('No AI provider configured — AI chat disabled');
   }
 }
 

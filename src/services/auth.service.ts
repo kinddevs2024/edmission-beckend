@@ -1638,10 +1638,7 @@ export async function startTelegramWebsiteAuthSession(
   deepLink: string;
   expiresAt: string;
 }> {
-  const botUsername = config.telegram.botUsername.trim();
-  if (!botUsername) {
-    throw new AppError(503, 'Telegram login is not configured', ErrorCodes.SERVICE_UNAVAILABLE);
-  }
+  const botUsername = (config.telegram.botUsername || '').trim() || (config.telegram.botToken || '').split(':')[0] || 'bot';
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const sessionId = createTelegramWebAuthSessionId();

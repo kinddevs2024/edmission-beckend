@@ -388,18 +388,30 @@ export async function getChatMessages(req: Request, res: Response, next: NextFun
 export async function sendChatMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = (req.body || {}) as { text?: string };
+    const body = (req.body || {}) as {
+      text?: string;
+      attachmentUrl?: string;
+      metadata?: Record<string, unknown>;
+      actingUniversityUserId?: string;
+    };
     const text = typeof body.text === 'string' ? body.text.trim() : '';
     if (!text) {
       res.status(400).json({ error: 'Text is required' });
       return;
     }
-    const result = await adminService.sendChatMessageAsAdmin(req.params.id, req.user.id, text);
+    const result = await adminService.sendChatMessageAsAdmin(req.params.id, req.user.id, {
+      text,
+      attachmentUrl: body.attachmentUrl,
+      metadata: body.metadata,
+      actingUniversityUserId: body.actingUniversityUserId,
+    });
     const msg = result.message as Record<string, unknown>;
     const payload = {
       ...msg,
       id: msg.id ?? msg._id,
       text: msg.message ?? msg.text ?? '',
+      attachmentUrl: msg.attachmentUrl,
+      metadata: msg.metadata,
     };
     const { getIO } = await import('../socket');
     const io = getIO();

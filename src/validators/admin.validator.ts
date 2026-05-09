@@ -272,7 +272,10 @@ export const chatMessagesQuerySchema = z.object({
 
 export const sendChatMessageSchema = z.object({
   body: z.object({
-    text: z.string().min(1, 'Text is required'),
+    text: z.string().min(1, 'Text is required').max(4000),
+    attachmentUrl: z.string().url().max(2048).optional(),
+    metadata: z.record(z.unknown()).optional(),
+    actingUniversityUserId: objectIdZod.optional(),
   }),
 });
 

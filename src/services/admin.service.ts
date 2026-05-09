@@ -2522,7 +2522,12 @@ export async function getChatMessages(
 export async function sendChatMessageAsAdmin(
   chatId: string,
   adminUserId: string,
-  text: string,
+  input: string | {
+    text: string;
+    attachmentUrl?: string;
+    metadata?: Record<string, unknown>;
+    actingUniversityUserId?: string;
+  },
 ) {
   const chat = await Chat.findById(chatId).lean();
   if (!chat) throw new AppError(404, "Chat not found", ErrorCodes.NOT_FOUND);
@@ -2530,19 +2535,41 @@ export async function sendChatMessageAsAdmin(
   if (!admin || (admin as { role?: string }).role !== "admin") {
     throw new AppError(403, "Only administrators can send admin chat messages", ErrorCodes.FORBIDDEN);
   }
-  const messageText = text.trim();
+  const payload = typeof input === "string" ? { text: input } : input;
+  const messageText = String(payload.text ?? "").trim();
   if (!messageText) throw new AppError(400, "Message text is required", ErrorCodes.VALIDATION);
+  let senderId = adminUserId;
+  let senderLabel = "Admin";
+  let senderRole = "admin";
+  const metadata: Record<string, unknown> = {
+    ...(payload.metadata ?? {}),
+    sentByAdmin: true,
+    senderRole,
+    senderLabel,
+    senderEmail: (admin as { email?: string }).email ?? "",
+  };
+
+  if (payload.actingUniversityUserId) {
+    const university = await UniversityProfile.findOne({ userId: payload.actingUniversityUserId }).select("_id universityName userId").lean();
+    if (!university) throw new AppError(404, "University profile not found", ErrorCodes.NOT_FOUND);
+    if (String((chat as { universityId?: unknown }).universityId ?? "") !== String((university as { _id: unknown })._id)) {
+      throw new AppError(403, "University account does not match this chat", ErrorCodes.FORBIDDEN);
+    }
+    senderId = payload.actingUniversityUserId;
+    senderLabel = String((university as { universityName?: string }).universityName ?? "University");
+    senderRole = "university";
+    metadata.senderRole = senderRole;
+    metadata.senderLabel = senderLabel;
+    metadata.sentAsUniversity = true;
+    metadata.adminUserId = adminUserId;
+  }
   const msg = await Message.create({
     chatId,
-    senderId: adminUserId,
+    senderId,
     type: "text",
     message: messageText,
-    metadata: {
-      sentByAdmin: true,
-      senderRole: "admin",
-      senderLabel: "Admin",
-      senderEmail: (admin as { email?: string }).email ?? "",
-    },
+    attachmentUrl: payload.attachmentUrl,
+    metadata,
   });
   await Chat.findByIdAndUpdate(chatId, { updatedAt: new Date() });
   const msgPop = await Message.findById(msg._id).populate("senderId", "email name role").lean();
@@ -2553,10 +2580,12 @@ export async function sendChatMessageAsAdmin(
       id: String(msg._id),
       text: messageText,
       message: messageText,
-      senderId: sender ? String(sender._id ?? sender.id ?? "") : String(adminUserId),
+      attachmentUrl: payload.attachmentUrl,
+      metadata,
+      senderId: sender ? String(sender._id ?? sender.id ?? "") : String(senderId),
       senderEmail: sender?.email ?? "",
-      senderName: sender?.name ?? sender?.email ?? "Admin",
-      senderRole: "admin",
+      senderName: senderLabel || sender?.name || sender?.email || "Admin",
+      senderRole,
       sentByAdmin: true,
     },
   };
