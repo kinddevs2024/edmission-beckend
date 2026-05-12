@@ -1,4 +1,5 @@
 import { StudentDocument, StudentProfile } from '../models';
+import mongoose from 'mongoose';
 import { getPageDimensions, parseScene, stringifyScene } from './documentRenderer.service';
 import { ensureStudentProfile } from './studentProfile.service';
 import { AppError, ErrorCodes } from '../utils/errors';
@@ -218,13 +219,16 @@ function normalizeDocumentInput(data: StudentDocumentInput, current?: Record<str
 }
 
 function mapStudentDocument(document: Record<string, unknown>) {
+  const id = String(document._id);
   return {
     ...document,
-    id: String(document._id),
+    id,
     fileUrl: normalizeOptionalString(document.fileUrl),
     previewImageUrl: normalizeOptionalString(document.previewImageUrl),
     canvasJson: normalizeOptionalString(document.canvasJson),
     source: (document.source as string | undefined) ?? 'upload',
+    createdAt: toIsoDateString(document.createdAt) ?? objectIdCreatedAt(id),
+    updatedAt: toIsoDateString(document.updatedAt),
   };
 }
 
@@ -242,4 +246,18 @@ function normalizeOptionalString(value: unknown) {
 
 function normalizeMaybeNumber(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function toIsoDateString(value: unknown): string | undefined {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  }
+  return undefined;
+}
+
+function objectIdCreatedAt(id: string): string | undefined {
+  if (!mongoose.Types.ObjectId.isValid(id)) return undefined;
+  return new mongoose.Types.ObjectId(id).getTimestamp().toISOString();
 }

@@ -674,7 +674,7 @@ export async function getUsers(
     ids.map((id) => new mongoose.Types.ObjectId(id));
 
   const studentIds = data
-    .filter((r) => r.role === "student" && needsDisplayName(r.name))
+    .filter((r) => r.role === "student")
     .map((r) => r.id);
   const universityIds = data
     .filter((r) => r.role === "university" && needsDisplayName(r.name))
@@ -686,7 +686,7 @@ export async function getUsers(
   const [studentProfiles, uniProfiles, counsellorProfiles] = await Promise.all([
     studentIds.length
       ? StudentProfile.find({ userId: { $in: toOid(studentIds) } })
-          .select("userId firstName lastName")
+          .select("userId firstName lastName schoolName")
           .lean()
       : Promise.resolve([]),
     universityIds.length
@@ -702,11 +702,13 @@ export async function getUsers(
   ]);
 
   const studentNameByUserId = new Map<string, string>();
+  const studentSchoolNameByUserId = new Map<string, string>();
   for (const p of studentProfiles) {
     const row = p as {
       userId?: unknown;
       firstName?: string;
       lastName?: string;
+      schoolName?: string;
     };
     const uid = String(row.userId ?? "");
     const full = [row.firstName, row.lastName]
@@ -715,6 +717,9 @@ export async function getUsers(
       .join(" ")
       .trim();
     if (full) studentNameByUserId.set(uid, full);
+    const schoolName =
+      row.schoolName != null ? String(row.schoolName).trim() : "";
+    if (schoolName) studentSchoolNameByUserId.set(uid, schoolName);
   }
   const uniNameByUserId = new Map<string, string>();
   for (const p of uniProfiles) {
@@ -733,6 +738,12 @@ export async function getUsers(
   }
 
   for (const row of data) {
+    if (row.role === "student") {
+      const schoolName = studentSchoolNameByUserId.get(row.id);
+      if (schoolName) {
+        (row as typeof row & { schoolName?: string }).schoolName = schoolName;
+      }
+    }
     if (!needsDisplayName(row.name)) continue;
     if (row.role === "student") {
       const alt = studentNameByUserId.get(row.id);
@@ -1037,10 +1048,21 @@ export async function updateUser(
     _id: unknown;
     mustChangePassword?: boolean;
     temporaryPlainPassword?: string;
+    role?: string;
   };
+  const studentProfile =
+    doc.role === "student"
+      ? await StudentProfile.findOne({ userId: doc._id })
+          .select("schoolName")
+          .lean()
+      : null;
+  const schoolName =
+    studentProfile &&
+    String((studentProfile as { schoolName?: unknown }).schoolName ?? "").trim();
   return {
     ...updated,
     id: String(doc._id),
+    ...(schoolName ? { schoolName } : {}),
     temporaryPassword: doc.mustChangePassword
       ? String(doc.temporaryPlainPassword ?? "") || undefined
       : undefined,
