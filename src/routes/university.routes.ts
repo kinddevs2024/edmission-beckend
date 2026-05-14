@@ -11,7 +11,7 @@ import * as universityValidator from '../validators/university.validator';
 const router = Router();
 
 router.use(authMiddleware);
-router.use(requireRole('university', 'university_multi_manager'));
+router.use(requireRole('university', 'university_multi_manager', 'multi_university_admin'));
 router.use(resolveUniversityActAs);
 
 /** Unverified university: only catalog, verification-request, and read profile */

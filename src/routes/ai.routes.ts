@@ -9,7 +9,7 @@ import * as aiValidator from '../validators/ai.validator';
 const router = Router();
 
 router.use(authMiddleware);
-router.use(requireRole('student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'));
+router.use(requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'));
 
 router.get('/status', aiController.status);
 router.use(aiChatRateLimiter);

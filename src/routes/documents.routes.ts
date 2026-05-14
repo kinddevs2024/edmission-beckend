@@ -15,28 +15,28 @@ router.use(resolveUniversityActAs);
 
 router.get(
   '/templates',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validate(documentsValidator.listTemplatesQuerySchema.shape.query, 'query'),
   documentsController.listTemplates
 );
 router.post(
   '/templates',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validate(documentsValidator.createTemplateSchema.shape.body, 'body'),
   documentsController.createTemplate
 );
 router.get(
   '/templates/:id',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   documentsController.getTemplate
 );
 router.patch(
   '/templates/:id',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   validate(documentsValidator.updateTemplateSchema.shape.body, 'body'),
@@ -44,21 +44,21 @@ router.patch(
 );
 router.delete(
   '/templates/:id',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   documentsController.deleteTemplate
 );
 router.post(
   '/templates/:id/duplicate',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   documentsController.duplicateTemplate
 );
 router.post(
   '/templates/:id/render-preview',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   validate(documentsValidator.renderTemplatePreviewSchema.shape.body, 'body'),
@@ -67,20 +67,20 @@ router.post(
 
 router.get(
   '/student-documents',
-  requireRole('student', 'university', 'university_multi_manager'),
+  requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin'),
   validate(documentsValidator.listStudentDocumentsQuerySchema.shape.query, 'query'),
   documentsController.listStudentDocuments
 );
 router.post(
   '/student-documents/send',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validate(documentsValidator.sendStudentDocumentSchema.shape.body, 'body'),
   documentsController.sendStudentDocument
 );
 router.get(
   '/student-documents/:id',
-  requireRole('student', 'university', 'university_multi_manager', 'school_counsellor'),
+  requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin', 'school_counsellor'),
   validateObjectId('id'),
   documentsController.getStudentDocument
 );
@@ -96,14 +96,14 @@ router.post(
 );
 router.post(
   '/student-documents/:id/revoke',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   documentsController.revokeStudentDocument
 );
 router.delete(
   '/student-documents/:id',
-  requireRole('university', 'university_multi_manager'),
+  requireRole('university', 'university_multi_manager', 'multi_university_admin'),
   requireVerifiedUniversity,
   validateObjectId('id'),
   documentsController.deleteStudentDocument

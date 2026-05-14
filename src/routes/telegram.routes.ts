@@ -8,7 +8,7 @@ const router = Router();
 
 router.use(authMiddleware);
 router.use(authRateLimiter);
-router.use(requireRole('student', 'university', 'school_counsellor', 'admin', 'counsellor_coordinator', 'manager'));
+router.use(requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin', 'school_counsellor', 'admin', 'counsellor_coordinator', 'manager'));
 
 router.get('/status', telegramController.getStatus);
 router.post('/link-code', telegramController.createLinkCode);

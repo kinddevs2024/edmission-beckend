@@ -18,6 +18,7 @@ import {
 import * as subscriptionService from './subscription.service';
 import * as emailService from './email.service';
 import * as settingsService from './settings.service';
+import { ensureCatalogUniversityAccount, listAllUniversityActAsOptions } from './universityIdentity.service';
 import { sendTelegramMessage } from './telegram.service';
 import { config } from '../config';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt';
@@ -2033,7 +2034,7 @@ export async function createTelegramPasswordResetLink(payload: {
 
 function getDefaultPathForRole(role?: string): string {
   if (role === 'student') return '/student/dashboard';
-  if (role === 'university' || role === 'university_multi_manager') return '/university/dashboard';
+  if (role === 'university' || role === 'university_multi_manager' || role === 'multi_university_admin') return '/university/dashboard';
   if (role === 'school_counsellor') return '/school/dashboard';
   if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/dashboard';
   return '/notifications';
@@ -2412,10 +2413,13 @@ export async function getMe(userId: string) {
         : undefined;
 
   let managedUniversities:
-    | Array<{ userId: string; universityName: string; logoUrl?: string; verified: boolean }>
+    | Array<{ userId: string; universityName: string; logoUrl?: string; verified: boolean; source?: string }>
     | undefined;
   let universityMultiManagerApproved: boolean | undefined;
-  if (u.role === 'university_multi_manager') {
+  if (u.role === 'multi_university_admin') {
+    universityMultiManagerApproved = true;
+    managedUniversities = await listAllUniversityActAsOptions();
+  } else if (u.role === 'university_multi_manager') {
     universityMultiManagerApproved = Boolean((u as { universityMultiManagerApproved?: boolean }).universityMultiManagerApproved);
     const ids = ((u as { managedUniversityUserIds?: unknown[] }).managedUniversityUserIds ?? [])
       .map((x) => String(x))
@@ -2428,7 +2432,7 @@ export async function getMe(userId: string) {
           resolvedUserIds.push(String((directProfile as { userId: unknown }).userId));
           continue;
         }
-        const catalogUserId = await ensureCatalogUniversityAccountForAuth(id);
+        const catalogUserId = await ensureCatalogUniversityAccount(id);
         if (catalogUserId) resolvedUserIds.push(catalogUserId);
       }
       const uniqueResolvedUserIds = [...new Set(resolvedUserIds)];
@@ -2490,7 +2494,7 @@ export async function getMe(userId: string) {
     studentProfile: studentProfile ? { ...studentProfile, id: String((studentProfile as { _id: unknown })._id), verifiedAt: (studentProfile as { verifiedAt?: Date }).verifiedAt } : null,
     universityProfile: universityProfile ? { ...universityProfile, id: String((universityProfile as { _id: unknown })._id), verified: (universityProfile as { verified?: boolean }).verified } : null,
     subscription,
-    ...(u.role === 'university_multi_manager'
+    ...(u.role === 'university_multi_manager' || u.role === 'multi_university_admin'
       ? {
           universityMultiManagerApproved,
           managedUniversities,

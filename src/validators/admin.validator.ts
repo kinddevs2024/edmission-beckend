@@ -33,6 +33,7 @@ export const createUserSchema = z.object({
       'student',
       'university',
       'university_multi_manager',
+      'multi_university_admin',
       'admin',
       'school_counsellor',
       'counsellor_coordinator',
@@ -48,7 +49,7 @@ export const updateUserSchema = z.object({
   body: z.object({
     name: z.string().max(200).optional(),
     role: z
-      .enum(['student', 'university', 'university_multi_manager', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'])
+      .enum(['student', 'university', 'university_multi_manager', 'multi_university_admin', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'])
       .optional(),
     emailVerified: z.boolean().optional(),
     suspended: z.boolean().optional(),

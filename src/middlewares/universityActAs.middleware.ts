@@ -3,13 +3,15 @@ import mongoose from "mongoose";
 import { User } from "../models";
 import { AppError, ErrorCodes } from "../utils/errors";
 import type { Role } from "../types/role";
+import { resolveActAsUniversityUserId } from "../services/universityIdentity.service";
 
 const HEADER = "x-act-as-university";
 
 /**
- * Lets `university_multi_manager` call university APIs by sending `X-Act-As-University: <universityUserId>`.
+ * Lets delegated university roles call university APIs by sending
+ * `X-Act-As-University: <university user id | university profile id | catalog id>`.
  * Rewrites `req.user.id` / `req.user.role` to the target university for downstream handlers.
- * Real manager id is stored on `req.universityDelegation`.
+ * Real delegate id is stored on `req.universityDelegation`.
  */
 export async function resolveUniversityActAs(
   req: Request,
@@ -25,7 +27,10 @@ export async function resolveUniversityActAs(
       next();
       return;
     }
-    if (req.user.role !== "university_multi_manager") {
+    if (
+      req.user.role !== "university_multi_manager" &&
+      req.user.role !== "multi_university_admin"
+    ) {
       next();
       return;
     }
@@ -45,18 +50,22 @@ export async function resolveUniversityActAs(
       return;
     }
 
-    const manager = await User.findById(req.user.id)
+    const delegate = await User.findById(req.user.id)
       .select("managedUniversityUserIds universityMultiManagerApproved role")
       .lean();
     if (
-      !manager ||
-      (manager as { role?: string }).role !== "university_multi_manager"
+      !delegate ||
+      !["university_multi_manager", "multi_university_admin"].includes(
+        String((delegate as { role?: string }).role ?? ""),
+      )
     ) {
       next(new AppError(403, "Insufficient permissions", ErrorCodes.FORBIDDEN));
       return;
     }
+    const delegateRole = String((delegate as { role?: string }).role ?? "");
     if (
-      !(manager as { universityMultiManagerApproved?: boolean })
+      delegateRole === "university_multi_manager" &&
+      !(delegate as { universityMultiManagerApproved?: boolean })
         .universityMultiManagerApproved
     ) {
       next(
@@ -69,11 +78,18 @@ export async function resolveUniversityActAs(
       return;
     }
 
-    // Removed assignment check - allow multi-manager to act as any university
+    const resolvedUniversityUserId = await resolveActAsUniversityUserId(actAs);
+    if (!resolvedUniversityUserId) {
+      next(new AppError(404, "University not found", ErrorCodes.NOT_FOUND));
+      return;
+    }
 
     const managerUserId = req.user.id;
     req.universityDelegation = { managerUserId };
-    Object.assign(req.user, { id: actAs, role: "university" as Role });
+    Object.assign(req.user, {
+      id: resolvedUniversityUserId,
+      role: "university" as Role,
+    });
     next();
   } catch (e) {
     next(e);

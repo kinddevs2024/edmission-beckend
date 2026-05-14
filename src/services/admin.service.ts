@@ -61,6 +61,7 @@ type ManagedRole =
   | "student"
   | "university"
   | "university_multi_manager"
+  | "multi_university_admin"
   | "admin"
   | "school_counsellor"
   | "counsellor_coordinator"
@@ -71,6 +72,7 @@ const MANAGED_ROLES = [
   "student",
   "university",
   "university_multi_manager",
+  "multi_university_admin",
   "admin",
   "school_counsellor",
   "counsellor_coordinator",
@@ -755,7 +757,7 @@ export async function getUsers(
       const alt = schoolNameByUserId.get(row.id);
       if (alt) row.name = alt;
     } else if (
-      row.role === "university_multi_manager" &&
+      (row.role === "university_multi_manager" || row.role === "multi_university_admin") &&
       needsDisplayName(row.name)
     ) {
       row.name = row.email || row.name;
@@ -795,6 +797,7 @@ export async function createUser(
       "student",
       "university",
       "university_multi_manager",
+      "multi_university_admin",
       "admin",
       "school_counsellor",
       "counsellor_coordinator",
