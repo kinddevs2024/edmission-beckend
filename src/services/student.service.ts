@@ -257,6 +257,7 @@ type StudentUniversitiesQuery = {
   page?: number;
   limit?: number;
   country?: string;
+  city?: string;
   search?: string;
   sort?: string;
   hasScholarship?: boolean;
@@ -311,7 +312,8 @@ export async function getUniversities(
 ) {
   const profile = await ensureStudentProfile(userId);
   const profileObject = profile.toObject ? profile.toObject() : profile;
-  if (!isMinimalPortfolioComplete(profileObject as Record<string, unknown>)) {
+  const useProfileFilters = query.useProfileFilters !== false;
+  if (useProfileFilters && !isMinimalPortfolioComplete(profileObject as Record<string, unknown>)) {
     return {
       data: [],
       total: 0,
@@ -324,7 +326,6 @@ export async function getUniversities(
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
-  const useProfileFilters = query.useProfileFilters !== false;
 
   const studentCountry = typeof (profile as { country?: string }).country === 'string'
     ? (profile as { country?: string }).country?.trim() ?? ''
@@ -897,6 +898,8 @@ function matchesUniversityFilters(item: SearchableUniversityItem, query: Student
 
   const country = normalizeString(query.country);
   if (country && normalizeString(item.country) !== country) return false;
+  const city = normalizeString(query.city);
+  if (city && !normalizeString(item.city).includes(city)) return false;
 
   if (query.hasScholarship && !item.hasScholarship) return false;
 

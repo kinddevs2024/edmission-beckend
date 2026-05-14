@@ -56,6 +56,7 @@ export const listStudentUniversitiesQuerySchema = z.object({
   limit: z.coerce.number().min(1).max(300).optional(),
   country: z.string().optional(),
   city: z.string().optional(),
+  hasScholarship: z.union([z.coerce.number().min(0).max(1), z.enum(['true', 'false'])]).optional(),
   useProfileFilters: z.union([z.coerce.number().min(0).max(1), z.enum(['true', 'false'])]).optional(),
 });
 
