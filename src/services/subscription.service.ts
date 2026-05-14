@@ -135,6 +135,33 @@ export function getEffectivePlan(sub: SubscriptionInfo | null): string | null {
   return sub.plan;
 }
 
+async function refreshUnusedTrialAfterPasswordSetup(
+  userId: string,
+  sub: SubscriptionInfo | null,
+  currentApplications: number
+): Promise<SubscriptionInfo | null> {
+  if (!sub || sub.plan !== STUDENT_PLAN.FREE_TRIAL || !isTrialExpired(sub) || currentApplications > 0) {
+    return sub;
+  }
+
+  const user = await User.findById(userId).select('passwordChangedAt').lean();
+  const passwordChangedAtRaw = (user as { passwordChangedAt?: Date | string } | null)?.passwordChangedAt;
+  const passwordChangedAt = passwordChangedAtRaw ? new Date(passwordChangedAtRaw) : null;
+  const trialEndsAt = sub.trialEndsAt ? new Date(sub.trialEndsAt) : null;
+
+  if (!passwordChangedAt || Number.isNaN(passwordChangedAt.getTime()) || !trialEndsAt || passwordChangedAt <= trialEndsAt) {
+    return sub;
+  }
+
+  const trialEndsAtNext = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  const updated = await Subscription.findOneAndUpdate(
+    { userId, plan: STUDENT_PLAN.FREE_TRIAL },
+    { $set: { status: 'active', trialEndsAt: trialEndsAtNext }, $unset: { trialReminderSentAt: 1 } },
+    { new: true }
+  ).lean();
+  return updated as SubscriptionInfo | null;
+}
+
 /** Check if university has premium plan with active status (unlimited student profile views, offers, etc.) */
 export function hasPremiumUniversityPlan(sub: SubscriptionInfo | null): boolean {
   const effective = getEffectivePlan(sub);
@@ -168,9 +195,11 @@ export async function canSendApplication(userId: string): Promise<{
     sub = await getSubscription(userId);
   }
 
+  const current = await countStudentInterestDocuments(profile._id);
+  sub = await refreshUnusedTrialAfterPasswordSetup(userId, sub, current);
+
   const effectivePlan = getEffectivePlan(sub);
   const trialExpired = !!(sub?.plan === STUDENT_PLAN.FREE_TRIAL && isTrialExpired(sub));
-  const current = await countStudentInterestDocuments(profile._id);
 
   if (!effectivePlan) {
     return {
@@ -251,10 +280,6 @@ export async function getSubscriptionSummary(userId: string): Promise<{
 
   if (sub) sendTrialReminderIfNeeded(userId).catch(() => {});
 
-  const effectivePlan = getEffectivePlan(sub);
-  const trialExpired = isTrialExpired(sub);
-  const chatModel = await getChatModel(userId, (sub?.role as Role) ?? 'student');
-
   let applicationLimit: number | null = null;
   let applicationCurrent = 0;
   let offerLimit: number | null = null;
@@ -262,6 +287,14 @@ export async function getSubscriptionSummary(userId: string): Promise<{
 
   if (studentProfile) {
     applicationCurrent = await countStudentInterestDocuments(studentProfile._id);
+    sub = await refreshUnusedTrialAfterPasswordSetup(userId, sub, applicationCurrent);
+  }
+
+  const effectivePlan = getEffectivePlan(sub);
+  const trialExpired = isTrialExpired(sub);
+  const chatModel = await getChatModel(userId, (sub?.role as Role) ?? 'student');
+
+  if (studentProfile) {
     applicationLimit = studentApplicationLimitForPlan(effectivePlan);
   }
   if (universityProfile) {
