@@ -864,6 +864,28 @@ export async function getStudentUniversities(
   return getUniversities(studentUserId, query);
 }
 
+/** Get university details for a linked student. */
+export async function getStudentUniversityById(
+  counsellorUserId: string,
+  studentUserId: string,
+  universityId: string,
+) {
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  const { getUniversityById } = await import("./student.service");
+  return getUniversityById(studentUserId, universityId);
+}
+
+export async function getStudentUniversityFlyers(
+  counsellorUserId: string,
+  studentUserId: string,
+  universityId: string,
+) {
+  await assertStudentBelongsToCounsellor(studentUserId, counsellorUserId);
+  if (String(universityId).startsWith("catalog-")) return [];
+  const { getUniversityFlyers } = await import("./student.service");
+  return getUniversityFlyers(studentUserId, universityId);
+}
+
 /** Return the existing one-time password, or create one only for legacy rows that do not have it stored. */
 export async function generateTempPasswordForStudent(
   counsellorUserId: string,

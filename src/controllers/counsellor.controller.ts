@@ -113,6 +113,40 @@ export async function getStudentUniversities(req: Request, res: Response, next: 
   }
 }
 
+export async function getStudentUniversityById(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.getStudentUniversityById(
+      req.user.id,
+      req.params.studentUserId,
+      req.params.universityId
+    );
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getStudentUniversityFlyers(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const data = await counsellorService.getStudentUniversityFlyers(
+      req.user.id,
+      req.params.studentUserId,
+      req.params.universityId
+    );
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function listMyStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
