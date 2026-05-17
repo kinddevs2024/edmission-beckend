@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as aiController from '../controllers/ai.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
+import { resolveUniversityActAsIfPresent } from '../middlewares/universityActAs.middleware';
 import { requireRole } from '../middlewares/rbac.middleware';
 import { aiChatRateLimiter } from '../middlewares/rateLimit.middleware';
 import { validate } from '../middlewares/validate.middleware';
@@ -10,6 +11,7 @@ const router = Router();
 
 router.use(authMiddleware);
 router.use(requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'));
+router.use(resolveUniversityActAsIfPresent);
 
 router.get('/status', aiController.status);
 router.use(aiChatRateLimiter);

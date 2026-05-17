@@ -5,6 +5,7 @@
  */
 
 import type { Role } from '../types/role';
+import { isUniversityLikeRole } from '../types/role';
 
 type RouteEntry = { path: string; description: string };
 
@@ -85,12 +86,15 @@ function formatRoutes(entries: RouteEntry[]): string {
  */
 export function getSiteStructure(role: Role): string {
   const title = 'App routes (you can tell the user to open these paths):';
+  if (isUniversityLikeRole(role)) {
+    return `${title}\n${formatRoutes(UNIVERSITY_ROUTES)}`;
+  }
   switch (role) {
     case 'student':
       return `${title}\n${formatRoutes(STUDENT_ROUTES)}`;
-    case 'university':
-      return `${title}\n${formatRoutes(UNIVERSITY_ROUTES)}`;
     case 'admin':
+    case 'manager':
+    case 'counsellor_coordinator':
       return `${title}\n${formatRoutes(ADMIN_ROUTES)}`;
     case 'school_counsellor':
       return `${title}\n${formatRoutes(SCHOOL_COUNSELLOR_ROUTES)}`;

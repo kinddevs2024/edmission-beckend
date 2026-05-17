@@ -1,4 +1,5 @@
 import { Chat, Message, StudentProfile, UniversityCatalog, UniversityProfile } from '../models';
+import { isUniversityLikeRole } from '../types/role';
 import { safeRegExp } from '../utils/validators';
 
 const SEARCH_LIMIT = 10;
@@ -133,7 +134,7 @@ export async function globalSearch(q: string, role: string, userId?: string): Pr
   if (!trimmed) return { universities: [], students: [], chatMessages: [] };
 
   const isStudent = role === 'student';
-  const isUniversity = role === 'university';
+  const isUniversity = isUniversityLikeRole(role);
   const isAdmin = role === 'admin' || role === 'manager' || role === 'counsellor_coordinator';
   const isSchool = role === 'school_counsellor';
 

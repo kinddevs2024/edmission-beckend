@@ -2,11 +2,12 @@ import mongoose from 'mongoose';
 import { Ticket } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import type { Role } from '../types/role';
+import { isUniversityLikeRole } from '../types/role';
 
 const STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
 
 export async function createTicket(userId: string, role: Role, data: { subject: string; message: string }) {
-  if (role !== 'student' && role !== 'university' && role !== 'school_counsellor') {
+  if (role !== 'student' && !isUniversityLikeRole(role) && role !== 'school_counsellor') {
     throw new AppError(403, 'Only students, universities and school counsellors can create support tickets', ErrorCodes.FORBIDDEN);
   }
   const ticket = await Ticket.create({

@@ -25,11 +25,11 @@ const uploadExcel = multer({
 });
 
 router.use(authMiddleware);
-router.use(requireRole('admin', 'school_counsellor', 'counsellor_coordinator', 'manager'));
+router.use(requireRole('admin', 'counsellor_coordinator', 'manager'));
 
 router.get('/dashboard', adminController.getDashboard);
-router.get('/analytics/overview', validate(adminValidator.analyticsOverviewQuerySchema, 'query'), adminController.getAnalyticsOverview);
-router.get('/analytics/university-interests', adminController.getUniversityInterestAnalytics);
+router.get('/analytics/overview', requireAdminOnly, validate(adminValidator.analyticsOverviewQuerySchema, 'query'), adminController.getAnalyticsOverview);
+router.get('/analytics/university-interests', requireAdminOnly, adminController.getUniversityInterestAnalytics);
 router.get('/users', validate(adminValidator.usersQuerySchema, 'query'), adminController.getUsers);
 router.post('/users', requireUserManager, validate(adminValidator.createUserSchema.shape.body, 'body'), adminController.createUser);
 router.get('/users/template', requireUserManager, adminController.downloadUsersTemplate);
@@ -51,7 +51,7 @@ router.patch('/users/:id', requireUserManager, validateObjectId('id'), validate(
 router.delete('/users/:id', requireUserManager, validateObjectId('id'), adminController.deleteUser);
 router.post('/users/:id/reset-password', requireUserManager, validateObjectId('id'), validate(adminValidator.resetPasswordSchema.shape.body, 'body'), adminController.resetUserPassword);
 router.patch('/users/:id/suspend', requireUserManager, validateObjectId('id'), validate(adminValidator.suspendUserSchema.shape.body, 'body'), adminController.suspendUser);
-router.get('/users/:id/student-profile', validateObjectId('id'), adminController.getStudentProfileByUser);
+router.get('/users/:id/student-profile', requireAdminOnly, validateObjectId('id'), adminController.getStudentProfileByUser);
 router.patch(
   '/users/:id/student-profile',
   requireAdminOnly,
@@ -79,7 +79,7 @@ router.delete(
   validateObjectId('documentId'),
   adminController.deleteStudentDocumentByUser
 );
-router.get('/users/:id/university-profile', validateObjectId('id'), adminController.getUniversityProfileByUser);
+router.get('/users/:id/university-profile', requireAdminOnly, validateObjectId('id'), adminController.getUniversityProfileByUser);
 router.patch(
   '/users/:id/university-profile',
   requireAdminOnly,
@@ -221,10 +221,10 @@ router.post(
   adminController.adminUniCreateOffer
 );
 
-router.get('/universities/verification', adminController.getVerificationQueue);
+router.get('/universities/verification', requireAdminOnly, adminController.getVerificationQueue);
 router.post('/universities/:id/verify', requireAdminOnly, validateObjectId('id'), validate(adminValidator.verifyUniversitySchema.shape.body, 'body'), adminController.verifyUniversity);
-router.get('/universities/template', adminController.downloadUniversitiesTemplate);
-router.get('/universities/export', adminController.downloadAllUniversitiesExcel);
+router.get('/universities/template', requireAdminOnly, adminController.downloadUniversitiesTemplate);
+router.get('/universities/export', requireAdminOnly, adminController.downloadAllUniversitiesExcel);
 router.post('/universities/import/preview', requireAdminOnly, (req, res, next) => {
   uploadExcel.single('file')(req, res, (err) => {
     if (err) return next(err);
@@ -237,28 +237,28 @@ router.post('/universities/import', requireAdminOnly, (req, res, next) => {
     next();
   });
 }, adminController.uploadUniversitiesExcel);
-router.get('/universities', validate(adminValidator.catalogUniversitiesQuerySchema, 'query'), adminController.getCatalogUniversities);
+router.get('/universities', requireAdminOnly, validate(adminValidator.catalogUniversitiesQuerySchema, 'query'), adminController.getCatalogUniversities);
 router.post('/universities', requireAdminOnly, validate(adminValidator.createCatalogUniversitySchema.shape.body, 'body'), adminController.createCatalogUniversity);
-router.get('/universities/:id', validateObjectId('id'), adminController.getCatalogUniversity);
+router.get('/universities/:id', requireAdminOnly, validateObjectId('id'), adminController.getCatalogUniversity);
 router.patch('/universities/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateCatalogUniversitySchema.shape.body, 'body'), adminController.updateCatalogUniversity);
 router.delete('/universities/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteCatalogUniversity);
-router.get('/global-faculties', adminController.getGlobalFaculties);
+router.get('/global-faculties', requireAdminOnly, adminController.getGlobalFaculties);
 router.post('/global-faculties', requireAdminOnly, validate(adminValidator.createGlobalFacultySchema.shape.body, 'body'), adminController.createGlobalFaculty);
 router.patch('/global-faculties/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateGlobalFacultySchema.shape.body, 'body'), adminController.updateGlobalFaculty);
 router.delete('/global-faculties/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteGlobalFaculty);
-router.get('/university-requests', adminController.getUniversityVerificationRequests);
+router.get('/university-requests', requireAdminOnly, adminController.getUniversityVerificationRequests);
 router.post('/university-requests/:id/approve', requireAdminOnly, validateObjectId('id'), adminController.approveUniversityRequest);
 router.post('/university-requests/:id/reject', requireAdminOnly, validateObjectId('id'), adminController.rejectUniversityRequest);
-router.get('/scholarships', adminController.getScholarships);
-router.get('/logs', validate(adminValidator.logsQuerySchema, 'query'), adminController.getLogs);
-router.get('/health', adminController.getHealth);
+router.get('/scholarships', requireAdminOnly, adminController.getScholarships);
+router.get('/logs', requireAdminOnly, validate(adminValidator.logsQuerySchema, 'query'), adminController.getLogs);
+router.get('/health', requireAdminOnly, adminController.getHealth);
 
-router.get('/subscriptions', validate(adminValidator.subscriptionsQuerySchema, 'query'), adminController.getSubscriptions);
-router.get('/subscriptions/:userId', validateObjectId('userId'), adminController.getSubscriptionByUser);
+router.get('/subscriptions', requireAdminOnly, validate(adminValidator.subscriptionsQuerySchema, 'query'), adminController.getSubscriptions);
+router.get('/subscriptions/:userId', requireAdminOnly, validateObjectId('userId'), adminController.getSubscriptionByUser);
 router.patch('/subscriptions/:userId', requireAdminOnly, validateObjectId('userId'), validate(adminValidator.updateSubscriptionSchema.shape.body, 'body'), adminController.updateSubscription);
 
-router.get('/tickets', validate(adminValidator.ticketsQuerySchema, 'query'), adminController.getTickets);
-router.get('/tickets/:id', validateObjectId('id'), adminController.getTicket);
+router.get('/tickets', requireAdminOnly, validate(adminValidator.ticketsQuerySchema, 'query'), adminController.getTickets);
+router.get('/tickets/:id', requireAdminOnly, validateObjectId('id'), adminController.getTicket);
 router.patch('/tickets/:id/status', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateTicketStatusSchema.shape.body, 'body'), adminController.updateTicketStatus);
 router.post('/tickets/:id/reply', requireAdminOnly, validateObjectId('id'), validate(adminValidator.addTicketReplySchema.shape.body, 'body'), adminController.addTicketReply);
 router.get(
@@ -270,22 +270,22 @@ router.get(
 router.get('/documents/pending', requireAdminOnly, adminController.getPendingDocuments);
 router.patch('/documents/:id/review', requireAdminOnly, validateObjectId('id'), validate(adminValidator.reviewDocumentSchema.shape.body, 'body'), adminController.reviewDocument);
 
-router.get('/offers', validate(adminValidator.offersQuerySchema, 'query'), adminController.getOffers);
+router.get('/offers', requireAdminOnly, validate(adminValidator.offersQuerySchema, 'query'), adminController.getOffers);
 router.patch('/offers/:id/status', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateOfferStatusSchema.shape.body, 'body'), adminController.updateOfferStatus);
 router.get('/interests', validate(adminValidator.interestsQuerySchema, 'query'), adminController.getInterests);
 router.patch('/interests/:id/status', requireAdminOnly, validateUniversityId('id'), validate(adminValidator.updateInterestStatusSchema.shape.body, 'body'), adminController.updateInterestStatus);
 router.post('/interests/:id/open-chat', requireAdminOnly, validateUniversityId('id'), adminController.openInterestChat);
-router.get('/chats', validate(adminValidator.chatsQuerySchema, 'query'), adminController.getChats);
-router.get('/chats/:id/messages', validateObjectId('id'), validate(adminValidator.chatMessagesQuerySchema, 'query'), adminController.getChatMessages);
+router.get('/chats', requireAdminOnly, validate(adminValidator.chatsQuerySchema, 'query'), adminController.getChats);
+router.get('/chats/:id/messages', requireAdminOnly, validateObjectId('id'), validate(adminValidator.chatMessagesQuerySchema, 'query'), adminController.getChatMessages);
 router.post('/chats/:id/messages', requireAdminOnly, validateObjectId('id'), validate(adminValidator.sendChatMessageSchema.shape.body, 'body'), adminController.sendChatMessage);
 router.delete('/chats/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteChat);
 router.post('/telegram/send', requireAdminOnly, validate(adminValidator.sendTelegramMessageSchema.shape.body, 'body'), adminController.sendTelegramMessage);
 
-router.get('/investors', adminController.getInvestors);
+router.get('/investors', requireAdminOnly, adminController.getInvestors);
 router.post('/investors', requireAdminOnly, validate(adminValidator.createInvestorSchema.shape.body, 'body'), adminController.createInvestor);
 router.delete('/investors/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteInvestor);
 
-router.get('/landing-certificates', adminController.listLandingCertificates);
+router.get('/landing-certificates', requireAdminOnly, adminController.listLandingCertificates);
 router.post('/landing-certificates', requireAdminOnly, validate(adminValidator.createLandingCertificateSchema.shape.body, 'body'), adminController.createLandingCertificate);
 router.patch('/landing-certificates/:id', requireAdminOnly, validateObjectId('id'), validate(adminValidator.updateLandingCertificateSchema.shape.body, 'body'), adminController.updateLandingCertificate);
 router.delete('/landing-certificates/:id', requireAdminOnly, validateObjectId('id'), adminController.deleteLandingCertificate);

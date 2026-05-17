@@ -13,10 +13,11 @@ const HEADER = "x-act-as-university";
  * Rewrites `req.user.id` / `req.user.role` to the target university for downstream handlers.
  * Real delegate id is stored on `req.universityDelegation`.
  */
-export async function resolveUniversityActAs(
+async function resolveUniversityActAsInternal(
   req: Request,
   _res: Response,
   next: NextFunction,
+  requireHeader: boolean,
 ): Promise<void> {
   try {
     if (!req.user) {
@@ -39,6 +40,10 @@ export async function resolveUniversityActAs(
       req.get(HEADER) ??
       (typeof req.headers[HEADER] === "string" ? req.headers[HEADER] : "");
     const actAs = String(raw ?? "").trim();
+    if (!actAs && !requireHeader) {
+      next();
+      return;
+    }
     if (!mongoose.Types.ObjectId.isValid(actAs)) {
       next(
         new AppError(
@@ -83,6 +88,29 @@ export async function resolveUniversityActAs(
       next(new AppError(404, "University not found", ErrorCodes.NOT_FOUND));
       return;
     }
+    if (delegateRole === "university_multi_manager") {
+      const assignedRawIds = (
+        (delegate as { managedUniversityUserIds?: unknown[] })
+          .managedUniversityUserIds ?? []
+      )
+        .map((id) => String(id).trim())
+        .filter((id) => mongoose.Types.ObjectId.isValid(id));
+      const assignedUserIds = new Set<string>();
+      for (const assignedId of assignedRawIds) {
+        const assignedUserId = await resolveActAsUniversityUserId(assignedId);
+        if (assignedUserId) assignedUserIds.add(assignedUserId);
+      }
+      if (!assignedUserIds.has(resolvedUniversityUserId)) {
+        next(
+          new AppError(
+            403,
+            "This university is not assigned to the multi-university manager",
+            ErrorCodes.FORBIDDEN,
+          ),
+        );
+        return;
+      }
+    }
 
     const managerUserId = req.user.id;
     req.universityDelegation = { managerUserId };
@@ -94,4 +122,20 @@ export async function resolveUniversityActAs(
   } catch (e) {
     next(e);
   }
+}
+
+export async function resolveUniversityActAs(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  return resolveUniversityActAsInternal(req, res, next, true);
+}
+
+export async function resolveUniversityActAsIfPresent(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  return resolveUniversityActAsInternal(req, res, next, false);
 }

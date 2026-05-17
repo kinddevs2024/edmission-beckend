@@ -5,6 +5,7 @@
 
 import mongoose from 'mongoose';
 import type { Role } from '../../types/role';
+import { isUniversityLikeRole } from '../../types/role';
 import * as searchService from '../../services/search.service';
 import * as studentService from '../../services/student.service';
 import { UniversityProfile, StudentProfile, Program, Interest, Offer, Recommendation, Scholarship } from '../../models';
@@ -233,7 +234,7 @@ async function runSearchStudents(
   userId: string,
   role: Role
 ): Promise<string> {
-  if (role !== 'university' && role !== 'admin' && role !== 'school_counsellor') {
+  if (!isUniversityLikeRole(role) && role !== 'admin' && role !== 'school_counsellor') {
     return 'This tool is only available for universities.';
   }
 
@@ -310,7 +311,7 @@ async function runSearchPrograms(
 }
 
 async function runGetStudentDetails(studentId: string, role: Role): Promise<string> {
-  if (role !== 'university' && role !== 'admin' && role !== 'school_counsellor') {
+  if (!isUniversityLikeRole(role) && role !== 'admin' && role !== 'school_counsellor') {
     return 'This tool is only available for universities.';
   }
   if (!studentId) return 'studentId is required.';
@@ -420,7 +421,7 @@ async function runGetRecommendations(
       .join('\n');
   }
 
-  if (role === 'university' || role === 'school_counsellor') {
+  if (isUniversityLikeRole(role) || role === 'school_counsellor') {
     const profile = await UniversityProfile.findOne({ userId }).select('_id').lean();
     if (!profile) return 'University profile not found.';
     const filter: Record<string, unknown> = { universityId: (profile as { _id: unknown })._id };
@@ -684,7 +685,7 @@ export function getOpenAIToolsDefinitions(role: Role): Array<{ type: 'function';
     });
   }
 
-  if (role === 'university' || role === 'admin' || role === 'school_counsellor') {
+  if (isUniversityLikeRole(role) || role === 'admin' || role === 'school_counsellor') {
     tools.push({
       type: 'function',
       function: {

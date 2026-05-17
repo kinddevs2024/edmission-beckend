@@ -16,7 +16,7 @@ export function requireRole(...allowedRoles: Role[]) {
   };
 }
 
-/** Allow only admin (used for write operations; school_counsellor is read-only). */
+/** Allow only platform admins for full administrative operations. */
 export function requireAdminOnly(req: Request, _res: Response, next: NextFunction): void {
   if (!req.user) {
     next(new AppError(401, 'Authorization required', ErrorCodes.UNAUTHORIZED));

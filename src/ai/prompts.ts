@@ -1,4 +1,5 @@
 import type { Role } from '../types/role';
+import { isUniversityLikeRole } from '../types/role';
 import { getSiteStructure } from './siteStructure';
 
 export function getSystemPrompt(role: Role, context: string): string {
@@ -31,7 +32,7 @@ ${context}
 ---`;
   }
 
-  if (role === 'university') {
+  if (isUniversityLikeRole(role)) {
     return `${base}
 
 You have access to this university's profile, pipeline, and platform student aggregates (by country) in the context. Use it to:

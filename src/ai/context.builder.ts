@@ -7,6 +7,7 @@ import {
   Scholarship,
 } from '../models';
 import type { Role } from '../types/role';
+import { isUniversityLikeRole } from '../types/role';
 
 /** Max number of universities to include in student context (name list). */
 const MAX_UNIVERSITIES_IN_CONTEXT = 60;
@@ -15,7 +16,7 @@ export async function buildContext(userId: string, role: Role): Promise<string> 
   if (role === 'student') {
     return buildStudentContext(userId);
   }
-  if (role === 'university') {
+  if (isUniversityLikeRole(role)) {
     return buildUniversityContext(userId);
   }
   if (role === 'admin') return 'You are an admin. Limited context for AI.';
