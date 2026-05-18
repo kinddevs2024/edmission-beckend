@@ -552,28 +552,9 @@ export async function getUniversities(
     .slice()
     .sort((left, right) => compareUniversities(left, right, query.sort));
 
-  let visibleUniversities: Array<SearchableUniversityItem & { isSuitable?: boolean }>;
-  if (!useProfileFilters) {
-    // Explicit "no profile filters" mode should expose the full catalog (subject only to explicit query filters).
-    visibleUniversities = sortedMerged;
-  } else {
-    const strictMatches = sortedMerged.filter((item) => item.isSuitable);
-
-    /** When nothing passes isSuitable, still show a short ranked list (explore UI expects ~6 cards). */
-    const FALLBACK_UNIVERSITIES_CAP = 6;
-    const fallbackMatches = merged
-      .slice()
-      .sort((left, right) =>
-        compareFallbackUniversities(
-          left as Record<string, unknown>,
-          right as Record<string, unknown>,
-          profileObject as Record<string, unknown>
-        )
-      )
-      .slice(0, FALLBACK_UNIVERSITIES_CAP);
-
-    visibleUniversities = strictMatches.length > 0 ? strictMatches : fallbackMatches;
-  }
+  const visibleUniversities: Array<SearchableUniversityItem & { isSuitable?: boolean }> = useProfileFilters
+    ? sortedMerged.filter((item) => item.isSuitable)
+    : sortedMerged;
 
   const total = visibleUniversities.length;
   const dataWithCount = visibleUniversities
@@ -1476,9 +1457,6 @@ export async function waitOnOffer(userId: string, offerId: string) {
 const RECOMMENDATIONS_LIMIT = 5;
 /** Load enough rows to score so we can return 3+ after isSuitable filtering (was capped at 5 total). */
 const RECOMMENDATIONS_FETCH_POOL = 24;
-/** Dashboard grid expects 3 cards; pad with next-best matches if fewer pass isSuitable. */
-const RECOMMENDATIONS_MIN_FOR_DASHBOARD = 3;
-
 export async function getRecommendations(userId: string) {
   const profile = await ensureStudentProfile(userId);
   const profileObject = profile.toObject ? profile.toObject() : profile;
@@ -1579,26 +1557,16 @@ export async function getRecommendations(userId: string) {
   };
 
   const suitableRecommendations = scored.filter((item) => item.isSuitable);
-  if (suitableRecommendations.length > 0) {
-    const merged: typeof scored = [];
-    const seen = new Set<string>();
-    const pushUnique = (items: typeof scored) => {
-      for (const row of items) {
-        if (merged.length >= RECOMMENDATIONS_LIMIT) return;
-        const key = getRecUniversityKey(row);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        merged.push(row);
-      }
-    };
-    pushUnique(suitableRecommendations);
-    if (merged.length < RECOMMENDATIONS_MIN_FOR_DASHBOARD) {
-      pushUnique(scored);
-    }
-    return merged;
+  const merged: typeof scored = [];
+  const seen = new Set<string>();
+  for (const row of suitableRecommendations) {
+    if (merged.length >= RECOMMENDATIONS_LIMIT) break;
+    const key = getRecUniversityKey(row);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
   }
-
-  return scored.slice(0, Math.min(RECOMMENDATIONS_LIMIT, 3));
+  return merged;
 }
 
 export async function getCompare(userId: string, ids: unknown[]) {
