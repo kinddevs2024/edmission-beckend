@@ -113,6 +113,27 @@ export async function getStudentUniversities(req: Request, res: Response, next: 
   }
 }
 
+export async function getUniversitiesForAllStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+    const query = (req.query && typeof req.query === 'object') ? req.query : {};
+    const data = await counsellorService.getUniversitiesForAllStudents(req.user.id, {
+      page: parseQueryNumber(query.page),
+      limit: parseQueryNumber(query.limit),
+      country: typeof query.country === 'string' ? query.country : undefined,
+      city: typeof query.city === 'string' ? query.city : undefined,
+      hasScholarship: query.hasScholarship === '1' || query.hasScholarship === 'true' ? true : undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+
 export async function getStudentUniversityById(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {

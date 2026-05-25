@@ -1,4 +1,4 @@
-import { Chat, Message, StudentProfile, UniversityCatalog, UniversityProfile } from '../models';
+import { Chat, Message, StudentProfile, UniversityCatalog, UniversityProfile, User } from '../models';
 import { isUniversityLikeRole } from '../types/role';
 import { safeRegExp } from '../utils/validators';
 
@@ -20,6 +20,14 @@ export interface SearchStudentItem {
   city?: string;
 }
 
+export interface SearchUserItem {
+  id: string;
+  email: string;
+  name?: string;
+  role: string;
+  phone?: string;
+}
+
 export interface SearchChatMessageItem {
   id: string;
   chatId: string;
@@ -35,6 +43,7 @@ export interface SearchPageItem {
 export interface SearchResult {
   universities: SearchUniversityItem[];
   students: SearchStudentItem[];
+  users?: SearchUserItem[];
   chatMessages: SearchChatMessageItem[];
 }
 
@@ -98,6 +107,32 @@ export async function searchStudents(q: string): Promise<SearchStudentItem[]> {
   }));
 }
 
+export async function searchUsers(q: string): Promise<SearchUserItem[]> {
+  const trimmed = q?.trim();
+  if (!trimmed) return [];
+
+  const re = safeRegExp(trimmed);
+  const list = await User.find({
+    $or: [
+      { email: re },
+      { name: re },
+      { phone: re },
+      { role: re },
+    ],
+  })
+    .select('email name role phone')
+    .limit(SEARCH_LIMIT)
+    .lean();
+
+  return list.map((u) => ({
+    id: String((u as { _id: unknown })._id),
+    email: String((u as { email?: string }).email ?? ''),
+    name: (u as { name?: string }).name || undefined,
+    role: String((u as { role?: string }).role ?? ''),
+    phone: (u as { phone?: string }).phone || undefined,
+  }));
+}
+
 export async function searchChatMessages(userId: string, q: string): Promise<SearchChatMessageItem[]> {
   const trimmed = q?.trim();
   if (!trimmed) return [];
@@ -131,7 +166,7 @@ export async function searchChatMessages(userId: string, q: string): Promise<Sea
 
 export async function globalSearch(q: string, role: string, userId?: string): Promise<SearchResult> {
   const trimmed = q?.trim();
-  if (!trimmed) return { universities: [], students: [], chatMessages: [] };
+  if (!trimmed) return { universities: [], students: [], users: [], chatMessages: [] };
 
   const isStudent = role === 'student';
   const isUniversity = isUniversityLikeRole(role);
@@ -140,11 +175,12 @@ export async function globalSearch(q: string, role: string, userId?: string): Pr
 
   const chatPromise = (isStudent || isUniversity) && userId ? searchChatMessages(userId, trimmed) : Promise.resolve([]);
 
-  const [universities, students, chatMessages] = await Promise.all([
+  const [universities, students, users, chatMessages] = await Promise.all([
     isStudent || isUniversity || isAdmin ? searchUniversities(trimmed) : [],
-    isUniversity || isAdmin || isSchool ? searchStudents(trimmed) : [],
+    isUniversity || isSchool ? searchStudents(trimmed) : [],
+    isAdmin ? searchUsers(trimmed) : Promise.resolve([]),
     chatPromise,
   ]);
 
-  return { universities, students, chatMessages };
+  return { universities, students, users, chatMessages };
 }

@@ -33,6 +33,7 @@ async function copyCatalogChildren(catalog: Record<string, unknown>, profileId: 
       name: s.name,
       coveragePercent: s.coveragePercent,
       maxSlots: s.maxSlots,
+      remainingSlots: s.maxSlots,
       deadline: s.deadline,
       eligibility: s.eligibility,
     });

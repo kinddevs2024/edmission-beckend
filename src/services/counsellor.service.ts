@@ -864,6 +864,66 @@ export async function getStudentUniversities(
   return getUniversities(studentUserId, query);
 }
 
+/** List universities matching any of the students linked to this counsellor. */
+export async function getUniversitiesForAllStudents(
+  counsellorUserId: string,
+  query: {
+    page?: number;
+    limit?: number;
+    country?: string;
+    city?: string;
+    hasScholarship?: boolean;
+  },
+) {
+  const students = await StudentProfile.find({
+    counsellorUserId: new mongoose.Types.ObjectId(counsellorUserId),
+  }).select("userId").lean();
+
+  const studentUserIds = students.map((s) => String((s as { userId?: unknown }).userId)).filter(Boolean);
+  const { getUniversities } = await import("./student.service");
+
+  const allResults = await Promise.all(
+    studentUserIds.map((studentUserId) =>
+      getUniversities(studentUserId, {
+        ...query,
+        useProfileFilters: true,
+        page: 1,
+        limit: 1000,
+      }).catch((err) => {
+        console.error(`Error fetching universities for student ${studentUserId}:`, err);
+        return { data: [] };
+      })
+    )
+  );
+
+  const seenIds = new Set<string>();
+  const mergedData: any[] = [];
+  for (const result of allResults) {
+    if (result?.data) {
+      for (const uni of result.data) {
+        if (!seenIds.has(String(uni.id))) {
+          seenIds.add(String(uni.id));
+          mergedData.push(uni);
+        }
+      }
+    }
+  }
+
+  const page = Math.max(1, query.page || 1);
+  const limit = Math.min(500, Math.max(1, query.limit || 20));
+  const skip = (page - 1) * limit;
+  const slicedData = mergedData.slice(skip, skip + limit);
+
+  return {
+    data: slicedData,
+    total: mergedData.length,
+    page,
+    limit,
+    totalPages: Math.ceil(mergedData.length / limit),
+  };
+}
+
+
 /** Get university details for a linked student. */
 export async function getStudentUniversityById(
   counsellorUserId: string,

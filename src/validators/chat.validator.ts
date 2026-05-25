@@ -21,7 +21,7 @@ export const sendMessageSchema = z.object({
   body: z.object({
     text: z.string().max(4000).optional(),
     type: z.enum(['text', 'voice', 'emotion']).optional(),
-    attachmentUrl: z.string().url().max(2048).optional(),
+    attachmentUrl: z.string().max(2048).optional(),
     metadata: z.record(z.unknown()).optional(),
   }),
 });

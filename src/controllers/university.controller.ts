@@ -78,6 +78,7 @@ export async function getStudents(req: Request, res: Response, next: NextFunctio
       verifiedOnly,
       hasPortfolio,
       useProfileFilters,
+      mapOnly,
     } = req.query;
     const useProfile = useProfileFilters === undefined || useProfileFilters === '1' || useProfileFilters === 'true';
     const toArray = (v: unknown): string[] =>
@@ -119,6 +120,7 @@ export async function getStudents(req: Request, res: Response, next: NextFunctio
       verifiedOnly: toBoolean(verifiedOnly),
       hasPortfolio: toBoolean(hasPortfolio),
       useProfileFilters: useProfile,
+      mapOnly: toBoolean(mapOnly),
     });
     res.json(data);
   } catch (e) {

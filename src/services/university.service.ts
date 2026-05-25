@@ -258,6 +258,7 @@ export async function getStudents(
     verifiedOnly?: boolean;
     hasPortfolio?: boolean;
     useProfileFilters?: boolean;
+    mapOnly?: boolean;
   }
 ) {
   const profile = await UniversityProfile.findOne({ userId });
@@ -307,21 +308,52 @@ export async function getStudents(
     });
   }
 
-  if (useProfileFilters) {
-    // Filter by university's targetStudentCountries if set
+  if (query.mapOnly) {
+    const interestDocs = await Interest.find({ universityId: profile._id }).select('studentId').lean();
+    const interestedIds = interestDocs.map((i) => i.studentId).filter(Boolean);
+
     const targetCountries = Array.isArray((profile as { targetStudentCountries?: string[] }).targetStudentCountries)
       ? ((profile as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
       : [];
-    if (targetCountries.length > 0) {
-      mergeInConstraint(filter, 'country', targetCountries);
-    }
-
-    // Filter by faculties: student interestedFaculties intersect university facultyCodes
     const facultyCodes = Array.isArray((profile as { facultyCodes?: string[] }).facultyCodes)
       ? ((profile as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean)
       : [];
+
+    const mapConditions: Record<string, unknown>[] = [];
+    mapConditions.push({ _id: { $in: interestedIds } });
+
+    const matchConditions: Record<string, unknown> = {};
+    if (targetCountries.length > 0) {
+      matchConditions.country = { $in: targetCountries };
+    }
     if (facultyCodes.length > 0) {
-      mergeInConstraint(filter, 'interestedFaculties', facultyCodes);
+      matchConditions.interestedFaculties = { $in: facultyCodes };
+    }
+
+    if (targetCountries.length > 0 || facultyCodes.length > 0) {
+      mapConditions.push(matchConditions);
+    } else {
+      mapConditions.push({});
+    }
+
+    andFilters.push({ $or: mapConditions });
+  } else {
+    if (useProfileFilters) {
+      // Filter by university's targetStudentCountries if set
+      const targetCountries = Array.isArray((profile as { targetStudentCountries?: string[] }).targetStudentCountries)
+        ? ((profile as { targetStudentCountries?: string[] }).targetStudentCountries ?? []).filter(Boolean)
+        : [];
+      if (targetCountries.length > 0) {
+        mergeInConstraint(filter, 'country', targetCountries);
+      }
+
+      // Filter by faculties: student interestedFaculties intersect university facultyCodes
+      const facultyCodes = Array.isArray((profile as { facultyCodes?: string[] }).facultyCodes)
+        ? ((profile as { facultyCodes?: string[] }).facultyCodes ?? []).filter(Boolean)
+        : [];
+      if (facultyCodes.length > 0) {
+        mergeInConstraint(filter, 'interestedFaculties', facultyCodes);
+      }
     }
   }
 

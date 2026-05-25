@@ -39,6 +39,7 @@ router.post('/students/import', (req, res, next) => {
 }, counsellorController.uploadStudentsExcel);
 router.post('/students', validate(counsellorValidator.createStudentByCounsellorSchema.shape.body, 'body'), counsellorController.createStudent);
 router.get('/students', validate(counsellorValidator.listMyStudentsQuerySchema, 'query'), counsellorController.listMyStudents);
+router.get('/students/all/universities', validate(counsellorValidator.listStudentUniversitiesQuerySchema, 'query'), counsellorController.getUniversitiesForAllStudents);
 router.get('/students/:studentUserId/universities', validateObjectId('studentUserId'), validate(counsellorValidator.listStudentUniversitiesQuerySchema, 'query'), counsellorController.getStudentUniversities);
 router.get('/students/:studentUserId/universities/:universityId', validateObjectId('studentUserId'), validateUniversityId('universityId'), counsellorController.getStudentUniversityById);
 router.get('/students/:studentUserId/universities/:universityId/flyers', validateObjectId('studentUserId'), validateUniversityId('universityId'), counsellorController.getStudentUniversityFlyers);
