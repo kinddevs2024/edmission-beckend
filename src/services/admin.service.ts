@@ -538,6 +538,8 @@ export async function getUsers(
     const rx = safeRegExp(searchRaw, "i", 100);
     const numericSearch = Number(searchRaw);
     const hasNumericSearch = Number.isFinite(numericSearch);
+
+    const words = searchRaw.split(/\s+/).filter(Boolean);
     const studentProfileOr: Record<string, unknown>[] = [
       { firstName: rx },
       { lastName: rx },
@@ -555,6 +557,16 @@ export async function getUsers(
       { preferredCountries: rx },
       { budgetCurrency: rx },
     ];
+
+    if (words.length >= 2) {
+      const rx1 = safeRegExp(words[0], "i", 100);
+      const rx2 = safeRegExp(words[1], "i", 100);
+      studentProfileOr.push(
+        { $and: [{ firstName: rx1 }, { lastName: rx2 }] },
+        { $and: [{ firstName: rx2 }, { lastName: rx1 }] }
+      );
+    }
+
     const universityProfileOr: Record<string, unknown>[] = [
       { universityName: rx },
       { tagline: rx },
@@ -609,6 +621,28 @@ export async function getUsers(
           Boolean(id) && mongoose.Types.ObjectId.isValid(String(id)),
       )
       .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+    const searchLower = searchRaw.toLowerCase();
+    const matchedRoles: string[] = [];
+    if (searchLower.includes('админ') || searchLower.includes('admin')) {
+      matchedRoles.push('admin');
+    }
+    if (searchLower.includes('студент') || searchLower.includes('student') || searchLower.includes('talaba')) {
+      matchedRoles.push('student');
+    }
+    if (searchLower.includes('универ') || searchLower.includes('university') || searchLower.includes('вуз') || searchLower.includes('universitet')) {
+      matchedRoles.push('university');
+    }
+    if (searchLower.includes('куратор') || searchLower.includes('counsellor') || searchLower.includes('school_counsellor') || searchLower.includes('kurator')) {
+      matchedRoles.push('school_counsellor');
+    }
+    if (searchLower.includes('координатор') || searchLower.includes('coordinator')) {
+      matchedRoles.push('counsellor_coordinator');
+    }
+    if (searchLower.includes('менеджер') || searchLower.includes('manager')) {
+      matchedRoles.push('manager', 'university_multi_manager');
+    }
+
     const orClause: Record<string, unknown>[] = [
       { email: rx },
       { name: rx },
@@ -619,13 +653,21 @@ export async function getUsers(
       { "telegram.username": rx },
       { "telegram.phone": rx },
     ];
+    if (matchedRoles.length > 0) {
+      orClause.push({ role: { $in: matchedRoles } });
+    }
     if (mongoose.Types.ObjectId.isValid(searchRaw)) {
       orClause.push({ _id: new mongoose.Types.ObjectId(searchRaw) });
     }
     if (userIdsFromProfiles.length) {
       orClause.push({ _id: { $in: userIdsFromProfiles } });
     }
-    where = { $and: [baseWhere, { $or: orClause }] };
+    
+    if (Object.keys(baseWhere).length > 0) {
+      where = { $and: [baseWhere, { $or: orClause }] };
+    } else {
+      where = { $or: orClause };
+    }
   }
 
   const [list, total] = await Promise.all([
