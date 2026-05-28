@@ -26,6 +26,7 @@ import {
   GlobalFaculty,
   Program,
   StudentDocument,
+  StudentIssuedDocument,
   Investor,
   LandingCertificate,
   SiteVisit,
@@ -209,7 +210,13 @@ export async function getDashboard() {
     await Promise.all([
       User.countDocuments(),
       UniversityProfile.countDocuments(),
-      Offer.countDocuments({ status: "pending" }),
+      (async () => {
+        const [offersCount, docsCount] = await Promise.all([
+          Offer.countDocuments({ status: "pending" }),
+          StudentIssuedDocument.countDocuments({ status: { $in: ["sent", "viewed", "postponed"] } }),
+        ]);
+        return offersCount + docsCount;
+      })(),
       UniversityProfile.countDocuments({ verified: false }),
       StudentDocument.countDocuments({ status: "pending" }),
       Subscription.aggregate([
@@ -2219,14 +2226,90 @@ export async function listOffers(query: {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(100, Math.max(1, query.limit || 20));
   const skip = (page - 1) * limit;
-  const where: Record<string, unknown> = {};
-  if (query.status) where.status = query.status;
-  const [list, total] = await Promise.all([
-    Offer.find(where).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-    Offer.countDocuments(where),
+
+  const offerWhere: Record<string, any> = {};
+  const docWhere: Record<string, any> = { type: { $in: ['offer', 'scholarship'] } };
+
+  if (query.status === 'pending') {
+    offerWhere.status = 'pending';
+    docWhere.status = { $in: ['sent', 'viewed', 'postponed'] };
+  } else if (query.status === 'accepted') {
+    offerWhere.status = 'accepted';
+    docWhere.status = 'accepted';
+  } else if (query.status === 'declined') {
+    offerWhere.status = 'declined';
+    docWhere.status = { $in: ['declined', 'revoked', 'expired'] };
+  } else if (query.status) {
+    offerWhere.status = query.status;
+    docWhere.status = query.status;
+  }
+
+  const [offersList, docsList] = await Promise.all([
+    Offer.find(offerWhere)
+      .populate('studentId')
+      .populate('universityId')
+      .lean(),
+    StudentIssuedDocument.find(docWhere)
+      .populate('studentId')
+      .populate('universityId')
+      .lean()
   ]);
+
+  const mappedOffers = offersList.map((o: any) => ({
+    id: String(o._id),
+    studentId: o.studentId?._id ? String(o.studentId._id) : String(o.studentId),
+    universityId: o.universityId?._id ? String(o.universityId._id) : String(o.universityId),
+    studentName: o.studentId ? [o.studentId.firstName, o.studentId.lastName].filter(Boolean).join(' ') : 'Unknown Student',
+    universityName: o.universityId?.universityName ?? 'Unknown University',
+    coveragePercent: o.coveragePercent ?? 0,
+    status: o.status,
+    createdAt: o.createdAt ? new Date(o.createdAt).toISOString() : undefined,
+  }));
+
+  const mappedDocs = docsList.map((d: any) => {
+    let offerStatus: 'pending' | 'accepted' | 'declined' = 'pending';
+    if (d.status === 'accepted') offerStatus = 'accepted';
+    else if (['declined', 'revoked', 'expired'].includes(d.status)) offerStatus = 'declined';
+
+    let coveragePercent = 0;
+    if (d.renderedPayload?.scholarship?.coveragePercent != null) {
+      coveragePercent = Number(d.renderedPayload.scholarship.coveragePercent);
+    } else if (d.renderedPayload?.coveragePercent != null) {
+      coveragePercent = Number(d.renderedPayload.coveragePercent);
+    }
+
+    return {
+      id: String(d._id),
+      studentId: d.studentId?._id ? String(d.studentId._id) : String(d.studentId),
+      universityId: d.universityId?._id ? String(d.universityId._id) : String(d.universityId),
+      studentName: d.studentId ? [d.studentId.firstName, d.studentId.lastName].filter(Boolean).join(' ') : 'Unknown Student',
+      universityName: d.universityId?.universityName ?? 'Unknown University',
+      coveragePercent,
+      status: offerStatus,
+      createdAt: d.createdAt ? new Date(d.createdAt).toISOString() : undefined,
+      pdfUrl: d.pdfUrl,
+      previewImageUrl: d.previewImageUrl,
+      title: d.title,
+      isDocument: true,
+      documentType: d.type,
+      resolvedCanvasJson: d.resolvedCanvasJson,
+      pageFormat: d.pageFormat,
+      width: d.width,
+      height: d.height,
+    };
+  });
+
+  const combined = [...mappedOffers, ...mappedDocs].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return timeB - timeA;
+  });
+
+  const total = combined.length;
+  const paginated = combined.slice(skip, skip + limit);
+
   return {
-    data: list.map((o) => ({ ...o, id: String((o as { _id: unknown })._id) })),
+    data: paginated,
     total,
     page,
     limit,
@@ -2238,13 +2321,25 @@ export async function updateOfferStatus(
   offerId: string,
   status: "pending" | "accepted" | "declined",
 ) {
-  const updated = await Offer.findByIdAndUpdate(
+  let updated = await Offer.findByIdAndUpdate(
     offerId,
     { status },
-    { new: true },
+    { new: true }
   ).lean();
-  if (!updated)
-    throw new AppError(404, "Offer not found", ErrorCodes.NOT_FOUND);
+
+  if (!updated) {
+    const docStatus = status === 'pending' ? 'sent' : status;
+    const updatedDoc = await StudentIssuedDocument.findByIdAndUpdate(
+      offerId,
+      { status: docStatus },
+      { new: true }
+    ).lean();
+    if (!updatedDoc) {
+      throw new AppError(404, "Offer not found", ErrorCodes.NOT_FOUND);
+    }
+    return { ...updatedDoc, id: String(updatedDoc._id), status };
+  }
+
   return { ...updated, id: String((updated as { _id: unknown })._id) };
 }
 
