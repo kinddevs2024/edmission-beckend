@@ -24,7 +24,10 @@ type NotificationRecord = {
   [key: string]: unknown;
 };
 
-function localizeNotificationRecord<T extends NotificationRecord>(notification: T, locale: ApiLocale): T {
+function localizeNotificationRecord<T extends NotificationRecord>(
+  notification: T,
+  locale: ApiLocale,
+): T {
   const next = { ...notification };
   if (typeof next.title === 'string') {
     next.title = translateRuntimeText(next.title, locale);
@@ -38,7 +41,7 @@ function localizeNotificationRecord<T extends NotificationRecord>(notification: 
 export async function getNotifications(
   userId: string,
   query: { page?: number; limit?: number; type?: string; unread?: boolean },
-  locale: ApiLocale = 'en'
+  locale: ApiLocale = 'en',
 ) {
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(50, Math.max(1, query.limit || 20));
@@ -58,7 +61,9 @@ export async function getNotifications(
   ]);
 
   return {
-    data: data.map((n) => localizeNotificationRecord({ ...n, id: String((n as { _id: unknown })._id) }, locale)),
+    data: data.map((n) =>
+      localizeNotificationRecord({ ...n, id: String((n as { _id: unknown })._id) }, locale),
+    ),
     total,
     page,
     limit,
@@ -67,7 +72,11 @@ export async function getNotifications(
 }
 
 /** Last N notifications for Telegram bot (plain text lines). */
-export async function getRecentNotificationsForBot(userId: string, limit: number = 5, locale: ApiLocale = 'en') {
+export async function getRecentNotificationsForBot(
+  userId: string,
+  limit: number = 5,
+  locale: ApiLocale = 'en',
+) {
   const cap = Math.min(10, Math.max(1, limit));
   const rows = await Notification.find({ userId })
     .sort({ createdAt: -1 })
@@ -75,16 +84,16 @@ export async function getRecentNotificationsForBot(userId: string, limit: number
     .lean();
   return rows.map((n) =>
     localizeNotificationRecord(
-      {
-        ...n,
-        id: String((n as { _id: unknown })._id),
-      },
-      locale
-    )
+      { ...n, id: String((n as { _id: unknown })._id) },
+      locale,
+    ),
   );
 }
 
-export async function createNotification(userId: string, params: CreateNotificationParams) {
+export async function createNotification(
+  userId: string,
+  params: CreateNotificationParams,
+) {
   const doc = await Notification.create({
     userId,
     type: params.type,
@@ -103,7 +112,7 @@ export async function createNotification(userId: string, params: CreateNotificat
     params.referenceId,
     params.referenceType,
     params.metadata,
-    recipientRole
+    recipientRole,
   );
   const locale = ((recipient as { language?: ApiLocale } | null)?.language ?? 'en') as ApiLocale;
   const localizedPayload = localizeNotificationRecord(
@@ -118,7 +127,7 @@ export async function createNotification(userId: string, params: CreateNotificat
       metadata: params.metadata,
       createdAt: (plain as { createdAt?: Date }).createdAt,
     },
-    locale
+    locale,
   );
 
   const io = getIO();
@@ -126,6 +135,7 @@ export async function createNotification(userId: string, params: CreateNotificat
     io.to(`user:${userId}`).emit('notification', localizedPayload);
   }
 
+  // Send expo push notification
   void sendExpoPushToUser(userId, {
     title: String(localizedPayload.title ?? ''),
     body: String(localizedPayload.body ?? ''),
@@ -135,8 +145,10 @@ export async function createNotification(userId: string, params: CreateNotificat
       link: link ?? undefined,
     },
   });
+
+  // Send Telegram message for non‑message notifications
   if (params.type !== 'message') {
-    void sendTelegramToUser(userId, {
+    void sendTelegramMessage(userId, {
       title: String(localizedPayload.title ?? ''),
       body: String(localizedPayload.body ?? ''),
       link: typeof localizedPayload.link === 'string' ? localizedPayload.link : undefined,
@@ -157,7 +169,7 @@ export async function registerExpoPushToken(userId: string, token: string) {
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
   type TokenRow = { token: string; updatedAt: Date };
   const existing = ((user as { expoPushTokens?: TokenRow[] }).expoPushTokens ?? []).filter(
-    (t) => t.token !== trimmed
+    (t) => t.token !== trimmed,
   );
   existing.push({ token: trimmed, updatedAt: new Date() });
   const next = existing.slice(-MAX_EXPO_PUSH_TOKENS);
@@ -168,7 +180,7 @@ export async function registerExpoPushToken(userId: string, token: string) {
 
 async function sendExpoPushToUser(
   userId: string,
-  payload: { title: string; body: string; data: Record<string, unknown> }
+  payload: { title: string; body: string; data: Record<string, unknown> },
 ) {
   if (!payload.title && !payload.body) return;
   const doc = await User.findById(userId).select('expoPushTokens').lean();
@@ -197,60 +209,48 @@ async function sendExpoPushToUser(
         console.warn('[push] Expo send failed', res.status, text);
       }
     } catch (e) {
-      console.warn('[push] Expo send error', e);
+      console.error('Expo push error', e);
     }
   }
 }
 
-async function sendTelegramToUser(
-  userId: string,
-  payload: { title: string; body: string; link?: string }
-) {
-  const doc = await User.findById(userId).select('telegram.chatId socialLinks.telegram').lean();
-  const chatId =
-    (doc as { telegram?: { chatId?: string } } | null)?.telegram?.chatId
-    || (doc as { socialLinks?: { telegram?: string } } | null)?.socialLinks?.telegram
-    || '';
-  const normalized = String(chatId).trim();
-  if (!normalized) return;
-  const normalizedLink = (() => {
-    const link = String(payload.link ?? '').trim();
-    if (!link) return '';
-    return toPublicSiteUrl(link);
-  })();
-  const text = [payload.title, payload.body, normalizedLink].filter(Boolean).join('\n');
-  if (!text.trim()) return;
-  try {
-    await sendTelegramMessage(normalized, text);
-  } catch (e) {
-    console.warn('[telegram] send failed', e);
-  }
-}
-
+// Build notification link based on type and role
 function buildNotificationLink(
   type: string,
   referenceId?: string,
-  _referenceType?: string,
-  _metadata?: Record<string, unknown>,
-  recipientRole?: string
+  referenceType?: string,
+  metadata?: Record<string, unknown>,
+  recipientRole?: string,
 ): string | null {
   switch (type) {
     case 'message':
       if (!referenceId) return null;
-      if (recipientRole === 'student') return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
-      if (recipientRole === 'university' || recipientRole === 'university_multi_manager' || recipientRole === 'multi_university_admin') return `/university/chat?chatId=${encodeURIComponent(referenceId)}`;
-      if (recipientRole === 'school_counsellor') return `/school/chats?chatId=${encodeURIComponent(referenceId)}`;
+      if (recipientRole === 'student')
+        return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
       if (
-        recipientRole === 'admin'
-        || recipientRole === 'counsellor_coordinator'
-        || recipientRole === 'manager'
+        recipientRole === 'university' ||
+        recipientRole === 'university_multi_manager' ||
+        recipientRole === 'multi_university_admin'
+      )
+        return `/university/chat?chatId=${encodeURIComponent(referenceId)}`;
+      if (recipientRole === 'school_counsellor')
+        return `/school/chats?chatId=${encodeURIComponent(referenceId)}`;
+      if (
+        recipientRole === 'admin' ||
+        recipientRole === 'counsellor_coordinator' ||
+        recipientRole === 'manager'
       ) {
         return `/admin/chats?chatId=${encodeURIComponent(referenceId)}`;
       }
       return `/student/chat?chatId=${encodeURIComponent(referenceId)}`;
     case 'offer':
       if (recipientRole === 'school_counsellor') return '/school/offers';
-      if (recipientRole === 'university' || recipientRole === 'university_multi_manager' || recipientRole === 'multi_university_admin') return '/university/documents';
+      if (
+        recipientRole === 'university' ||
+        recipientRole === 'university_multi_manager' ||
+        recipientRole === 'multi_university_admin'
+      )
+        return '/university/documents';
       return '/student/offers';
     case 'document':
       return referenceId ? `/student/received-documents/${referenceId}` : '/student/received-documents';
@@ -283,7 +283,10 @@ function buildNotificationLink(
 }
 
 /** When user opens a chat, mark all unread "message" notifications tied to that chat. */
-export async function markMessageNotificationsReadByChatId(userId: string, chatId: string): Promise<void> {
+export async function markMessageNotificationsReadByChatId(
+  userId: string,
+  chatId: string,
+): Promise<void> {
   const chatIdStr = String(chatId).trim();
   if (!chatIdStr || !mongoose.Types.ObjectId.isValid(userId)) return;
   const uid = new mongoose.Types.ObjectId(userId);
@@ -294,16 +297,27 @@ export async function markMessageNotificationsReadByChatId(userId: string, chatI
       readAt: null,
       $or: [{ referenceId: chatIdStr }, { 'metadata.chatId': chatIdStr }],
     },
-    { $set: { readAt: new Date() } }
+    { $set: { readAt: new Date() } },
   );
 }
 
-export async function markRead(userId: string, notificationId: string, locale: ApiLocale = 'en') {
+export async function markRead(
+  userId: string,
+  notificationId: string,
+  locale: ApiLocale = 'en',
+) {
   const n = await Notification.findOne({ _id: notificationId, userId });
   if (!n) throw new AppError(404, 'Notification not found', ErrorCodes.NOT_FOUND);
-  const updated = await Notification.findByIdAndUpdate(notificationId, { readAt: new Date() }, { new: true }).lean();
+  const updated = await Notification.findByIdAndUpdate(
+    notificationId,
+    { readAt: new Date() },
+    { new: true },
+  ).lean();
   return updated
-    ? localizeNotificationRecord({ ...updated, id: String((updated as { _id: unknown })._id) }, locale)
+    ? localizeNotificationRecord(
+        { ...updated, id: String((updated as { _id: unknown })._id) },
+        locale,
+      )
     : null;
 }
 
@@ -328,9 +342,12 @@ export type DeleteBulkParams = {
 const MAX_BULK_IDS = 200;
 
 export async function deleteBulk(userId: string, params: DeleteBulkParams) {
-  const filter: { userId: unknown; _id?: { $in: unknown[] }; readAt?: { $ne: null }; createdAt?: { $lt: Date } } = {
-    userId,
-  };
+  const filter: {
+    userId: unknown;
+    _id?: { $in: unknown[] };
+    readAt?: { $ne: null };
+    createdAt?: { $lt: Date };
+  } = { userId };
   if (params.ids?.length) {
     filter._id = { $in: params.ids.slice(0, MAX_BULK_IDS) };
   } else {
