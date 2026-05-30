@@ -148,11 +148,14 @@ export async function createNotification(
 
   // Send Telegram message for non‑message notifications
   if (params.type !== 'message') {
-    void sendTelegramMessage(userId, {
-      title: String(localizedPayload.title ?? ''),
-      body: String(localizedPayload.body ?? ''),
-      link: typeof localizedPayload.link === 'string' ? localizedPayload.link : undefined,
-    });
+    // Send a formatted plain‑text message to Telegram for non‑message notifications
+    const tgMessage = [
+      String(localizedPayload.title ?? ''),
+      '',
+      String(localizedPayload.body ?? ''),
+      localizedPayload.link ? `Link: ${localizedPayload.link}` : '',
+    ].filter(Boolean).join('\n');
+    void sendTelegramMessage(userId, tgMessage);
   }
 
   return { ...plain, id };
