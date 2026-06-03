@@ -153,7 +153,7 @@ export async function sendNewMessageEmail(to: string, messagePreview: string, re
   const baseUrl = getFrontendUrl();
   const path = recipientRole === 'university'
     ? '/university/chat'
-    : ['admin', 'manager', 'counsellor_coordinator', 'school_counsellor'].includes(String(recipientRole ?? ''))
+    : ['admin', 'student_admin', 'manager', 'counsellor_coordinator', 'school_counsellor'].includes(String(recipientRole ?? ''))
       ? '/admin/chats'
       : '/student/chat';
   const chatLink = `${baseUrl}${path}`;

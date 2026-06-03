@@ -57,13 +57,15 @@ type ManagementRole =
   | "admin"
   | "manager"
   | "counsellor_coordinator"
-  | "school_counsellor";
+  | "school_counsellor"
+  | "student_admin";
 type ManagedRole =
   | "student"
   | "university"
   | "university_multi_manager"
   | "multi_university_admin"
   | "admin"
+  | "student_admin"
   | "school_counsellor"
   | "counsellor_coordinator"
   | "manager";
@@ -75,17 +77,21 @@ const MANAGED_ROLES = [
   "university_multi_manager",
   "multi_university_admin",
   "admin",
+  "student_admin",
   "school_counsellor",
   "counsellor_coordinator",
   "manager",
 ] as const;
+
+const STUDENT_ADMIN_VISIBLE_ROLES = ["student"] as const;
 
 function getManagementRole(role: string | undefined): ManagementRole | null {
   if (
     role === "admin" ||
     role === "manager" ||
     role === "counsellor_coordinator" ||
-    role === "school_counsellor"
+    role === "school_counsellor" ||
+    role === "student_admin"
   ) {
     return role;
   }
@@ -96,6 +102,7 @@ function getVisibleRolesForManagementRole(
   role: ManagementRole,
 ): ReadonlyArray<string> | null {
   if (role === "admin") return null;
+  if (role === "student_admin") return STUDENT_ADMIN_VISIBLE_ROLES;
   if (role === "manager") return MANAGER_VISIBLE_ROLES;
   if (role === "counsellor_coordinator") return COORDINATOR_VISIBLE_ROLES;
   return ["school_counsellor"];
@@ -649,6 +656,14 @@ export async function getUsers(
     if (searchLower.includes('менеджер') || searchLower.includes('manager')) {
       matchedRoles.push('manager', 'university_multi_manager');
     }
+    if (
+      searchLower.includes('админ студент') ||
+      searchLower.includes('student admin') ||
+      searchLower.includes('student_admin') ||
+      searchLower.includes('talaba admin')
+    ) {
+      matchedRoles.push('student_admin');
+    }
 
     const orClause: Record<string, unknown>[] = [
       { email: rx },
@@ -848,6 +863,7 @@ export async function createUser(
       "university_multi_manager",
       "multi_university_admin",
       "admin",
+      "student_admin",
       "school_counsellor",
       "counsellor_coordinator",
       "manager",
@@ -857,6 +873,9 @@ export async function createUser(
   }
   if (actor && actor.role !== "admin") {
     assertRoleManageAllowed(actor, role);
+  }
+  if (role === "student_admin" && actor?.role !== "admin") {
+    throw new AppError(403, "Insufficient permissions", ErrorCodes.FORBIDDEN);
   }
 
   const existing = await User.findOne({ email });

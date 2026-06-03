@@ -2,7 +2,7 @@ import multer from 'multer';
 import { Router } from 'express';
 import * as adminController from '../controllers/admin.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { requireRole, requireAdminOnly, requireUserManager } from '../middlewares/rbac.middleware';
+import { requireRole, requireAdminOnly, requireUserManager, requireStudentProfileManager } from '../middlewares/rbac.middleware';
 import { validate } from '../middlewares/validate.middleware';
 import { validateObjectId, validateUniversityId } from '../middlewares/validateObjectId.middleware';
 import * as adminValidator from '../validators/admin.validator';
@@ -25,12 +25,46 @@ const uploadExcel = multer({
 });
 
 router.use(authMiddleware);
-router.use(requireRole('admin', 'counsellor_coordinator', 'manager'));
+
+const adminStaffRoles = ['admin', 'counsellor_coordinator', 'manager'] as const;
+const studentListRoles = [...adminStaffRoles, 'student_admin'] as const;
+
+router.get('/users', requireRole(...studentListRoles), validate(adminValidator.usersQuerySchema, 'query'), adminController.getUsers);
+router.get('/users/:id', requireRole(...studentListRoles), validateObjectId('id'), adminController.getUser);
+router.get('/users/:id/student-profile', requireStudentProfileManager, validateObjectId('id'), adminController.getStudentProfileByUser);
+router.patch(
+  '/users/:id/student-profile',
+  requireStudentProfileManager,
+  validateObjectId('id'),
+  validate(adminValidator.adminPatchStudentProfileBodySchema, 'body'),
+  adminController.updateStudentProfileByUser
+);
+router.get(
+  '/users/:id/student-documents',
+  requireStudentProfileManager,
+  validateObjectId('id'),
+  adminController.getStudentDocumentsByUser
+);
+router.post(
+  '/users/:id/student-documents',
+  requireStudentProfileManager,
+  validateObjectId('id'),
+  validate(counsellorValidator.addDocumentForStudentSchema.shape.body, 'body'),
+  adminController.addStudentDocumentByUser
+);
+router.delete(
+  '/users/:id/student-documents/:documentId',
+  requireStudentProfileManager,
+  validateObjectId('id'),
+  validateObjectId('documentId'),
+  adminController.deleteStudentDocumentByUser
+);
+
+router.use(requireRole(...adminStaffRoles));
 
 router.get('/dashboard', adminController.getDashboard);
 router.get('/analytics/overview', requireAdminOnly, validate(adminValidator.analyticsOverviewQuerySchema, 'query'), adminController.getAnalyticsOverview);
 router.get('/analytics/university-interests', requireAdminOnly, adminController.getUniversityInterestAnalytics);
-router.get('/users', validate(adminValidator.usersQuerySchema, 'query'), adminController.getUsers);
 router.post('/users', requireUserManager, validate(adminValidator.createUserSchema.shape.body, 'body'), adminController.createUser);
 router.get('/users/template', requireUserManager, adminController.downloadUsersTemplate);
 router.get('/users/export', adminController.downloadAllUsersExcel);
@@ -46,39 +80,10 @@ router.post('/users/import', requireUserManager, (req, res, next) => {
     next();
   });
 }, adminController.uploadUsersExcel);
-router.get('/users/:id', validateObjectId('id'), adminController.getUser);
 router.patch('/users/:id', requireUserManager, validateObjectId('id'), validate(adminValidator.updateUserSchema.shape.body, 'body'), adminController.updateUser);
 router.delete('/users/:id', requireUserManager, validateObjectId('id'), adminController.deleteUser);
 router.post('/users/:id/reset-password', requireUserManager, validateObjectId('id'), validate(adminValidator.resetPasswordSchema.shape.body, 'body'), adminController.resetUserPassword);
 router.patch('/users/:id/suspend', requireUserManager, validateObjectId('id'), validate(adminValidator.suspendUserSchema.shape.body, 'body'), adminController.suspendUser);
-router.get('/users/:id/student-profile', requireAdminOnly, validateObjectId('id'), adminController.getStudentProfileByUser);
-router.patch(
-  '/users/:id/student-profile',
-  requireAdminOnly,
-  validateObjectId('id'),
-  validate(adminValidator.adminPatchStudentProfileBodySchema, 'body'),
-  adminController.updateStudentProfileByUser
-);
-router.get(
-  '/users/:id/student-documents',
-  requireAdminOnly,
-  validateObjectId('id'),
-  adminController.getStudentDocumentsByUser
-);
-router.post(
-  '/users/:id/student-documents',
-  requireAdminOnly,
-  validateObjectId('id'),
-  validate(counsellorValidator.addDocumentForStudentSchema.shape.body, 'body'),
-  adminController.addStudentDocumentByUser
-);
-router.delete(
-  '/users/:id/student-documents/:documentId',
-  requireAdminOnly,
-  validateObjectId('id'),
-  validateObjectId('documentId'),
-  adminController.deleteStudentDocumentByUser
-);
 router.get('/users/:id/university-profile', requireAdminOnly, validateObjectId('id'), adminController.getUniversityProfileByUser);
 router.patch(
   '/users/:id/university-profile',

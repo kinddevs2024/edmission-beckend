@@ -300,7 +300,7 @@ function defaultAppPathForRole(role?: string): string {
   if (role === 'student') return '/student/dashboard';
   if (role === 'university' || role === 'university_multi_manager' || role === 'multi_university_admin') return '/university/dashboard';
   if (role === 'school_counsellor') return '/school/dashboard';
-  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/dashboard';
+  if (role === 'admin' || role === 'student_admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/dashboard';
   return config.telegram.notificationsPath;
 }
 

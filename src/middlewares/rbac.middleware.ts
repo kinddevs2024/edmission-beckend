@@ -29,6 +29,19 @@ export function requireAdminOnly(req: Request, _res: Response, next: NextFunctio
   next();
 }
 
+/** View or edit any student profile (platform admin or student admin). */
+export function requireStudentProfileManager(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.user) {
+    next(new AppError(401, 'Authorization required', ErrorCodes.UNAUTHORIZED));
+    return;
+  }
+  if (req.user.role !== 'admin' && req.user.role !== 'student_admin') {
+    next(new AppError(403, 'Insufficient permissions', ErrorCodes.FORBIDDEN));
+    return;
+  }
+  next();
+}
+
 /** Allow admin-like account managers to modify user accounts. */
 export function requireUserManager(req: Request, _res: Response, next: NextFunction): void {
   if (!req.user) {

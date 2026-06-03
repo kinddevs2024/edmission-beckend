@@ -392,7 +392,7 @@ export async function loginWithGoogle(data: GoogleAuthBody) {
   }
 
   if (user) {
-    if (['admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
+    if (['admin', 'student_admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
       throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
     }
     if (user.suspended) {
@@ -624,7 +624,7 @@ export async function loginWithApple(data: AppleAuthBody) {
   }
 
   if (user) {
-    if (['admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
+    if (['admin', 'student_admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
       throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
     }
     if (user.suspended) {
@@ -935,7 +935,7 @@ async function finalizeYandexOAuthProfile(
   }
 
   if (user) {
-    if (['admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
+    if (['admin', 'student_admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(user.role)) {
       throw new AppError(403, 'Use email and password to sign in to this account.', ErrorCodes.FORBIDDEN);
     }
     if (user.suspended) {
@@ -2037,7 +2037,7 @@ function getDefaultPathForRole(role?: string): string {
   if (role === 'university') return '/university/dashboard';
   if (role === 'university_multi_manager' || role === 'multi_university_admin') return '/university-multi-manager';
   if (role === 'school_counsellor') return '/school/dashboard';
-  if (role === 'admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/dashboard';
+  if (role === 'admin' || role === 'student_admin' || role === 'manager' || role === 'counsellor_coordinator') return '/admin/dashboard';
   return '/notifications';
 }
 

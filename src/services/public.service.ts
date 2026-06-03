@@ -425,7 +425,7 @@ export async function recordSiteVisit(input: {
     if (!raw) return '/';
     return raw.startsWith('/') ? raw.slice(0, 300) : `/${raw.slice(0, 299)}`;
   })();
-  const role = input.user?.role && ['student', 'university', 'admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(input.user.role)
+  const role = input.user?.role && ['student', 'university', 'admin', 'student_admin', 'school_counsellor', 'counsellor_coordinator', 'manager'].includes(input.user.role)
     ? input.user.role
     : 'anonymous';
 
