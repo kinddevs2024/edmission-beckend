@@ -1089,18 +1089,13 @@ export async function register(data: RegisterBody) {
 
   const sent = await emailService.sendVerificationCodeEmail(normalizedEmail, verifyCode);
   if (!sent && config.email.enabled) {
-    await PendingRegistration.deleteOne({ email: normalizedEmail });
-    throw new AppError(
-      503,
-      'Failed to send verification email. Please try again later.',
-      ErrorCodes.SERVICE_UNAVAILABLE
-    );
+    logger.warn({ email: normalizedEmail }, 'Verification email failed — pending registration kept; user can resend');
   }
-  if (!sent) {
+  if (!sent && !config.email.enabled) {
     logger.info({ email: normalizedEmail, code: verifyCode }, 'Email disabled: verification code (use in dev)');
   }
 
-  return { email: normalizedEmail, needsVerification: true };
+  return { email: normalizedEmail, needsVerification: true, emailSent: sent };
 }
 
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 min
@@ -1137,6 +1132,7 @@ export async function resendVerificationCode(email: string) {
 
   const sent = await emailService.sendVerificationCodeEmail(normalized, newCode);
   if (!sent && config.email.enabled) {
+    logger.warn({ email: normalized }, 'Resend verification email failed');
     throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
   }
   if (!sent) {
