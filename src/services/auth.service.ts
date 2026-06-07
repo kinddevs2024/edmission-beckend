@@ -1089,7 +1089,8 @@ export async function register(data: RegisterBody) {
 
   const sent = await emailService.sendVerificationCodeEmail(normalizedEmail, verifyCode);
   if (!sent && config.email.enabled) {
-    logger.warn({ email: normalizedEmail }, 'Verification email failed — pending registration kept; user can resend');
+    logger.warn({ email: normalizedEmail }, 'Verification email failed');
+    throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
   }
   if (!sent && !config.email.enabled) {
     logger.info({ email: normalizedEmail, code: verifyCode }, 'Email disabled: verification code (use in dev)');
