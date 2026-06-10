@@ -1050,7 +1050,7 @@ export async function register(data: RegisterBody) {
   const normalizedEmail = data.email.toLowerCase().trim();
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
-    throw new AppError(409, 'Email already registered', ErrorCodes.EMAIL_ALREADY_REGISTERED);
+    throw new AppError(409, 'Email already registered', ErrorCodes.CONFLICT);
   }
   const normalizedPhone = data.phone ? normalizePhone(data.phone) : '';
   if (data.phone && !normalizedPhone) {
@@ -1090,20 +1090,13 @@ export async function register(data: RegisterBody) {
   const sent = await emailService.sendVerificationCodeEmail(normalizedEmail, verifyCode);
   if (!sent && config.email.enabled) {
     logger.warn({ email: normalizedEmail }, 'Verification email failed');
-    if (config.nodeEnv === 'production') {
-      throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
-    }
+    throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
   }
-  if (!sent && config.nodeEnv !== 'production') {
-    logger.info({ email: normalizedEmail, code: verifyCode }, 'Verification email unavailable: using development code');
+  if (!sent && !config.email.enabled) {
+    logger.info({ email: normalizedEmail, code: verifyCode }, 'Email disabled: verification code (use in dev)');
   }
 
-  return {
-    email: normalizedEmail,
-    needsVerification: true as const,
-    emailSent: sent,
-    ...(config.nodeEnv !== 'production' && !sent ? { devVerificationCode: verifyCode } : {}),
-  };
+  return { email: normalizedEmail, needsVerification: true, emailSent: sent };
 }
 
 const RESEND_COOLDOWN_MS = 60 * 1000; // 1 min
@@ -1141,19 +1134,13 @@ export async function resendVerificationCode(email: string) {
   const sent = await emailService.sendVerificationCodeEmail(normalized, newCode);
   if (!sent && config.email.enabled) {
     logger.warn({ email: normalized }, 'Resend verification email failed');
-    if (config.nodeEnv === 'production') {
-      throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
-    }
+    throw new AppError(503, 'Failed to send verification email. Please try again later.', ErrorCodes.SERVICE_UNAVAILABLE);
   }
-  if (!sent && config.nodeEnv !== 'production') {
-    logger.info({ email: normalized, code: newCode }, 'Verification email unavailable: using development resend code');
+  if (!sent) {
+    logger.info({ email: normalized, code: newCode }, 'Email disabled: resend verification code (use in dev)');
   }
 
-  return {
-    success: true as const,
-    emailSent: sent,
-    ...(config.nodeEnv !== 'production' && !sent ? { devVerificationCode: newCode } : {}),
-  };
+  return { success: true };
 }
 
 export async function login(data: LoginBody) {
