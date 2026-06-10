@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service';
 import * as twoFactorService from '../services/twoFactor.service';
+import { config } from '../config';
 import type { AppleAuthBody, GoogleAuthBody, YandexAuthBody, YandexAccessTokenAuthBody } from '../validators/auth.validator';
 import {
   loginSchema,
@@ -27,6 +28,38 @@ import {
   linkEmailVerifySchema,
 } from '../validators/auth.validator';
 
+type AuthResultWithRefreshToken = {
+  refreshToken?: string;
+};
+
+const REFRESH_COOKIE_NAME = 'refreshToken';
+const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function setRefreshTokenCookie(res: Response, refreshToken: string): void {
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+    path: '/api/auth',
+    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+  });
+}
+
+function clearRefreshTokenCookie(res: Response): void {
+  res.clearCookie(REFRESH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+    path: '/api/auth',
+  });
+}
+
+function setRefreshCookieIfPresent(res: Response, result: AuthResultWithRefreshToken): void {
+  if (typeof result.refreshToken === 'string' && result.refreshToken) {
+    setRefreshTokenCookie(res, result.refreshToken);
+  }
+}
+
 export async function register(
   req: Request,
   res: Response,
@@ -35,6 +68,7 @@ export async function register(
   try {
     const data = registerSchema.shape.body.parse(req.body);
     const result = await authService.register(data);
+    setRefreshCookieIfPresent(res, result);
     res.status(201).json(result);
   } catch (e) {
     next(e);
@@ -49,6 +83,7 @@ export async function login(
   try {
     const data = loginSchema.shape.body.parse(req.body);
     const result = await authService.login(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -63,6 +98,7 @@ export async function loginByPhone(
   try {
     const data = loginByPhoneSchema.shape.body.parse(req.body);
     const result = await authService.loginByPhone(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -95,6 +131,7 @@ export async function exchangeMobileWebAuth(
   try {
     const data = mobileWebAuthExchangeSchema.shape.body.parse(req.body);
     const result = await authService.exchangeMobileWebAuthSession(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -123,6 +160,7 @@ export async function verifyPhoneCodeAuth(
   try {
     const data = phoneCodeVerifySchema.shape.body.parse(req.body);
     const result = await authService.verifyPhoneCodeAuth(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -165,6 +203,7 @@ export async function completePhoneRegistration(
   try {
     const data = phoneRegisterCompleteSchema.shape.body.parse(req.body);
     const result = await authService.completePhoneRegistration(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -178,6 +217,7 @@ export async function googleAuth(
 ): Promise<void> {
   try {
     const result = await authService.loginWithGoogle(req.body as GoogleAuthBody);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -191,6 +231,7 @@ export async function appleAuth(
 ): Promise<void> {
   try {
     const result = await authService.loginWithApple(req.body as AppleAuthBody);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -204,6 +245,7 @@ export async function yandexAuth(
 ): Promise<void> {
   try {
     const result = await authService.loginWithYandex(req.body as YandexAuthBody);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -217,6 +259,7 @@ export async function yandexAccessTokenAuth(
 ): Promise<void> {
   try {
     const result = await authService.loginWithYandexAccessToken(req.body as YandexAccessTokenAuthBody);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -245,6 +288,7 @@ export async function verifyTelegramAuth(
   try {
     const data = telegramAuthVerifySchema.shape.body.parse(req.body);
     const result = await authService.verifyTelegramWebsiteAuthCode(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -259,6 +303,7 @@ export async function verifyTelegramAuthLink(
   try {
     const data = telegramAuthVerifyLinkSchema.shape.body.parse(req.body);
     const result = await authService.verifyTelegramWebsiteAuthLink(data);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -277,6 +322,7 @@ export async function verifyTelegramAuthReady(
       res.status(202).json(result);
       return;
     }
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -313,6 +359,7 @@ export async function logout(
     if (req.user) {
       await authService.logout(req.user.id, refreshToken);
     }
+    clearRefreshTokenCookie(res);
     res.status(204).send();
   } catch (e) {
     next(e);
@@ -409,6 +456,7 @@ export async function verifyEmailByCode(
   try {
     const { email, code } = verifyEmailCodeSchema.shape.body.parse(req.body);
     const result = await authService.verifyEmailByCode(email, code);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -422,8 +470,8 @@ export async function resendVerificationCode(
 ): Promise<void> {
   try {
     const { email } = resendVerificationSchema.shape.body.parse(req.body);
-    await authService.resendVerificationCode(email);
-    res.json({ success: true });
+    const result = await authService.resendVerificationCode(email);
+    res.json(result);
   } catch (e) {
     next(e);
   }
@@ -483,6 +531,7 @@ export async function setPassword(
     }
     const { newPassword } = setPasswordSchema.shape.body.parse(req.body);
     const result = await authService.setPassword(req.user.id, newPassword);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);
@@ -501,6 +550,7 @@ export async function changePassword(
     }
     const { currentPassword, newPassword } = changePasswordSchema.shape.body.parse(req.body);
     const result = await authService.changePassword(req.user.id, currentPassword, newPassword);
+    setRefreshCookieIfPresent(res, result);
     res.json(result);
   } catch (e) {
     next(e);

@@ -19,6 +19,10 @@ const backendRoot = path.join(__dirname, '..', '..');
 const siblingFrontEnv = path.join(backendRoot, '..', 'edmission-front', '.env');
 dotenv.config({ path: siblingFrontEnv, override: false });
 
+function parseEnvBoolean(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '4000', 10),
@@ -106,9 +110,9 @@ export const config = {
     privateKeyBase64: (process.env.APPLE_PRIVATE_KEY_BASE64 || '').trim(),
   },
   email: {
-    from: process.env.EMAIL_FROM || 'noreply@edmission.com',
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER || 'noreply@edmission.com',
     sendgridApiKey: process.env.SENDGRID_API_KEY || '',
-    enabled: process.env.EMAIL_ENABLED === 'true',
+    enabled: parseEnvBoolean(process.env.EMAIL_ENABLED),
     smtp: {
       host: process.env.SMTP_HOST || '',
       port: parseInt(process.env.SMTP_PORT || '587', 10),

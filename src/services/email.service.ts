@@ -29,8 +29,8 @@ function createSmtpTransporter() {
 
 export async function sendMail(to: string, subject: string, html: string): Promise<boolean> {
   if (!config.email.enabled) {
-    logger.info({ to, subject }, 'Email disabled (EMAIL_ENABLED!=true), would send');
-    return true;
+    logger.info({ to, subject }, 'Email disabled, would send');
+    return false;
   }
   if (config.email.sendgridApiKey) {
     try {
@@ -83,7 +83,7 @@ export async function sendMail(to: string, subject: string, html: string): Promi
       return false;
     }
   }
-  logger.info({ to, subject }, 'No SendGrid or SMTP configured, email not sent');
+  logger.warn({ to, subject }, 'Email enabled but no SendGrid or SMTP credentials are configured');
   return false;
 }
 
