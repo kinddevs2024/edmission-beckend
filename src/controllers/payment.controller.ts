@@ -16,7 +16,7 @@ export async function createCheckoutSession(req: Request, res: Response, next: N
       cancelUrl
     );
     if (result.error) {
-      res.status(400).json({ message: result.error });
+      res.status(result.statusCode ?? 400).json({ message: result.error });
       return;
     }
     res.json({ url: result.url });
@@ -31,7 +31,7 @@ export async function webhook(req: Request, res: Response, next: NextFunction): 
     const rawBody = (req as express.Request & { rawBody?: Buffer }).rawBody ?? Buffer.from('');
     const result = await paymentService.handleWebhook(rawBody, signature ?? '');
     if (!result.received) {
-      res.status(400).send('Webhook error');
+      res.status(result.statusCode ?? 400).json({ message: result.error ?? 'Webhook error' });
       return;
     }
     res.json({ received: true });

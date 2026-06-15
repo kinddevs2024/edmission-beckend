@@ -3,6 +3,11 @@ import { Subscription, User } from '../models';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { STUDENT_PLAN, UNIVERSITY_PLAN } from './subscription.service';
 
+type PaymentServiceResult<T extends object = object> = T & {
+  error?: string;
+  statusCode?: number;
+};
+
 /** Allowed URL origins for success/cancel redirects (prevent open redirect) */
 function isAllowedRedirectUrl(url: string): boolean {
   if (!url || typeof url !== 'string') return false;
@@ -27,26 +32,43 @@ export async function createCheckoutSession(
   planId: string,
   successUrl: string,
   cancelUrl: string
-): Promise<{ url?: string; error?: string }> {
+): Promise<PaymentServiceResult<{ url?: string }>> {
   if (!config.stripe.secretKey) {
     return { error: 'Payment is not configured. Please contact support to upgrade.' };
+  }
+  if (!config.stripe.secretKey.startsWith('sk_')) {
+    return { error: 'Stripe secret key must start with sk_test_ or sk_live_.', statusCode: 500 };
   }
   if (!isAllowedRedirectUrl(successUrl) || !isAllowedRedirectUrl(cancelUrl)) {
     return { error: 'Invalid success or cancel URL' };
   }
 
-  const user = await User.findById(userId).select('email name phone yandexSub yandexProfile').lean();
+  const user = await User.findById(userId).select('email name phone role yandexSub yandexProfile').lean();
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+
+  const role = String((user as { role?: string }).role ?? '');
+  const isStudentPlan = planId === STUDENT_PLAN.STANDARD || planId === STUDENT_PLAN.MAX_PREMIUM;
+  const isUniversityPlan = planId === UNIVERSITY_PLAN.PREMIUM;
+  if ((role === 'student' && !isStudentPlan) || (role === 'university' && !isUniversityPlan)) {
+    return { error: 'This subscription plan is not available for your account role.' };
+  }
+  if (role !== 'student' && role !== 'university') {
+    return { error: 'Paid subscriptions are currently available only for students and universities.' };
+  }
 
   let priceId: string | null = null;
   if (planId === STUDENT_PLAN.STANDARD) priceId = config.stripe.studentStandardPriceId;
   else if (planId === STUDENT_PLAN.MAX_PREMIUM) priceId = config.stripe.studentMaxPriceId;
   else if (planId === UNIVERSITY_PLAN.PREMIUM) priceId = config.stripe.universityPremiumPriceId;
   if (!priceId) return { error: 'Invalid plan' };
+  if (!priceId.startsWith('price_')) {
+    return { error: 'Stripe Price ID must start with price_.', statusCode: 500 };
+  }
 
   try {
     const stripe = await import('stripe');
     const stripeClient = new stripe.default(config.stripe.secretKey, { apiVersion: '2023-10-16' });
+    await stripeClient.prices.retrieve(priceId);
     const u = user as {
       email: string;
       name?: string;
@@ -103,13 +125,25 @@ export async function createCheckoutSession(
     return { url: session.url ?? undefined };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { error: msg };
+    return { error: `Stripe checkout failed: ${msg}`, statusCode: 502 };
   }
 }
 
 /** Handle Stripe webhook: subscription created/updated/deleted. Update Subscription model. */
-export async function handleWebhook(payload: Buffer, signature: string): Promise<{ received: boolean }> {
-  if (!config.stripe.webhookSecret) return { received: true };
+export async function handleWebhook(payload: Buffer, signature: string): Promise<PaymentServiceResult<{ received: boolean }>> {
+  if (!config.stripe.webhookSecret) {
+    return { received: false, error: 'Stripe webhook secret is not configured', statusCode: 500 };
+  }
+  if (!config.stripe.webhookSecret.startsWith('whsec_')) {
+    return {
+      received: false,
+      error: 'Invalid Stripe webhook secret. It must start with whsec_, not pk_ or sk_.',
+      statusCode: 500,
+    };
+  }
+  if (!signature) {
+    return { received: false, error: 'Missing Stripe-Signature header', statusCode: 400 };
+  }
   try {
     const stripe = await import('stripe');
     const stripeClient = new stripe.default(config.stripe.secretKey, { apiVersion: '2023-10-16' });
@@ -139,7 +173,8 @@ export async function handleWebhook(payload: Buffer, signature: string): Promise
       );
     }
     return { received: true };
-  } catch {
-    return { received: false };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { received: false, error: `Stripe webhook verification failed: ${msg}`, statusCode: 400 };
   }
 }
