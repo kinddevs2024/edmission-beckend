@@ -5,6 +5,7 @@ import app from './app';
 import { initSocket } from './socket';
 import { startRecommendationWorker } from './workers/recommendation.worker';
 import { startLifecycleWorker } from './workers/lifecycle.worker';
+import { startDatabaseSyncService, stopDatabaseSyncService } from './services/databaseSync.service';
 import { logger } from './utils/logger';
 import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
@@ -31,6 +32,7 @@ async function initializeAfterDbConnected() {
   if (!workersStarted && config.nodeEnv !== 'test') {
     startRecommendationWorker();
     startLifecycleWorker();
+    startDatabaseSyncService();
     workersStarted = true;
   }
 }
@@ -102,6 +104,7 @@ start().catch((e) => {
 
 process.on('SIGINT', () => {
   if (reconnectTimer) clearInterval(reconnectTimer);
+  void stopDatabaseSyncService();
   httpServer.close();
   process.exit(0);
 });
