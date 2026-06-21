@@ -27,9 +27,10 @@ export const config = {
   databaseSync: {
     enabled: process.env.MONGODB_SYNC_ENABLED === 'true',
     targetUri: (process.env.MONGODB_SYNC_TARGET_URI || '').trim(),
-    intervalMs: Math.max(10000, parseInt(process.env.MONGODB_SYNC_INTERVAL_MS || '30000', 10)),
+    intervalMs: Math.max(60000, parseInt(process.env.MONGODB_SYNC_INTERVAL_MS || '300000', 10)),
+    startupDelayMs: Math.max(10000, parseInt(process.env.MONGODB_SYNC_STARTUP_DELAY_MS || '60000', 10)),
     batchSize: Math.max(100, parseInt(process.env.MONGODB_SYNC_BATCH_SIZE || '500', 10)),
-    deleteMissing: process.env.MONGODB_SYNC_DELETE_MISSING !== 'false',
+    deleteMissing: process.env.MONGODB_SYNC_DELETE_MISSING === 'true',
   },
   /** Slow / unstable networks: longer waits for SRV lookup, TLS, server selection (ms). */
   mongodbServerSelectionTimeoutMs: parseInt(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || '120000', 10),

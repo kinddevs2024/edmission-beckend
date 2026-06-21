@@ -7,6 +7,7 @@ type SyncDocument = Record<string, unknown> & { _id: any };
 
 let targetConnection: Connection | null = null;
 let syncTimer: NodeJS.Timeout | null = null;
+let startupTimer: NodeJS.Timeout | null = null;
 let syncInProgress = false;
 
 function isSyncEnabled(): boolean {
@@ -137,14 +138,20 @@ export function startDatabaseSyncService(): void {
 
   if (syncTimer) return;
 
-  void runDatabaseSync('startup');
+  startupTimer = setTimeout(() => {
+    void runDatabaseSync('startup');
+  }, config.databaseSync.startupDelayMs);
+  startupTimer.unref?.();
+
   syncTimer = setInterval(() => {
     void runDatabaseSync('interval');
   }, config.databaseSync.intervalMs);
+  syncTimer.unref?.();
 
   logger.info(
     {
       intervalMs: config.databaseSync.intervalMs,
+      startupDelayMs: config.databaseSync.startupDelayMs,
       deleteMissing: config.databaseSync.deleteMissing,
       batchSize: config.databaseSync.batchSize,
     },
@@ -153,6 +160,10 @@ export function startDatabaseSyncService(): void {
 }
 
 export async function stopDatabaseSyncService(): Promise<void> {
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    startupTimer = null;
+  }
   if (syncTimer) {
     clearInterval(syncTimer);
     syncTimer = null;
