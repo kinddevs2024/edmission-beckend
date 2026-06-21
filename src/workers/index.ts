@@ -4,12 +4,14 @@ dotenv.config();
 import { connectDatabase, disconnectDatabase } from '../config/database';
 import { startRecommendationWorker } from './recommendation.worker';
 import { startLifecycleWorker } from './lifecycle.worker';
+import { startDatabaseSyncService, stopDatabaseSyncService } from '../services/databaseSync.service';
 import { logger } from '../utils/logger';
 
 async function main() {
   await connectDatabase();
   startRecommendationWorker();
   startLifecycleWorker();
+  startDatabaseSyncService();
   logger.info('Workers started. Press Ctrl+C to exit.');
 }
 
@@ -19,6 +21,7 @@ main().catch((e) => {
 });
 
 process.on('SIGINT', async () => {
+  await stopDatabaseSyncService();
   await disconnectDatabase();
   process.exit(0);
 });

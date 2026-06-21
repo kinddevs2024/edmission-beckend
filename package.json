@@ -9,8 +9,6 @@
     "deploy": "git pull origin main && npm install --omit=dev && rmdir /s /q dist & npm run build && pm2 restart edmission-back",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "worker": "ts-node-dev --respawn --transpile-only src/workers/index.ts",
-    "backup:sync": "ts-node-dev --respawn --transpile-only src/workers/databaseSync.worker.ts",
-    "backup:sync:prod": "node dist/workers/databaseSync.worker.js",
     "db:seed": "ts-node prisma/seed.ts",
     "create-admin": "ts-node src/scripts/create-admin.ts",
     "v0:chat": "ts-node src/scripts/v0-chat-demo.ts"
