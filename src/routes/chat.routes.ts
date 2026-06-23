@@ -11,7 +11,7 @@ const router = Router();
 
 router.use(authMiddleware);
 router.use(resolveUniversityActAs);
-router.use(requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin', 'school_counsellor'));
+router.use(requireRole('student', 'university', 'university_multi_manager', 'multi_university_admin', 'school_counsellor', 'admin'));
 
 router.get('/', chatController.getChats);
 router.post('/', validate(chatValidator.createChatSchema.shape.body, 'body'), chatController.createChat);

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { User, StudentProfile, UniversityProfile, Chat, Interest, Message } from '../models';
+import { User, StudentProfile, UniversityProfile, Chat, SupportChat, Interest, Message } from '../models';
 import * as notificationService from './notification.service';
 import * as emailService from './email.service';
 import * as telegramService from './telegram.service';
@@ -143,6 +143,208 @@ async function sendChatTelegram(userId: string, payload: { chatId: string; sende
   }
 }
 
+function isAdminRole(role: unknown): boolean {
+  return String(role ?? '') === 'admin';
+}
+
+function supportUserLabel(user: { name?: string; email?: string; role?: string } | null | undefined): string {
+  return user?.name || user?.email || 'User';
+}
+
+function formatSupportChat(
+  chat: Record<string, unknown>,
+  viewerUserId: string,
+  lastByChat: Map<string, unknown[]>,
+  unreadByChat: Map<string, number>
+) {
+  const userRef = chat.userId as { _id?: unknown; id?: unknown; name?: string; email?: string; role?: string } | undefined;
+  const adminRef = chat.assignedAdminId as { _id?: unknown; id?: unknown; name?: string; email?: string; role?: string } | undefined;
+  const userId = userRef ? String(userRef._id ?? userRef.id ?? '') : String(chat.userId ?? '');
+  const adminId = adminRef ? String(adminRef._id ?? adminRef.id ?? '') : String(chat.assignedAdminId ?? '');
+
+  return {
+    ...chat,
+    id: String(chat._id),
+    chatType: 'support',
+    userParticipantId: userId,
+    adminParticipantId: adminId || undefined,
+    supportUser: userRef
+      ? {
+          id: userId,
+          name: userRef.name,
+          email: userRef.email,
+          role: userRef.role,
+        }
+      : undefined,
+    supportAdmin: adminRef
+      ? {
+          id: adminId,
+          name: adminRef.name,
+          email: adminRef.email,
+          role: adminRef.role,
+        }
+      : undefined,
+    lastMessage: lastByChat.get(String(chat._id)) ?? [],
+    unreadCount: unreadByChat.get(String(chat._id)) ?? 0,
+    isReadOnly: false,
+    updatedAt: chat.lastMessageAt ?? chat.updatedAt,
+    viewerUserId,
+  };
+}
+
+async function getAdminUserIds(): Promise<string[]> {
+  const admins = await User.find({ role: 'admin' }).select('_id').lean();
+  return admins.map((admin) => String((admin as { _id: unknown })._id));
+}
+
+async function loadSupportChatsForViewer(userId: string, userRole: string): Promise<unknown[]> {
+  const filter = isAdminRole(userRole) ? {} : { userId };
+  const chats = await SupportChat.find(filter)
+    .populate('userId', 'name email role')
+    .populate('assignedAdminId', 'name email role')
+    .sort({ lastMessageAt: -1, updatedAt: -1 })
+    .lean();
+  const chatIds = (chats as { _id: unknown }[]).map((chat) => chat._id);
+  const [lastByChat, unreadByChat] = await Promise.all([
+    getLastMessagesByChatIds(chatIds, userId),
+    getUnreadCountsByChatIds(chatIds, userId),
+  ]);
+  return (chats as Array<Record<string, unknown> & { _id: unknown }>).map((chat) =>
+    formatSupportChat(chat, userId, lastByChat, unreadByChat)
+  );
+}
+
+async function getOrCreateSupportChatForUser(userId: string) {
+  const user = await User.findById(userId).select('role').lean();
+  if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
+  if (isAdminRole((user as { role?: string }).role)) {
+    throw new AppError(400, 'Admins can reply from the support inbox', ErrorCodes.VALIDATION);
+  }
+
+  let chat = await SupportChat.findOne({ userId });
+  let created = false;
+  if (!chat) {
+    chat = await SupportChat.create({ userId, status: 'open' });
+    created = true;
+  }
+
+  return {
+    chat: chat.toObject ? chat.toObject() : chat,
+    chatId: (chat as { _id: unknown })._id,
+    userId,
+    created,
+  };
+}
+
+async function findSupportChatForViewer(chatId: string, viewerUserId: string) {
+  const supportChat = await SupportChat.findById(chatId)
+    .populate('userId', 'name email role')
+    .populate('assignedAdminId', 'name email role')
+    .lean();
+  if (!supportChat) return null;
+
+  const viewer = await User.findById(viewerUserId).select('role').lean();
+  const role = String((viewer as { role?: string } | null)?.role ?? '');
+  const supportObj = supportChat as Record<string, unknown>;
+  const ownerId = toObjectIdString(supportObj.userId);
+  if (ownerId !== viewerUserId && !isAdminRole(role)) {
+    throw new AppError(403, 'Not a participant', ErrorCodes.FORBIDDEN);
+  }
+  return supportChat as Record<string, unknown> & { _id: unknown };
+}
+
+async function getOneSupportChatFormatted(chatId: string, userId: string) {
+  const supportChat = await findSupportChatForViewer(chatId, userId);
+  if (!supportChat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  const [lastByChat, unreadByChat] = await Promise.all([
+    getLastMessagesByChatIds([supportChat._id], userId),
+    getUnreadCountsByChatIds([supportChat._id], userId),
+  ]);
+  return formatSupportChat(supportChat, userId, lastByChat, unreadByChat);
+}
+
+async function getSupportMessageRecipientIds(chat: Record<string, unknown>, senderId: string): Promise<string[]> {
+  const ownerId = toObjectIdString(chat.userId);
+  const sender = await User.findById(senderId).select('role').lean();
+  if (isAdminRole((sender as { role?: string } | null)?.role)) {
+    return ownerId && ownerId !== senderId ? [ownerId] : [];
+  }
+  return (await getAdminUserIds()).filter((adminId) => adminId !== senderId);
+}
+
+async function saveSupportMessage(chatId: string, senderId: string, opts: SaveMessageParams) {
+  const supportChat = await findSupportChatForViewer(chatId, senderId);
+  if (!supportChat) return null;
+
+  const type = opts.type ?? 'text';
+  const textValue = String(opts.text ?? '');
+  const emotionVal = opts.metadata && opts.metadata.emotion != null ? String(opts.metadata.emotion) : '';
+  const message = opts.text ?? emotionVal;
+  const attachmentUrl = opts.attachmentUrl;
+  const metadata = opts.metadata;
+
+  if (type === 'text' && !textValue.trim()) {
+    throw new AppError(400, 'Message text is required for text messages', ErrorCodes.VALIDATION);
+  }
+  if (textValue.length > CHAT_MESSAGE_MAX_LENGTH) {
+    throw new AppError(400, `Message is too long (max ${CHAT_MESSAGE_MAX_LENGTH} characters)`, ErrorCodes.VALIDATION);
+  }
+  if (type === 'voice' && !attachmentUrl) {
+    throw new AppError(400, 'Attachment URL is required for voice messages', ErrorCodes.VALIDATION);
+  }
+  if (type === 'emotion' && !String(message ?? '').trim() && !(metadata?.emotion != null)) {
+    throw new AppError(400, 'Emotion is required for emotion messages', ErrorCodes.VALIDATION);
+  }
+
+  const senderUser = await User.findById(senderId).select('name email role').lean();
+  const senderName = supportUserLabel(senderUser as { name?: string; email?: string; role?: string } | null);
+  const senderRole = String((senderUser as { role?: string } | null)?.role ?? '');
+  const msgBody = type === 'emotion' ? (message || (metadata?.emotion != null ? String(metadata.emotion) : '')) : (opts.text ?? message);
+
+  const msg = await Message.create({
+    chatId,
+    senderId,
+    type,
+    message: msgBody,
+    attachmentUrl: attachmentUrl ?? undefined,
+    metadata: {
+      ...(metadata ?? {}),
+      supportChat: true,
+      senderRole,
+      senderLabel: senderName,
+      sentByAdmin: isAdminRole(senderRole),
+    },
+  });
+  await SupportChat.findByIdAndUpdate(chatId, {
+    lastMessageAt: new Date(),
+    ...(isAdminRole(senderRole) ? { assignedAdminId: senderId } : {}),
+  });
+
+  const msgPop = await Message.findById(msg._id).populate('senderId', 'id email').lean();
+  const notifBody = type === 'voice' ? 'Voice message' : type === 'emotion' ? (msgBody || 'Reaction') : (msgBody || '').slice(0, 100);
+  const recipientIds = await getSupportMessageRecipientIds(supportChat, senderId);
+  for (const recipientId of recipientIds) {
+    await notificationService.createNotification(recipientId, {
+      type: 'message',
+      title: 'Support message',
+      body: notifBody,
+      referenceType: 'chat',
+      referenceId: String(chatId),
+      metadata: { chatId: String(chatId), chatType: 'support' },
+    });
+    void sendChatTelegram(recipientId, {
+      chatId: String(chatId),
+      senderName,
+      text: String(notifBody || ''),
+    });
+  }
+
+  return {
+    message: formatChatMessage(msgPop as Record<string, unknown> | null) ?? msg,
+    recipientId: recipientIds[0],
+  };
+}
+
 async function loadChatsAsCounsellorViewer(userId: string): Promise<unknown[]> {
   const students = await StudentProfile.find({ counsellorUserId: userId }).select('_id').lean();
   const studentIds = students.map((student) => (student as { _id: unknown })._id);
@@ -253,6 +455,10 @@ export async function getChats(userId: string) {
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
 
   const userRole = String((user as { role?: string }).role ?? '');
+  if (isAdminRole(userRole)) {
+    return loadSupportChatsForViewer(userId, userRole);
+  }
+
   const studentProfile = await StudentProfile.findOne({ userId }).lean();
   const universityProfile = await UniversityProfile.findOne({ userId }).lean();
 
@@ -286,10 +492,14 @@ export async function getChats(userId: string) {
     if (up) c.universityProfileId = up;
   }
 
-  return chats.map((c: unknown) => {
+  const formattedChats = chats.map((c: unknown) => {
     const cc = c as Record<string, unknown>;
     return { ...cc, id: String(cc._id) };
   });
+
+  await getOrCreateSupportChatForUser(userId);
+  const supportChats = await loadSupportChatsForViewer(userId, userRole);
+  return [...supportChats, ...formattedChats];
 }
 
 export async function getMessages(chatId: string, userId: string, query: { page?: number; limit?: number }) {
@@ -297,7 +507,41 @@ export async function getMessages(chatId: string, userId: string, query: { page?
     .populate('studentId', 'userId')
     .populate('universityId', 'userId')
     .lean();
-  if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  if (!chat) {
+    const supportChat = await findSupportChatForViewer(chatId, userId);
+    if (!supportChat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(50, Math.max(1, query.limit || 20));
+    const skip = (page - 1) * limit;
+    const visibilityFilter = {
+      chatId,
+      ...buildMessageVisibilityFilter(userId),
+    };
+
+    const [messages, total] = await Promise.all([
+      Message.find(visibilityFilter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('senderId', 'id email')
+        .lean(),
+      Message.countDocuments(visibilityFilter),
+    ]);
+
+    const data = messages
+      .reverse()
+      .map((m) => formatChatMessage({ ...(m as Record<string, unknown>), senderId: (m as { senderId?: unknown }).senderId }))
+      .filter(Boolean);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
 
   const chatObj = chat as Record<string, unknown>;
   const studentIdRef = chatObj.studentId;
@@ -355,7 +599,20 @@ export async function markRead(chatId: string, userId: string) {
     .populate('studentId', 'userId')
     .populate('universityId', 'userId')
     .lean();
-  if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  if (!chat) {
+    const supportChat = await findSupportChatForViewer(chatId, userId);
+    if (!supportChat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+    await Message.updateMany(
+      {
+        chatId,
+        senderId: { $ne: userId },
+        ...buildMessageVisibilityFilter(userId),
+      },
+      { isRead: true }
+    );
+    await notificationService.markMessageNotificationsReadByChatId(userId, String(chatId));
+    return { success: true };
+  }
 
   const chatObj = chat as Record<string, unknown>;
   const studentIdRef = chatObj.studentId;
@@ -418,12 +675,16 @@ export async function getOrCreateChat(studentId: string, universityId: unknown) 
 /** Get or create chat from current user (student or university) and other party id. */
 export async function getOrCreateChatForUser(
   userId: string,
-  body: { studentId?: string; universityId?: string }
+  body: { studentId?: string; universityId?: string; support?: boolean; type?: string }
 ) {
   const user = await User.findById(userId).select('role').lean();
   if (!user) throw new AppError(404, 'User not found', ErrorCodes.NOT_FOUND);
 
   const role = (user as { role?: string }).role;
+  if (body.support || body.type === 'support') {
+    return getOrCreateSupportChatForUser(userId);
+  }
+
   if (body.studentId && role === 'university') {
     const university = await UniversityProfile.findOne({ userId }).lean();
     if (!university) throw new AppError(404, 'University profile not found', ErrorCodes.NOT_FOUND);
@@ -475,7 +736,7 @@ export async function getOneChatFormatted(chatId: string, userId: string) {
     .populate('universityId', 'universityName logoUrl userId _id')
     .populate('studentId', 'firstName lastName avatarUrl userId profileVisibility _id')
     .lean();
-  if (!chat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+  if (!chat) return getOneSupportChatFormatted(chatId, userId);
 
   const chatObj = chat as {
     studentId?: { userId?: unknown };
@@ -536,6 +797,9 @@ export type SaveMessageParams = {
 
 export async function saveMessage(chatId: string, senderId: string, params: string | SaveMessageParams) {
   const opts: SaveMessageParams = typeof params === 'string' ? { text: params, type: 'text' } : params;
+  const supportResult = await saveSupportMessage(chatId, senderId, opts);
+  if (supportResult) return supportResult;
+
   const type = opts.type ?? 'text';
   const textValue = String(opts.text ?? '');
   const emotionVal = opts.metadata && opts.metadata.emotion != null ? String(opts.metadata.emotion) : '';
@@ -707,7 +971,38 @@ export async function updateMessage(chatId: string, messageId: string, userId: s
     .populate('universityId', 'userId')
     .lean();
   if (!chat) {
-    throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+    const supportChat = await findSupportChatForViewer(chatId, userId);
+    if (!supportChat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+    const existing = await Message.findOne({ _id: messageId, chatId }).lean();
+    if (!existing) {
+      throw new AppError(404, 'Message not found', ErrorCodes.NOT_FOUND);
+    }
+
+    const messageObj = existing as Record<string, unknown>;
+    if (String(messageObj.senderId) !== userId) {
+      throw new AppError(403, 'You can edit only your own messages', ErrorCodes.FORBIDDEN);
+    }
+    if (messageObj.type !== 'text') {
+      throw new AppError(400, 'Only text messages can be edited', ErrorCodes.VALIDATION);
+    }
+    if (messageObj.deletedForEveryoneAt) {
+      throw new AppError(409, 'Message already deleted', ErrorCodes.CONFLICT);
+    }
+
+    const updated = await Message.findOneAndUpdate(
+      { _id: messageId, chatId },
+      {
+        message: trimmedText,
+        editedAt: new Date(),
+      },
+      { new: true }
+    )
+      .populate('senderId', 'id email')
+      .lean();
+
+    return {
+      message: formatChatMessage(updated as Record<string, unknown> | null),
+    };
   }
 
   const chatObj = chat as Record<string, unknown>;
@@ -767,7 +1062,30 @@ export async function deleteMessage(chatId: string, messageId: string, userId: s
     .populate('universityId', 'userId')
     .lean();
   if (!chat) {
-    throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+    const supportChat = await findSupportChatForViewer(chatId, userId);
+    if (!supportChat) throw new AppError(404, 'Chat not found', ErrorCodes.NOT_FOUND);
+
+    if (scope === 'everyone') {
+      if (String(messageObj.senderId) !== userId) {
+        throw new AppError(403, 'You can delete for everyone only your own messages', ErrorCodes.FORBIDDEN);
+      }
+
+      await Message.updateOne(
+        { _id: messageId, chatId, deletedForEveryoneAt: null },
+        { deletedForEveryoneAt: new Date() }
+      );
+    } else {
+      await Message.updateOne(
+        { _id: messageId, chatId },
+        { $addToSet: { deletedForUserIds: new mongoose.Types.ObjectId(userId) } }
+      );
+    }
+
+    return {
+      success: true,
+      messageId,
+      scope,
+    };
   }
 
   const chatObj = chat as { studentId?: { userId?: unknown }; universityId?: { userId?: unknown } };

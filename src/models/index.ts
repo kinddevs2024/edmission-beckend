@@ -19,6 +19,7 @@ export { Interest } from './Interest';
 export { CatalogInterest } from './CatalogInterest';
 export { Offer } from './Offer';
 export { Chat } from './Chat';
+export { SupportChat } from './SupportChat';
 export { Message } from './Message';
 export { TelegramMessageLink } from './TelegramMessageLink';
 export { TelegramChatPreference } from './TelegramChatPreference';

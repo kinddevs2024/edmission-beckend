@@ -5,7 +5,7 @@ import { getIO } from '../socket';
 export async function createChat(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
-    const body = (req.body || {}) as { studentId?: string; universityId?: string };
+    const body = (req.body || {}) as { studentId?: string; universityId?: string; support?: boolean; type?: string };
     const result = await chatService.getOrCreateChatForUser(req.user.id, body);
     const formatted = await chatService.getOneChatFormatted(String(result.chatId), req.user.id);
     res.status(201).json(formatted);

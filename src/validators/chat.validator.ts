@@ -5,6 +5,8 @@ export const createChatSchema = z.object({
   body: z.object({
     studentId: objectIdZod.optional(),
     universityId: objectIdZod.optional(),
+    support: z.boolean().optional(),
+    type: z.enum(['support']).optional(),
   }),
 });
 
