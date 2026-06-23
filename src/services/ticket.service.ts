@@ -5,6 +5,7 @@ import type { Role } from '../types/role';
 import { isUniversityLikeRole } from '../types/role';
 
 const STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
+const TICKET_ROLES = ['student', 'university', 'university_multi_manager', 'multi_university_admin', 'school_counsellor'] as const;
 
 export async function createTicket(userId: string, role: Role, data: { subject: string; message: string }) {
   if (role !== 'student' && !isUniversityLikeRole(role) && role !== 'school_counsellor') {
@@ -93,7 +94,7 @@ export async function listTickets(query: {
   const skip = (page - 1) * limit;
   const where: Record<string, unknown> = {};
   if (query.status && STATUSES.includes(query.status as (typeof STATUSES)[number])) where.status = query.status;
-  if (query.role === 'student' || query.role === 'university') where.role = query.role;
+  if (TICKET_ROLES.includes(query.role as (typeof TICKET_ROLES)[number])) where.role = query.role;
   const [list, total] = await Promise.all([
     Ticket.find(where).sort({ createdAt: -1 }).skip(skip).limit(limit).populate('userId', 'email').lean(),
     Ticket.countDocuments(where),
