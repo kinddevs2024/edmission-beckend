@@ -78,6 +78,7 @@ app.use(express.json({
     if (req.originalUrl === '/api/payment/webhook') (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
   },
 }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(mongoInjectionSanitizer);
 /** Last value wins for duplicate query/body keys; reduces HTTP parameter pollution quirks. */
 app.use(hpp());

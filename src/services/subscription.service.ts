@@ -28,6 +28,40 @@ export const UNIVERSITY_PLAN = {
   PREMIUM: 'university_premium',
 } as const;
 
+export const SCHOOL_COUNSELLOR_PLAN = {
+  FREE: 'school_counsellor_free',
+  PREMIUM: 'school_counsellor_premium',
+} as const;
+
+export const STAFF_PLAN = {
+  INTERNAL: 'staff_internal',
+} as const;
+
+export const PAID_SUBSCRIPTION_PLANS = [
+  STUDENT_PLAN.STANDARD,
+  STUDENT_PLAN.MAX_PREMIUM,
+  UNIVERSITY_PLAN.PREMIUM,
+  SCHOOL_COUNSELLOR_PLAN.PREMIUM,
+] as const;
+
+export function getDefaultPlanForRole(role: Role): string {
+  if (role === 'student') return STUDENT_PLAN.FREE_TRIAL;
+  if (role === 'university' || role === 'university_multi_manager' || role === 'multi_university_admin') {
+    return UNIVERSITY_PLAN.FREE;
+  }
+  if (role === 'school_counsellor') return SCHOOL_COUNSELLOR_PLAN.FREE;
+  return STAFF_PLAN.INTERNAL;
+}
+
+export function isPlanAvailableForRole(role: Role | string, planId: string): boolean {
+  if (role === 'student') return planId === STUDENT_PLAN.STANDARD || planId === STUDENT_PLAN.MAX_PREMIUM;
+  if (role === 'university' || role === 'university_multi_manager' || role === 'multi_university_admin') {
+    return planId === UNIVERSITY_PLAN.PREMIUM;
+  }
+  if (role === 'school_counsellor') return planId === SCHOOL_COUNSELLOR_PLAN.PREMIUM;
+  return false;
+}
+
 /** Max applications (university interests) per student. null = unlimited */
 const APPLICATION_LIMITS: Record<string, number | null> = {
   [STUDENT_PLAN.FREE_TRIAL]: 3,
@@ -67,6 +101,9 @@ const CHAT_MODELS: Record<string, string> = {
   [STUDENT_PLAN.MAX_PREMIUM]: getDefaultChatModel(),
   [UNIVERSITY_PLAN.FREE]: getDefaultChatModel(),
   [UNIVERSITY_PLAN.PREMIUM]: getDefaultChatModel(),
+  [SCHOOL_COUNSELLOR_PLAN.FREE]: getDefaultChatModel(),
+  [SCHOOL_COUNSELLOR_PLAN.PREMIUM]: getDefaultChatModel(),
+  [STAFF_PLAN.INTERNAL]: getDefaultChatModel(),
 };
 
 const TRIAL_DAYS = 14;
@@ -98,11 +135,12 @@ export async function createForNewUser(userId: string, role: Role): Promise<Subs
       currentPeriodEnd: obj.currentPeriodEnd as Date | undefined,
     };
   }
-  if (role === 'university') {
+  const defaultPlan = getDefaultPlanForRole(role);
+  if (defaultPlan) {
     const sub = await Subscription.create({
       userId,
-      role: 'university',
-      plan: UNIVERSITY_PLAN.FREE,
+      role,
+      plan: defaultPlan,
       status: 'active',
     });
     return {
@@ -237,7 +275,7 @@ export async function canSendOffer(userId: string): Promise<{
 export async function getChatModel(userId: string, role: Role): Promise<string> {
   const sub = await getSubscription(userId);
   const effectivePlan = getEffectivePlan(sub);
-  const plan = effectivePlan ?? (role === 'student' ? STUDENT_PLAN.FREE_TRIAL : UNIVERSITY_PLAN.FREE);
+  const plan = effectivePlan ?? getDefaultPlanForRole(role);
   return CHAT_MODELS[plan] ?? getDefaultChatModel();
 }
 
@@ -270,10 +308,13 @@ export async function getSubscriptionSummary(userId: string): Promise<{
   trialExpired: boolean;
 }> {
   let sub = await getSubscription(userId);
-  const studentProfile = await StudentProfile.findOne({ userId });
-  const universityProfile = await UniversityProfile.findOne({ userId });
-  if (!sub && (studentProfile || universityProfile)) {
-    const role: Role = studentProfile ? 'student' : 'university';
+  const [studentProfile, universityProfile, user] = await Promise.all([
+    StudentProfile.findOne({ userId }),
+    UniversityProfile.findOne({ userId }),
+    User.findById(userId).select('role').lean(),
+  ]);
+  if (!sub && user?.role) {
+    const role = String((user as { role?: string }).role ?? '') as Role;
     await createForNewUser(userId, role);
     sub = await getSubscription(userId);
   }
@@ -292,7 +333,7 @@ export async function getSubscriptionSummary(userId: string): Promise<{
 
   const effectivePlan = getEffectivePlan(sub);
   const trialExpired = isTrialExpired(sub);
-  const chatModel = await getChatModel(userId, (sub?.role as Role) ?? 'student');
+  const chatModel = await getChatModel(userId, ((sub?.role ?? (user as { role?: string } | null)?.role) as Role) ?? 'student');
 
   if (studentProfile) {
     applicationLimit = studentApplicationLimitForPlan(effectivePlan);
@@ -321,6 +362,9 @@ const ALL_PLANS = [
   STUDENT_PLAN.MAX_PREMIUM,
   UNIVERSITY_PLAN.FREE,
   UNIVERSITY_PLAN.PREMIUM,
+  SCHOOL_COUNSELLOR_PLAN.FREE,
+  SCHOOL_COUNSELLOR_PLAN.PREMIUM,
+  STAFF_PLAN.INTERNAL,
 ] as const;
 
 /** Admin: list subscriptions with optional filters */

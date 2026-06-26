@@ -39,3 +39,40 @@ export async function webhook(req: Request, res: Response, next: NextFunction): 
     next(e);
   }
 }
+
+export async function secureAcceptanceCheckout(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await paymentService.getSecureAcceptanceCheckoutHtml(req.params.referenceNumber);
+    if (result.error || !result.html) {
+      res.status(result.statusCode ?? 404).json({ message: result.error ?? 'Payment session not found' });
+      return;
+    }
+    res.setHeader(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'unsafe-inline'",
+        "style-src 'unsafe-inline'",
+        `form-action 'self' https://testsecureacceptance.cybersource.com https://secureacceptance.cybersource.com https://secureacceptance.in.cybersource.com`,
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+      ].join('; ')
+    );
+    res.type('html').send(result.html);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function secureAcceptanceResponse(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await paymentService.handleSecureAcceptanceResponse(req.body as Record<string, unknown>);
+    if (!result.received) {
+      res.status(result.statusCode ?? 400).json({ message: result.error ?? 'Payment response error' });
+      return;
+    }
+    res.redirect(303, result.redirectUrl ?? '/payment/cancel');
+  } catch (e) {
+    next(e);
+  }
+}

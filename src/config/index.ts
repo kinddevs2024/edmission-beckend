@@ -40,6 +40,11 @@ export const config = {
     refreshTtl: process.env.JWT_REFRESH_TTL || '7d',
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  backendUrl:
+    (process.env.BACKEND_URL || process.env.API_PUBLIC_URL || '').trim() ||
+    ((process.env.NODE_ENV || 'development') === 'production'
+      ? 'https://edmission.uz'
+      : `http://localhost:${process.env.PORT || '4000'}`),
   cors: {
     /** Explicit allowlist from CORS_ORIGIN + used for OAuth redirect checks */
     origin: resolveCorsAllowedOrigins(),
@@ -73,6 +78,26 @@ export const config = {
     studentStandardPriceId: process.env.STRIPE_STUDENT_STANDARD_PRICE_ID || '',
     studentMaxPriceId: process.env.STRIPE_STUDENT_MAX_PRICE_ID || '',
     universityPremiumPriceId: process.env.STRIPE_UNIVERSITY_PREMIUM_PRICE_ID || '',
+  },
+  cybersource: {
+    enabled:
+      process.env.PAYMENT_PROVIDER === 'cybersource' ||
+      Boolean(process.env.CYBERSOURCE_ACCESS_KEY || process.env.VISA_ACCEPTANCE_ACCESS_KEY),
+    environment: (process.env.CYBERSOURCE_ENV || process.env.VISA_ACCEPTANCE_ENV || 'test').trim().toLowerCase(),
+    profileId: (process.env.CYBERSOURCE_PROFILE_ID || process.env.VISA_ACCEPTANCE_PROFILE_ID || '').trim(),
+    accessKey: (process.env.CYBERSOURCE_ACCESS_KEY || process.env.VISA_ACCEPTANCE_ACCESS_KEY || '').trim(),
+    secretKey: (process.env.CYBERSOURCE_SECRET_KEY || process.env.VISA_ACCEPTANCE_SECRET_KEY || '').trim(),
+    merchantId: (process.env.CYBERSOURCE_MERCHANT_ID || process.env.VISA_ACCEPTANCE_MERCHANT_ID || '').trim(),
+    accountId: (process.env.CYBERSOURCE_ACCOUNT_ID || process.env.VISA_ACCEPTANCE_ACCOUNT_ID || '').trim(),
+    currency: (process.env.CYBERSOURCE_CURRENCY || process.env.VISA_ACCEPTANCE_CURRENCY || 'USD').trim().toUpperCase(),
+    locale: (process.env.CYBERSOURCE_LOCALE || process.env.VISA_ACCEPTANCE_LOCALE || 'en-us').trim(),
+    recurringFrequency: (process.env.CYBERSOURCE_RECURRING_FREQUENCY || 'monthly').trim(),
+    planAmounts: {
+      studentStandard: (process.env.CYBERSOURCE_STUDENT_STANDARD_AMOUNT || '').trim(),
+      studentMaxPremium: (process.env.CYBERSOURCE_STUDENT_MAX_PREMIUM_AMOUNT || '').trim(),
+      universityPremium: (process.env.CYBERSOURCE_UNIVERSITY_PREMIUM_AMOUNT || '').trim(),
+      schoolCounsellorPremium: (process.env.CYBERSOURCE_SCHOOL_COUNSELLOR_PREMIUM_AMOUNT || '').trim(),
+    },
   },
   /**
    * OAuth 2.0 Web client ID (Google Cloud Console → Web client).
