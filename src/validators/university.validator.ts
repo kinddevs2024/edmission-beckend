@@ -87,7 +87,7 @@ export const verificationRequestSchema = z.object({
 });
 
 const programItemSchema = z.object({
-  name: z.string().optional(),
+  name: z.string().trim().min(1).max(200),
   degreeLevel: z.string().optional(),
   field: z.string().optional(),
   durationYears: z.number().optional(),

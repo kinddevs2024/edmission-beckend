@@ -2046,7 +2046,8 @@ export async function getUniversityProfileByUserId(userId: string) {
       "University profile not found",
       ErrorCodes.NOT_FOUND,
     );
-  return { ...profile, id: String((profile as { _id: unknown })._id) };
+  const programs = await Program.find({ universityId: profile._id }).sort({ createdAt: 1 }).lean();
+  return { ...profile, id: String((profile as { _id: unknown })._id), programs };
 }
 
 const UNIVERSITY_PROFILE_WHITELIST = new Set([
@@ -2083,6 +2084,9 @@ export async function updateUniversityProfileByUserId(
       "University profile not found",
       ErrorCodes.NOT_FOUND,
     );
+  const programs = Array.isArray(patch.programs)
+    ? (patch.programs as Array<Record<string, unknown>>)
+    : undefined;
   const filtered = Object.fromEntries(
     Object.entries(patch).filter(([k]) => UNIVERSITY_PROFILE_WHITELIST.has(k)),
   );
@@ -2101,9 +2105,26 @@ export async function updateUniversityProfileByUserId(
     filtered,
     { new: true },
   ).lean();
-  return updated
-    ? { ...updated, id: String((updated as { _id: unknown })._id) }
-    : null;
+  if (programs !== undefined) {
+    const normalizedPrograms = programs.map((item) => ({
+      name: String(item.name ?? "").trim(),
+      degreeLevel: String(item.degreeLevel ?? "").trim(),
+      field: String(item.field ?? "").trim(),
+      durationYears: item.durationYears != null ? Number(item.durationYears) : undefined,
+      tuitionFee: item.tuitionFee != null ? Number(item.tuitionFee) : undefined,
+      language: item.language != null ? String(item.language).trim() : undefined,
+      entryRequirements: item.entryRequirements != null ? String(item.entryRequirements).trim() : undefined,
+    }));
+    await Program.deleteMany({ universityId: profile._id });
+    if (normalizedPrograms.length) {
+      await Program.insertMany(normalizedPrograms.map((item) => ({ universityId: profile._id, ...item })));
+    }
+    await UniversityCatalog.updateMany(
+      { linkedUniversityProfileId: profile._id },
+      { $set: { programs: normalizedPrograms } },
+    );
+  }
+  return updated ? getUniversityProfileByUserId(userId) : null;
 }
 
 export async function getCounsellorProfileByUserId(userId: string) {

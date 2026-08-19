@@ -389,6 +389,7 @@ export const adminPatchUniversityProfileBodySchema = universityUserUpdateProfile
     ieltsMinBand: true,
     gpaMinMode: true,
     gpaMinValue: true,
+    programs: true,
   })
   .extend({ verified: z.boolean().optional() })
   .strict();

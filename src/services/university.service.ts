@@ -141,22 +141,29 @@ export async function updateProfile(userId: string, data: Record<string, unknown
 
   const updated = await UniversityProfile.findByIdAndUpdate(profile._id, update, { new: true }).lean();
 
-  if (programs?.length) {
+  if (programs !== undefined) {
+    const normalizedPrograms = programs.map((p) => ({
+      name: String(p.name ?? '').trim(),
+      degreeLevel: String(p.degreeLevel ?? '').trim(),
+      field: String(p.field ?? '').trim(),
+      durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
+      tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
+      language: p.language != null ? String(p.language).trim() : undefined,
+      entryRequirements: p.entryRequirements != null ? String(p.entryRequirements).trim() : undefined,
+    }));
     await Program.deleteMany({ universityId: profile._id });
-    for (const p of programs) {
-      await Program.create({
+    if (normalizedPrograms.length) {
+      await Program.insertMany(normalizedPrograms.map((p) => ({
         universityId: profile._id,
-        name: String(p.name),
-        degreeLevel: String(p.degreeLevel),
-        field: String(p.field),
-        durationYears: p.durationYears != null ? Number(p.durationYears) : undefined,
-        tuitionFee: p.tuitionFee != null ? Number(p.tuitionFee) : undefined,
-        language: p.language != null ? String(p.language) : undefined,
-        entryRequirements: p.entryRequirements != null ? String(p.entryRequirements) : undefined,
-      });
+        ...p,
+      })));
     }
+    await UniversityCatalog.updateMany(
+      { linkedUniversityProfileId: profile._id },
+      { $set: { programs: normalizedPrograms } }
+    );
   }
-  return updated ? { ...updated, id: String((updated as { _id: unknown })._id) } : null;
+  return getProfile(userId);
 }
 
 export async function getDashboard(userId: string) {
