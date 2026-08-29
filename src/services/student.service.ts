@@ -22,6 +22,7 @@ import { calculateMatchScore } from './matching.service';
 import { filterSkills, filterInterests, filterHobbies } from '../constants/profileCriteria';
 import { AppError, ErrorCodes } from '../utils/errors';
 import { toObjectIdString, toObjectIdStrings } from '../utils/objectId';
+import { resolveStudentLevel, STUDENT_LEVEL_CRITERIA } from '../config/studentLevels';
 
 /** Minimal profile: name, surname, where born (country/city), where studied (educationStatus + at least one schoolsAttended or legacy school fields). */
 function isMinimalPortfolioComplete(doc: Record<string, unknown>): boolean {
@@ -250,6 +251,121 @@ export async function getDashboard(userId: string) {
     applications: interests.map((i) => mapInt(i as Record<string, unknown>)),
     offers: offers.map((o) => mapOff(o as Record<string, unknown>)),
     chatCount,
+  };
+}
+
+export type StudentRankingScope = 'global' | 'country' | 'level';
+
+type StudentRankingAggregateRow = {
+  _id: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  firstName?: string;
+  lastName?: string;
+  country?: string;
+  avatarUrl?: string;
+  portfolioCompletionPercent?: number;
+  offersCount?: number;
+  grantsCount?: number;
+};
+
+export async function getStudentRanking(userId: string, scope: StudentRankingScope = 'global', limit = 50) {
+  const currentProfile = await ensureStudentProfile(userId);
+  const currentUserObjectId = new mongoose.Types.ObjectId(userId);
+  const safeLimit = Math.max(3, Math.min(100, Math.floor(limit || 50)));
+
+  const visibilityMatch: Record<string, unknown> = {
+    $or: [
+      { profileVisibility: 'public' },
+      { profileVisibility: { $exists: false } },
+      { userId: currentUserObjectId },
+    ],
+  };
+  if (scope === 'country' && currentProfile.country) {
+    visibilityMatch.country = currentProfile.country;
+  }
+
+  const aggregateRows = await StudentProfile.aggregate<StudentRankingAggregateRow>([
+    { $match: visibilityMatch },
+    {
+      $lookup: {
+        from: Offer.collection.name,
+        localField: '_id',
+        foreignField: 'studentId',
+        as: 'rankingOffers',
+      },
+    },
+    {
+      $addFields: {
+        offersCount: { $size: '$rankingOffers' },
+        grantsCount: {
+          $size: {
+            $filter: {
+              input: '$rankingOffers',
+              as: 'offer',
+              cond: { $gte: ['$$offer.coveragePercent', STUDENT_LEVEL_CRITERIA.grantCoveragePercent] },
+            },
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        userId: 1,
+        firstName: 1,
+        lastName: 1,
+        country: 1,
+        avatarUrl: 1,
+        portfolioCompletionPercent: 1,
+        offersCount: 1,
+        grantsCount: 1,
+      },
+    },
+  ]);
+
+  const currentId = String(currentProfile._id);
+  const withLevel = aggregateRows.map((row) => {
+    const levelState = resolveStudentLevel({
+      profileCompletionPercent: Number(row.portfolioCompletionPercent ?? 0),
+      offersCount: Number(row.offersCount ?? 0),
+      grantsCount: Number(row.grantsCount ?? 0),
+    });
+    return {
+      id: String(row._id),
+      userId: String(row.userId),
+      fullName: [row.firstName, row.lastName].filter(Boolean).join(' ').trim() || 'Edmission student',
+      country: row.country ?? '',
+      avatarUrl: row.avatarUrl ?? '',
+      profileCompletionPercent: Number(row.portfolioCompletionPercent ?? 0),
+      offersCount: Number(row.offersCount ?? 0),
+      grantsCount: Number(row.grantsCount ?? 0),
+      isCurrentUser: String(row._id) === currentId,
+      ...levelState,
+    };
+  });
+
+  const currentLevel = withLevel.find((row) => row.isCurrentUser)?.level;
+  const filtered = scope === 'level' && currentLevel
+    ? withLevel.filter((row) => row.level === currentLevel)
+    : withLevel;
+
+  filtered.sort((a, b) => {
+    if (b.levelRank !== a.levelRank) return b.levelRank - a.levelRank;
+    if (b.grantsCount !== a.grantsCount) return b.grantsCount - a.grantsCount;
+    if (b.offersCount !== a.offersCount) return b.offersCount - a.offersCount;
+    if (b.profileCompletionPercent !== a.profileCompletionPercent) return b.profileCompletionPercent - a.profileCompletionPercent;
+    return a.fullName.localeCompare(b.fullName);
+  });
+
+  const ranked = filtered.map((row, index) => ({ ...row, position: index + 1 }));
+  const currentUser = ranked.find((row) => row.isCurrentUser) ?? null;
+  const top = ranked.slice(0, safeLimit);
+  const rows = currentUser && !top.some((row) => row.id === currentUser.id) ? [...top, currentUser] : top;
+
+  return {
+    scope,
+    total: ranked.length,
+    rows,
+    currentUser,
   };
 }
 

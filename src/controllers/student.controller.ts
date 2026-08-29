@@ -33,6 +33,19 @@ export async function getDashboard(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function getRanking(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) return next();
+    const rawScope = typeof req.query.scope === 'string' ? req.query.scope : 'global';
+    const scope = rawScope === 'country' || rawScope === 'level' ? rawScope : 'global';
+    const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
+    const data = await studentService.getStudentRanking(req.user.id, scope, rawLimit);
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export async function getUniversities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) return next();
