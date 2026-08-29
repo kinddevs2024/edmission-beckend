@@ -9,7 +9,7 @@ import * as notificationService from './notification.service';
 import { setBotStatus } from './botStatus.state';
 
 
-type TelegramUpdate = {
+export type TelegramUpdate = {
   update_id: number;
   message?: {
     text?: string;
@@ -1757,6 +1757,57 @@ async function handleTelegramAuthEmailMessage(
   await sendTelegramMessage(chatId, t(sessionState, 'doneReturnWebsite'));
 }
 
+export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
+  const chatIdRaw = update.message?.chat?.id;
+  const text = update.message?.text;
+  const phone = update.message?.contact?.phone_number;
+  const contactUserId = update.message?.contact?.user_id;
+  const username = update.message?.from?.username;
+  const firstName = update.message?.from?.first_name;
+  const lastName = update.message?.from?.last_name;
+  const replyToMessageId = update.message?.reply_to_message?.message_id;
+  const chatId = chatIdRaw != null ? String(chatIdRaw).trim() : '';
+  if (!chatId) return;
+
+  if (typeof phone === 'string' && phone.trim()) {
+    if (contactUserId == null || String(contactUserId) !== chatId) {
+      await sendTelegramMessage(chatId, t(await getSession(chatId), 'ownPhoneRequired'));
+      return;
+    }
+    const state = await getSession(chatId);
+    if (state.mode === 'await_phone_registration_contact') {
+      await handlePhoneRegistrationContactMessage(chatId, phone, username);
+      return;
+    }
+    if (state.mode === 'await_login_email') {
+      await handleEmailInput(chatId, phone, {
+        verifiedTelegramContact: String(contactUserId ?? '') === chatId,
+      });
+      return;
+    }
+    await handleContactMessage(chatId, phone, username, firstName, lastName);
+    return;
+  }
+  if (typeof text === 'string') {
+    await handleTextMessage(chatId, text, username, replyToMessageId, firstName, lastName);
+  }
+}
+
+export async function handleTelegramWebhookUpdate(input: unknown): Promise<void> {
+  if (!input || typeof input !== 'object') {
+    throw new AppError(400, 'Telegram update payload is invalid.', ErrorCodes.VALIDATION);
+  }
+  const update = input as TelegramUpdate;
+  if (!Number.isSafeInteger(Number(update.update_id))) {
+    throw new AppError(400, 'Telegram update id is invalid.', ErrorCodes.VALIDATION);
+  }
+  cleanupTransientState();
+  await handleTelegramUpdate(update);
+  const handledAt = new Date();
+  lastPollTime = handledAt;
+  setBotStatus({ isActive: true, lastPollTime: handledAt, pollingInProgress: false });
+}
+
 async function pollUpdates(): Promise<void> {
   if (!botStarted) return;
   const token = config.telegram.botToken.trim();
@@ -1791,39 +1842,8 @@ async function pollUpdates(): Promise<void> {
     const updates = Array.isArray(data.result) ? data.result : [];
     for (const update of updates) {
       updateOffset = Math.max(updateOffset, Number(update.update_id) + 1);
-      const chatIdRaw = update.message?.chat?.id;
-      const text = update.message?.text;
-      const phone = update.message?.contact?.phone_number;
-      const contactUserId = update.message?.contact?.user_id;
-      const username = update.message?.from?.username;
-      const firstName = update.message?.from?.first_name;
-      const lastName = update.message?.from?.last_name;
-      const replyToMessageId = update.message?.reply_to_message?.message_id;
-      const chatId = chatIdRaw != null ? String(chatIdRaw).trim() : '';
-      if (!chatId) continue;
       try {
-        if (typeof phone === 'string' && phone.trim()) {
-          if (contactUserId == null || String(contactUserId) !== chatId) {
-            await sendTelegramMessage(chatId, t(await getSession(chatId), 'ownPhoneRequired'));
-            continue;
-          }
-          const state = await getSession(chatId);
-          if (state.mode === 'await_phone_registration_contact') {
-            await handlePhoneRegistrationContactMessage(chatId, phone, username);
-            continue;
-          }
-          if (state.mode === 'await_login_email') {
-            await handleEmailInput(chatId, phone, {
-              verifiedTelegramContact: String(contactUserId ?? '') === chatId,
-            });
-            continue;
-          }
-          await handleContactMessage(chatId, phone, username, firstName, lastName);
-          continue;
-        }
-        if (typeof text === 'string') {
-          await handleTextMessage(chatId, text, username, replyToMessageId, firstName, lastName);
-        }
+        await handleTelegramUpdate(update);
       } catch (e) {
         logger.warn(e, 'Telegram update handler failed');
       }

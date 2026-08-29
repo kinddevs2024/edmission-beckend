@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as authController from '../controllers/auth.controller';
+import * as telegramWebhookController from '../controllers/telegramWebhook.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
 import { authRateLimiter } from '../middlewares/rateLimit.middleware';
@@ -33,6 +34,7 @@ import {
 
 const router = Router();
 
+router.post('/telegram/webhook', telegramWebhookController.receiveTelegramWebhook);
 router.use(authRateLimiter);
 router.use(requireDb);
 
