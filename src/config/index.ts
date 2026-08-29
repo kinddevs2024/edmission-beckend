@@ -145,6 +145,11 @@ export const config = {
     botToken: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
     botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').trim(),
     webhookSecret: (process.env.TELEGRAM_WEBHOOK_SECRET || '').trim(),
+    webhookUrl:
+      (process.env.TELEGRAM_WEBHOOK_URL || '').trim() ||
+      ((process.env.VERCEL_PROJECT_PRODUCTION_URL || '').trim()
+        ? `https://${(process.env.VERCEL_PROJECT_PRODUCTION_URL || '').trim().replace(/^https?:\/\//, '')}/api/auth/telegram/webhook`
+        : ''),
     pollingIntervalMs: Math.max(1000, parseInt(process.env.TELEGRAM_POLLING_INTERVAL_MS || '3000', 10)),
     frontendBaseUrl:
       (process.env.TELEGRAM_FRONTEND_URL && process.env.TELEGRAM_FRONTEND_URL.trim()) ||

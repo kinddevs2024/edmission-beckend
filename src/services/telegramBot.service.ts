@@ -1808,6 +1808,43 @@ export async function handleTelegramWebhookUpdate(input: unknown): Promise<void>
   setBotStatus({ isActive: true, lastPollTime: handledAt, pollingInProgress: false });
 }
 
+export async function ensureTelegramWebhookConfigured(): Promise<boolean> {
+  const token = config.telegram.botToken.trim();
+  const secret = config.telegram.webhookSecret.trim();
+  const url = config.telegram.webhookUrl.trim();
+  if (!token || !secret || !url) {
+    logger.warn(
+      { hasToken: Boolean(token), hasSecret: Boolean(secret), hasUrl: Boolean(url) },
+      'Telegram webhook configuration is incomplete'
+    );
+    return false;
+  }
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        secret_token: secret,
+        allowed_updates: ['message'],
+        drop_pending_updates: false,
+      }),
+    });
+    const data = (await response.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+    if (!response.ok || !data.ok) {
+      logger.warn({ status: response.status, description: data.description }, 'Telegram setWebhook failed');
+      return false;
+    }
+    setBotStatus({ isActive: true, pollingInProgress: false });
+    logger.info({ webhookUrl: url }, 'Telegram webhook configured');
+    return true;
+  } catch (error) {
+    logger.warn({ error }, 'Telegram setWebhook request failed');
+    return false;
+  }
+}
+
 async function pollUpdates(): Promise<void> {
   if (!botStarted) return;
   const token = config.telegram.botToken.trim();

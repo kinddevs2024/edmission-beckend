@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import app from '../src/app';
 import { connectDatabase } from '../src/config/database';
 import { ensureDefaultAdmin } from '../src/services/auth.service';
+import { ensureTelegramWebhookConfigured } from '../src/services/telegramBot.service';
 import { logger } from '../src/utils/logger';
 
 let bootPromise: Promise<void> | null = null;
@@ -11,6 +12,7 @@ async function boot(): Promise<void> {
   if (mongoose.connection.readyState !== 1) {
     await connectDatabase();
     await ensureDefaultAdmin();
+    await ensureTelegramWebhookConfigured();
     logger.info('Vercel function boot completed');
   }
 }
