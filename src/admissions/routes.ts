@@ -7,11 +7,12 @@ import mongoose from 'mongoose';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { requireAdminOnly, requireRole } from '../middlewares/rbac.middleware';
 import { requireDb } from '../middlewares/requireDb.middleware';
-import { AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState, leadStatuses } from './models';
+import { AdmissionCalendarAnchor, AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState, leadStatuses } from './models';
 import { answerQuestion, defaultSettings, settings } from './assistant';
 import { cancelBooking, createSlot, deleteLeadData, maybeScheduleFollowup, recordEvent, scheduleFollowup, sendLead, staffAlert, telegram } from './service';
 import { admissionAnalytics, markMilestone } from './analytics';
 import { importPublicUniversityDrafts } from './public-knowledge';
+import { listStaffBookings, listStaffQuestions, staffConversationPage } from './admin-data';
 
 const router = Router();
 const asyncRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -72,9 +73,23 @@ router.get('/leads', asyncRoute(async (req, res) => {
   if (query.q) { const escaped = query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); filter.$or = ['name', 'username', 'phone'].map(k => ({ [k]: { $regex: escaped, $options: 'i' } })); }
   res.json({ items: await AdmissionLead.find(filter).sort({ updatedAt: -1 }).skip((query.page - 1) * 50).limit(50).lean(), total: await AdmissionLead.countDocuments(filter) });
 }));
+const staffListQuery = z.object({ page: z.coerce.number().int().min(1).max(100000).default(1), limit: z.coerce.number().int().min(1).max(100).default(50), q: z.string().max(100).default('') });
+router.get('/bookings', asyncRoute(async (req, res) => {
+  const query = staffListQuery.extend({ status: z.enum(['active', 'cancelled', 'all']).default('all') }).parse(req.query);
+  res.json(await listStaffBookings(query.page, query.limit, query.q, query.status));
+}));
+router.get('/questions', asyncRoute(async (req, res) => {
+  const query = staffListQuery.parse(req.query);
+  res.json(await listStaffQuestions(query.page, query.limit, query.q));
+}));
+router.get('/leads/:id/messages', asyncRoute(async (req, res) => {
+  const query = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), before: z.string().regex(/^[a-f\d]{24}$/i).optional() }).parse(req.query);
+  if (!await AdmissionLead.exists({ _id: req.params.id })) { res.status(404).json({ error: 'Lead not found' }); return; }
+  res.json(await staffConversationPage(req.params.id, query.limit, query.before));
+}));
 router.get('/leads/:id', asyncRoute(async (req, res) => {
   const lead = await AdmissionLead.findById(req.params.id).lean(); if (!lead) { res.status(404).json({ error: 'Lead not found' }); return; }
-  res.json({ lead, messages: (await AdmissionMessage.find({ leadId: req.params.id }).sort({ createdAt: -1 }).limit(150).lean()).reverse(), bookings: await AdmissionSlot.find({ leadId: req.params.id }).sort({ start: -1 }).lean(), jobs: await AdmissionJob.find({ leadId: req.params.id }).sort({ due: -1 }).limit(100).lean(), events: await AdmissionEvent.find({ leadId: req.params.id }).sort({ createdAt: -1 }).limit(100).lean() });
+  res.json({ lead, calendarMessages: await AdmissionCalendarAnchor.find({ leadId: req.params.id }).sort({ updatedAt: -1 }).limit(20).lean(), messages: (await AdmissionMessage.find({ leadId: req.params.id }).sort({ createdAt: -1 }).limit(150).lean()).reverse(), bookings: await AdmissionSlot.find({ leadId: req.params.id }).sort({ start: -1 }).lean(), jobs: await AdmissionJob.find({ leadId: req.params.id }).sort({ due: -1 }).limit(100).lean(), events: await AdmissionEvent.find({ leadId: req.params.id }).sort({ createdAt: -1 }).limit(100).lean() });
 }));
 router.patch('/leads/:id', asyncRoute(async (req, res) => {
   const data = z.object({ status: z.enum(leadStatuses).optional(),  assignedTo: z.string().max(100).optional(), notes: z.string().max(10000).optional(), profile: z.record(z.string(), z.string().max(1000)).optional(), name: z.string().max(150).optional(), phone: z.string().max(30).optional() }).parse(req.body);
