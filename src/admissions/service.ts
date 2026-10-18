@@ -1,3 +1,5 @@
+import { bookingRequested } from './general-guidance';
+import { declinesBooking } from './readiness';
 import { createHash } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import { hostname } from 'os';
@@ -122,7 +124,7 @@ export async function cancelBooking(slotId: string, lead: any, actor = 'student'
 export async function showSlots(lead: any) {
   return showMonthCalendar(lead);
 }
-export async function showMonthCalendar(lead: any, month = tashkentDay().slice(0, 7), suppliedConfig?: any) {
+export async function showMonthCalendar(lead: any, month = tashkentDay().slice(0, 7), suppliedConfig?: any, aiReply?: { text: string; metadata: any }) {
   const cfg = suppliedConfig || await settings();
   if (!monthAllowed(month, cfg)) month = tashkentDay().slice(0, 7);
   const slots = await availableSlots(month, cfg); const keyboard = monthKeyboard(month, slots, cfg, lead.language);
@@ -130,7 +132,7 @@ export async function showMonthCalendar(lead: any, month = tashkentDay().slice(0
   const prompt = lang === 'ru' ? 'Выберите свободный день' : lang === 'uz' ? 'Bo‘sh kunni tanlang' : 'Choose an available day';
   const empty = lang === 'ru' ? 'В этом месяце свободных дней нет. Выберите другой месяц.' : lang === 'uz' ? 'Bu oyda bo‘sh kun yo‘q. Boshqa oyni tanlang.' : 'No available days in this month. Choose another month.';
   keyboard.inline_keyboard.push([{ text: lang === 'ru' ? '← Назад' : lang === 'uz' ? '← Orqaga' : '← Back', callback_data: 'cal:back' }]);
-  return sendLead(lead, `${keyboard.title}\n${keyboard.days.length ? prompt : empty}\n${lang === 'ru' ? 'Время по Ташкенту' : lang === 'uz' ? 'Toshkent vaqti' : 'Tashkent time'}`, { reply_markup: { inline_keyboard: keyboard.inline_keyboard } });
+  return sendLead(lead, `${aiReply?.text ? aiReply.text + '\n\n' : ''}${keyboard.title}\n${keyboard.days.length ? prompt : empty}\n${lang === 'ru' ? 'Время по Ташкенту' : lang === 'uz' ? 'Toshkent vaqti' : 'Tashkent time'}`, { reply_markup: { inline_keyboard: keyboard.inline_keyboard } }, 'out', aiReply?.metadata || {});
 }
 async function showDayCalendar(lead: any, day: string, cfg: any) {
   if (!dayAllowed(day, cfg)) return showMonthCalendar(lead, day.slice(0, 7), cfg);
@@ -274,16 +276,20 @@ async function processUpdateInternal(update: any) {
   }
   if (/^\/cancel\b/.test(text)) { lead.workflow = {}; await lead.save(); const slots: any[] = await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).lean(); for (const slot of slots) await cancelBooking(String(slot._id), lead); await sendLead(lead, c.cancelled); return; }
   if (!cfg.autoReplies) { await recordEvent('automation_paused', lead._id); return; }
-  const history = (await AdmissionMessage.find({ leadId: lead._id, updateId: { $ne: update.update_id } }).sort({ createdAt: -1 }).limit(12).lean()).reverse();
+  const history = (await AdmissionMessage.find({ leadId: lead._id, updateId: { $ne: update.update_id } }).sort({ createdAt: -1 }).limit(24).lean()).reverse();
+  const recentReply: any = await AdmissionMessage.findOne({ leadId: lead._id, direction: 'out' }).sort({ createdAt: -1 }).lean();
+  if (declinesBooking(text) && recentReply?.provider === 'meta' && JSON.stringify(recentReply.deliveryOptions || {}).includes('cal:m:')) { lead.bookingOfferDeclinedAt = new Date(); await lead.save(); }
+  const hasUpcomingBooking = Boolean(await AdmissionSlot.exists({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }));
   const originalScore = lead.score;
   const analysis = scoreLead(text, lead.profile); Object.assign(lead, analysis);
-  const answer = await withTyping(lead, () => answerQuestion(text, lead, history));
+  const answer = await withTyping(lead, () => answerQuestion(text, lead, history, { hasUpcomingBooking }));
   const currentAutomation: any = await AdmissionLead.findById(lead._id).select('aiPaused').lean();
   if (!currentAutomation) {
     await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'staff_waiting' } });
     await recordEvent('ai_suppressed_on_takeover', lead._id); return;
   }
   const extractedProfile: Record<string, string> = answer.profile;
+  if ('studyFacts' in answer) lead.studyFacts = answer.studyFacts;
   lead.profile = { ...lead.profile, ...extractedProfile }; if (extractedProfile.name) lead.name = extractedProfile.name;
   if (extractedProfile.phone && /^\+?[0-9()\s-]{7,22}$/.test(extractedProfile.phone)) lead.phone = extractedProfile.phone;
   if (answer.summary) lead.summary = answer.summary;
@@ -294,7 +300,7 @@ async function processUpdateInternal(update: any) {
   if (answer.needsHuman) await staffAlert('unanswered_question', lead, text);
   if (answer.errorCode) await recordEvent('ai_error', lead._id, { code: answer.errorCode });
   if (lead.score >= 60 && originalScore < 60) await staffAlert('high_priority', lead, lead.summary || text);
-  if ('action' in answer && answer.action?.type === 'show_booking_calendar') { await sendLead(lead, answer.reply || (lang === 'ru' ? 'Выберите удобное время для консультации.' : lang === 'uz' ? 'Maslahat uchun qulay vaqtni tanlang.' : 'Choose a convenient consultation time.'), { reply_markup: { inline_keyboard: [[{ text: menuCopy[lang].book, callback_data: `cal:m:${tashkentDay().slice(0, 7)}` }]] } }, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: 'ai_answered' }); return; }
+  if ('action' in answer && answer.action?.type === 'show_booking_calendar') { lead.lastBookingOfferAt = new Date(); await lead.save(); if (bookingRequested(text, history)) { await showMonthCalendar(lead, undefined, cfg, { text: answer.reply, metadata: { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: 'ai_answered' } }); return; } await sendLead(lead, answer.reply || (lang === 'ru' ? 'Выберите удобное время для консультации.' : lang === 'uz' ? 'Maslahat uchun qulay vaqtni tanlang.' : 'Choose a convenient consultation time.'), { reply_markup: { inline_keyboard: [[{ text: menuCopy[lang].book, callback_data: `cal:m:${tashkentDay().slice(0, 7)}` }]] } }, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: 'ai_answered' }); return; }
   const buttons: {text:string;callback_data:string}[] = [];
   if (answer.provider === 'meta-consent-required') buttons.push({ text: lang === 'ru' ? 'Разрешить ИИ Meta' : lang === 'uz' ? 'Meta AI ga ruxsat' : 'Allow Meta AI', callback_data: 'ai:consent' });
   await sendLead(lead, answer.reply, buttons.length ? { reply_markup: { inline_keyboard: [buttons] } } : {}, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: answer.needsHuman ? 'unanswered' : 'ai_answered' });

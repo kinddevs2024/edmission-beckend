@@ -72,3 +72,7 @@ The latest user instruction supersedes the original human-handover requirement. 
 
 ## Answer-first behavior
 The assistant answers the current question before optional clarification and does not run a qualification questionnaire. Real Meta text is preserved for ordinary conversation, grounded information and honest uncertainty. General study-preparation context is maintained separately from staff-approved business knowledge in general-guidance.ts, with official source URLs and explicit scope caveats. It never authorizes invented Edmission fees, institution-specific thresholds or guarantees. Booking actions require explicit request/acceptance; their text is actual Meta output when available.
+
+
+## Consultation offer readiness
+A natural closing can produce a hidden ready_for_consultation action, backed by the student’s own study-goal evidence, without a required questionnaire. Offers respect refusal, a recent-offer cooldown and upcoming reservations. Study language is separate from bot language. Proactive closing offers present a booking button; explicit confirmed consultation requests open the real calendar, including a recent clarification across messages. Actual reservation still requires selecting a day/hour and confirming.

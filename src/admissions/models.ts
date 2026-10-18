@@ -8,6 +8,7 @@ export const AdmissionLead = model('AdmissionLead', new Schema({
   chatId: { type: String, unique: true, required: true }, username: String, name: String,
   language: { type: String, enum: ['uz', 'ru', 'en'], default: 'en' },
   phone: String, status: { type: String, enum: leadStatuses, default: 'new' },
+  studyFacts: { type: Schema.Types.Mixed, default: {} }, lastBookingOfferAt: Date, bookingOfferDeclinedAt: Date,
   profile: { type: Schema.Types.Mixed, default: {} }, notes: { type: String, default: '' },
   summary: String, score: { type: Number, default: 0 }, intent: String, nextAction: String,
   objections: [String], assignedTo: String, aiPaused: { type: Boolean, default: false },
