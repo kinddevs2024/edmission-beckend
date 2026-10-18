@@ -50,7 +50,7 @@ async function main() {
   const linked = await Message.findOne({ replyToUpdateId: 3, direction: 'out' });
   check('Delivered answer records its inquiry link for first-reply latency', () => { assert(linked.sentAt); assert(linked.inboundAt); assert.equal(linked.analyticsVersion, 1); });
   await processUpdate({ update_id: 302, callback_query: { id: 'qa_feedback', from: { id: 10001, first_name: 'Test Student' }, message: { message_id: 3, chat: { id: 10001, type: 'private' } }, data: 'helpful:3' } });
-  const rated = await Message.findOne({ updateId: 3 }); check('Resolution is recorded only after student Helpful feedback', () => { assert.equal(rated.inquiryOutcome, 'ai_resolved'); assert(rated.feedbackAt); });
+  const rated = await Message.findOne({ updateId: 3 }); check('Legacy Helpful cannot invent AI resolution after booking-only feedback change', () => { assert.equal(rated.inquiryOutcome, 'ai_answered'); assert.equal(rated.feedbackAt, undefined); });
   const beforeTakeover = deliveries.length; pauseDuringInference = lead._id;
   await processUpdate(update(303, 'Please explain consultation booking'));
   check('Legacy handover flag cannot suppress AI-only replies', () => assert(deliveries.length > beforeTakeover));

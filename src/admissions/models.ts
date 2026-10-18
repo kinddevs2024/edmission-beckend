@@ -55,7 +55,7 @@ export const AdmissionBooking = model('AdmissionBooking', new Schema({
   consultantId: String, start: Date, end: Date, bookedAt: { type: Date, required: true },
   status: { type: String, enum: ['active', 'cancelled'], default: 'active' },
   attendance: { type: String, enum: ['pending', 'attended', 'missed'], default: 'pending' },
-  attendanceRecordedAt: Date, cancelledAt: Date, analyticsVersion: { type: Number, default: 1 },
+  feedbackAt: Date, attendanceRecordedAt: Date, cancelledAt: Date, analyticsVersion: { type: Number, default: 1 },
 }, opts));
 export const AdmissionJob = model('AdmissionJob', new Schema({
   leadId: { type: Schema.Types.ObjectId, index: true },
