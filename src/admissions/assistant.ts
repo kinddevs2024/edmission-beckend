@@ -36,7 +36,7 @@ export async function modelCompletion(messages: { role: string; content: string 
     const response = await fetch(url, {
       method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json', ...(useMeta ? { Authorization: `Bearer ${process.env.LLAMA_API_KEY}` } : {}) },
-      body: JSON.stringify(useMeta ? { model: cfg.model, messages, temperature: 0.2, max_completion_tokens: 1000, stream: false } : { model: process.env.ADMISSIONS_OLLAMA_MODEL || 'qwen3:0.6b', messages, stream: false, think: false, options: { temperature: 0, num_predict: 500, num_ctx: 2048 } }),
+      body: JSON.stringify(useMeta ? { model: cfg.model, messages, temperature: 0.2, max_completion_tokens: 1000, stream: false } : { model: process.env.ADMISSIONS_OLLAMA_MODEL || 'qwen3:0.6b', messages: [messages[0], ...messages.slice(1).slice(-5)].map((message, index) => ({ ...message, content: message.content.slice(0, index === 0 ? 5500 : 600) })), stream: false, think: false, options: { temperature: 0, num_predict: 500, num_ctx: 4096 } }),
     });
     if (!response.ok) throw new Error(`AI_HTTP_${response.status}`);
     const result: any = await response.json();
@@ -50,7 +50,18 @@ export async function modelCompletion(messages: { role: string; content: string 
 }
 export function parseAnswer(raw: string, entries: Entry[]) {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const parsed = JSON.parse(cleaned);
+  // Small local models sometimes append an explanation after valid JSON. Parse the
+  // first balanced object, without evaluating code or trusting arbitrary suffixes.
+  let depth = 0; let quoted = false; let escaped = false; let start = -1; let end = -1;
+  for (let i = 0; i < cleaned.length; i++) {
+    const char = cleaned[i];
+    if (start < 0) { if (char === '{') { start = i; depth = 1; } continue; }
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\' && quoted) { escaped = true; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (!quoted) { if (char === '{') depth++; if (char === '}' && --depth === 0) { end = i + 1; break; } }
+  }
+  const parsed = JSON.parse(start >= 0 && end > start ? cleaned.slice(start, end) : cleaned);
   const allowed = new Set(entries.map(e => String(e._id)));
   const sources = Array.isArray(parsed.sourceIds) ? parsed.sourceIds.filter((id: unknown) => typeof id === 'string' && allowed.has(id)) : [];
   const profile: Record<string, string> = {};
@@ -69,6 +80,9 @@ export function parseAnswer(raw: string, entries: Entry[]) {
 export async function answerQuestion(text: string, lead: any, history: any[], override?: any) {
   const language = lead.language as Language;
   const cfg = { ...(await settings()), ...(override || {}) };
+  // Server availability or an administrator's provider choice never substitutes
+  // for an individual student's choice to send conversation text to Meta.
+  if (cfg.provider === 'meta' && lead.externalAIConsent !== true) cfg.provider = 'ollama';
   const retrievalQuery = /\b(that|those|it|это|этом|shu|shuni)\b/i.test(text)
     ? `${text} ${history.filter(m => m.direction === 'in').slice(-1).map(m => m.text).join(' ')}` : text;
   const entries = await approvedKnowledge(retrievalQuery, language);

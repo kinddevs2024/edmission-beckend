@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import path from 'path';
+import { execFile } from 'child_process';
 import multer from 'multer';
 import { z } from 'zod';
 import mongoose from 'mongoose';
@@ -29,7 +30,7 @@ router.get('/overview', asyncRoute(async (_req, res) => {
     settings(),
   ]);
   res.json({ leads, incoming, aiResolvedMessages: aiResolved, bookings, handovers, jobs, statuses, averageResponseMs: average[0]?.responseMs || 0, unanswered: frequent,
-    integration: { telegramConfigured: Boolean(process.env.ADMISSIONS_TELEGRAM_TOKEN), metaConfigured: Boolean(process.env.LLAMA_API_KEY), provider: cfg.provider, model: cfg.model, calendar: 'Built-in consultation calendar', staffTelegramConfigured: Boolean(cfg.staffChatId) } });
+    integration: { telegramConfigured: Boolean(process.env.ADMISSIONS_TELEGRAM_TOKEN), metaConfigured: Boolean(process.env.LLAMA_API_KEY), provider: cfg.provider, model: cfg.provider === 'ollama' ? process.env.ADMISSIONS_OLLAMA_MODEL || 'qwen3:0.6b' : cfg.model, calendar: 'Built-in consultation calendar', staffTelegramConfigured: Boolean(cfg.staffChatId) } });
 }));
 router.get('/settings', asyncRoute(async (_req, res) => { res.json(await settings()); }));
 const settingsSchema = z.object({
@@ -47,7 +48,7 @@ router.put('/settings', requireAdminOnly, asyncRoute(async (req, res) => {
 }));
 router.post('/test', asyncRoute(async (req, res) => {
   const input = z.object({ text: z.string().min(1).max(4000), language: z.enum(['uz', 'ru', 'en']), instructions: z.string().max(4000).optional() }).parse(req.body);
-  res.json(await answerQuestion(input.text, { language: input.language }, [], input.instructions ? { instructions: input.instructions } : undefined));
+  res.json(await answerQuestion(input.text, { language: input.language, externalAIConsent: true }, [], input.instructions ? { instructions: input.instructions } : undefined));
 }));
 router.post('/integration-test', requireAdminOnly, asyncRoute(async (_req, res) => {
   const bot = await telegram('getMe'); const cfg = await settings();
@@ -76,7 +77,7 @@ router.post('/leads/:id/reply', asyncRoute(async (req, res) => {
   const { text } = z.object({ text: z.string().min(1).max(3500) }).parse(req.body);
   const lead: any = await AdmissionLead.findById(req.params.id); if (!lead) { res.sendStatus(404); return; }
   lead.aiPaused = true; lead.assignedTo = req.user!.id; await lead.save();
-  await sendLead(lead, text, {}, 'staff'); await recordEvent('staff_reply', lead._id, {}, req.user!.id); res.json({ sent: true });
+  const delivery = await sendLead(lead, text, {}, 'staff'); await recordEvent('staff_reply', lead._id, {}, req.user!.id); res.json({ sent: !delivery.queued, queued: Boolean(delivery.queued) });
 }));
 router.post('/leads/:id/followup', asyncRoute(async (req, res) => {
   const data = z.object({ due: z.coerce.date(), text: z.string().min(1).max(2000) }).parse(req.body);
@@ -100,17 +101,23 @@ router.delete('/knowledge/:id', requireAdminOnly, asyncRoute(async (req, res) =>
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 1, fileSize: 8 * 1024 * 1024 } });
 router.post('/knowledge-upload', upload.single('file'), asyncRoute(async (req, res) => {
   if (!req.file) { res.status(400).json({ error: 'File required' }); return; }
-  const ext = path.extname(req.file.originalname).toLowerCase(); let text = '';
-  if (['.txt', '.md', '.csv'].includes(ext)) text = req.file.buffer.toString('utf8');
-  else if (ext === '.pdf' && req.file.buffer.subarray(0, 5).toString() === '%PDF-') {
-    const { PDFParse } = require('pdf-parse'); const parser = new PDFParse({ data: req.file.buffer });
-    try { text = (await parser.getText()).text; } finally { await parser.destroy(); }
-  } else if (ext === '.docx' && req.file.buffer.subarray(0, 2).toString() === 'PK') {
-    const mammoth = require('mammoth'); text = (await mammoth.extractRawText({ buffer: req.file.buffer })).value;
-  } else { res.status(400).json({ error: 'Supported: PDF, DOCX, TXT, Markdown, CSV. Scanned PDFs need OCR before upload.' }); return; }
+  const ext = path.extname(req.file.originalname).toLowerCase();
+  if (!['.txt', '.md', '.csv', '.pdf', '.docx'].includes(ext)) { res.status(400).json({ error: 'Supported: PDF, DOCX, TXT, Markdown, CSV. Scanned PDFs need OCR before upload.' }); return; }
+  const buffer = req.file.buffer;
+  let extracted: { text: string; truncated: boolean };
+  try {
+    extracted = await new Promise((resolve, reject) => {
+      const child = execFile(process.execPath, ['--max-old-space-size=192', path.join(__dirname, 'extract-document.js'), ext], { timeout: 20000, maxBuffer: 500000, windowsHide: true }, (error, stdout) => {
+        if (error) { reject(new Error('DOCUMENT_EXTRACTION_FAILED')); return; }
+        try { resolve(JSON.parse(stdout)); } catch { reject(new Error('DOCUMENT_EXTRACTION_FAILED')); }
+      });
+      child.stdin?.on('error', () => {}); child.stdin?.end(buffer);
+    });
+  } catch { res.status(400).json({ error: 'The document is invalid, too complex, or unreadable. Please upload a smaller text-based PDF or DOCX.' }); return; }
+  const text = extracted.text;
   if (!text.trim()) { res.status(400).json({ error: 'No readable text found. Scanned documents need OCR.' }); return; }
   const item = await AdmissionKnowledge.create({ title: req.file.originalname.slice(0, 200), content: text.slice(0, 60000), category: 'Documents', language: ['uz', 'ru', 'en'].includes(req.body.language) ? req.body.language : 'en', approved: false, updatedBy: req.user!.id, sourceFilename: req.file.originalname.slice(0, 200) });
-  await recordEvent('knowledge_uploaded', undefined, { id: item._id }, req.user!.id); res.status(201).json({ item, truncated: text.length > 60000 });
+  await recordEvent('knowledge_uploaded', undefined, { id: item._id }, req.user!.id); res.status(201).json({ item, truncated: extracted.truncated });
 }));
 router.get('/slots', asyncRoute(async (_req, res) => { res.json(await AdmissionSlot.find({ end: { $gte: new Date(Date.now() - 30 * 86400000) } }).sort({ start: 1 }).limit(500).populate('leadId', 'name phone').lean()); }));
 router.post('/slots', asyncRoute(async (req, res) => {

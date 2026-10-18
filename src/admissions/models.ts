@@ -12,6 +12,7 @@ export const AdmissionLead = model('AdmissionLead', new Schema({
   summary: String, score: { type: Number, default: 0 }, intent: String, nextAction: String,
   objections: [String], assignedTo: String, aiPaused: { type: Boolean, default: false },
   followupConsent: { type: Boolean, default: false }, lastInboundAt: Date,
+  externalAIConsent: { type: Boolean, default: false },
   workflow: { type: Schema.Types.Mixed, default: {} }, deletedAt: Date,
 }, opts));
 export const AdmissionMessage = model('AdmissionMessage', new Schema({
@@ -20,6 +21,9 @@ export const AdmissionMessage = model('AdmissionMessage', new Schema({
   text: { type: String, required: true }, updateId: { type: Number, unique: true, sparse: true },
   telegramMessageId: Number, provider: String, sourceIds: [String], delivered: Boolean,
   responseMs: Number, errorCode: String,
+  deliveryKey: { type: String, unique: true, sparse: true }, jobId: String,
+  deliveryAttempts: { type: Number, default: 0 }, nextAttemptAt: Date, lockedUntil: Date, sentAt: Date,
+  deliveryOptions: Schema.Types.Mixed, slotId: Schema.Types.ObjectId, cancelled: { type: Boolean, default: false },
 }, opts));
 export const AdmissionKnowledge = model('AdmissionKnowledge', new Schema({
   title: { type: String, required: true }, category: { type: String, default: 'FAQ' },

@@ -3,17 +3,20 @@ const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const express = require('express');
 const { AdmissionLead: Lead, AdmissionMessage: Message, AdmissionKnowledge: Knowledge, AdmissionSlot: Slot, AdmissionJob: Job, AdmissionEvent: Event, AdmissionState: State } = require('../dist/admissions/models');
-const { processUpdate, createSlot, bookSlot, cancelBooking, scheduleFollowup, deleteLeadData, runDueJobs } = require('../dist/admissions/service');
+const { processUpdate, createSlot, bookSlot, cancelBooking, scheduleFollowup, deleteLeadData, runDueJobs, sendLead, retryOutbox } = require('../dist/admissions/service');
 const { detectLanguage, canFollowUp, rankKnowledge } = require('../dist/admissions/policy');
 const { approvedKnowledge, parseAnswer } = require('../dist/admissions/assistant');
 const actualFetch = global.fetch;
 const deliveries = [];
 let sequence = 0;
 let sourceId;
+let failDelivery = false;
+let externalCalls = 0; let localCalls = 0;
 global.fetch = async (url, init = {}) => {
-  if (String(url).startsWith('http://127.0.0.1:')) return actualFetch(url, init);
+  if (String(url).startsWith('http://127.0.0.1:') && !String(url).includes(':11434/')) return actualFetch(url, init);
   const body = JSON.parse(init.body || '{}');
-  if (String(url).includes('api.telegram.org')) { deliveries.push(body); return { ok: true, json: async () => ({ ok: true, result: { message_id: ++sequence } }) }; }
+  if (String(url).includes('api.telegram.org')) { if (failDelivery) { failDelivery = false; throw new Error('TELEGRAM_503'); } deliveries.push(body); return { ok: true, json: async () => ({ ok: true, result: { message_id: ++sequence } }) }; }
+  if (String(url).includes('api.meta.ai')) externalCalls++; else localCalls++;
   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ reply: 'A consultation is available by appointment. /book', sourceIds: [sourceId], needsHuman: false, profile: { destination: 'Canada', program: 'Computer science', degree: 'Bachelor' }, summary: 'Interested in Canada and computer science.' }) } }] }) };
 };
 process.env.ADMISSIONS_TELEGRAM_TOKEN = '123:test'; process.env.LLAMA_API_KEY = 'test-placeholder';
@@ -31,14 +34,20 @@ async function main() {
   await Knowledge.create({ title: 'Consultation expired', category: 'FAQ', content: 'Expired must never be disclosed.', language: 'en', approved: true, validUntil: new Date(0) });
   const approved = await approvedKnowledge('consultation', 'en'); check('Only approved unexpired knowledge retrieved', () => assert.deepEqual(approved.map(x => String(x._id)), [sourceId]));
   check('Invented citation IDs rejected', () => assert.equal(parseAnswer(JSON.stringify({ reply: 'bad', sourceIds: ['not-real'] }), [item]).needsHuman, true));
+  check('Local model trailing explanation parsed safely', () => assert.equal(parseAnswer(JSON.stringify({ reply: 'Valid {quoted} answer', sourceIds: [sourceId] }) + '\nextra explanation', [item]).reply, 'Valid {quoted} answer'));
   await processUpdate(update(1, '/start')); const lead = await Lead.findOne({ chatId: '10001' });
   check('Start persists lead and multilingual welcome', () => { assert(lead); assert(deliveries.at(-1).text.includes('Edmission')); });
+  lead.externalAIConsent = true; await lead.save(); // Synthetic fixture opts in to the mocked Meta transport.
   await processUpdate(update(1, '/start')); check('Telegram update deduplicated', () => assert.equal(deliveries.length, 1));
   await processUpdate(update(2, 'What is the Mars visa price?'));
   check('Unknown fact escalates without invented fee', () => { assert(deliveries.at(-1).text.includes('verified')); });
   assert.equal(await Event.countDocuments({ kind: 'unanswered_question' }), 1); passed++;
   await processUpdate(update(3, 'I want consultation in Canada for computer science Bachelor'));
   let current = await Lead.findById(lead._id); check('Verified model reply and structured qualification', () => { assert.equal(current.profile.destination, 'Canada'); assert(deliveries.at(-1).text.includes('/book')); });
+  current.externalAIConsent = false; await current.save(); const beforeMeta = externalCalls;
+  await processUpdate(update(301, 'How can I book a consultation?'));
+  check('No external AI processing without individual student opt-in', () => { assert.equal(externalCalls, beforeMeta); assert(localCalls > 0); });
+  current = await Lead.findById(lead._id); current.externalAIConsent = true; await current.save();
   await processUpdate(update(4, '/human')); current = await Lead.findById(lead._id); check('Human handover pauses AI', () => assert.equal(current.aiPaused, true));
   await processUpdate(update(5, 'Please answer')); check('Messages wait for staff during handover', () => assert(deliveries.at(-1).text.includes('queue')));
   await processUpdate(update(6, '/resume')); await processUpdate(update(7, '/followups')); current = await Lead.findById(lead._id);
@@ -57,6 +66,17 @@ async function main() {
   await cancelBooking(String(slot._id), bookedLead); assert.equal(await Job.countDocuments({ slotId: slot._id, status: 'pending' }), 0); passed++; console.log('PASS cancellation stops reminders and releases slot');
   await processUpdate(update(9, '/stop')); current = await Lead.findById(lead._id);
   await assert.rejects(scheduleFollowup(current, { due: new Date(Date.now() + 3600000), text: 'No consent' }, 'qa'), /FOLLOWUP_NOT_PERMITTED/); passed++; console.log('PASS opt-out cannot be bypassed by staff scheduling');
+  failDelivery = true;
+  const queued = await sendLead(current, 'Outbox delivery check', { reply_markup: { inline_keyboard: [[{ text: 'Choose', callback_data: 'book:test' }]] } });
+  const pending = await Message.findOne({ text: 'Outbox delivery check' }); pending.nextAttemptAt = new Date(0); await pending.save();
+  check('Transport failure persists a pending reply', () => { assert.equal(queued.queued, true); assert.equal(pending.delivered, false); });
+  await retryOutbox();
+  check('Outbox retries the same message with its keyboard', () => { assert.equal(deliveries.at(-1).reply_markup.inline_keyboard[0][0].text, 'Choose'); });
+  assert.equal((await Message.findById(pending._id)).delivered, true); assert.equal(await Message.countDocuments({ text: 'Outbox delivery check' }), 1);
+  failDelivery = true;
+  await assert.rejects(sendLead(current, 'Job reply', {}, 'out', { jobId: 'qa-job' }), /TELEGRAM_503/);
+  await sendLead(current, 'Job reply', {}, 'out', { jobId: 'qa-job' });
+  check('Job retry reuses its outgoing message receipt', () => {}); assert.equal(await Message.countDocuments({ deliveryKey: 'job:qa-job' }), 1);
   const router = require('../dist/admissions/routes').default;
   const app = express(); app.use(express.json()); app.use('/admissions', router); app.use((err, req, res, next) => res.status(err.statusCode || 500).json({ error: 'Denied' }));
   const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
@@ -71,6 +91,13 @@ async function main() {
   check('Student cannot access staff CRM', () => assert.equal(forbidden.status, 403));
   const allowed = await actualFetch(`http://127.0.0.1:${port}/admissions/overview`, { headers: { Authorization: 'Bearer ' + adminToken } });
   check('Existing staff JWT can access real analytics', () => assert.equal(allowed.status, 200));
+  const upload = new FormData(); upload.append('file', new Blob(['Test approved document workflow.']), 'qa.txt');
+  const uploaded = await actualFetch(`http://127.0.0.1:${port}/admissions/knowledge-upload`, { method: 'POST', headers: { Authorization: 'Bearer ' + adminToken }, body: upload });
+  const uploadedItem = await uploaded.json();
+  check('Isolated document parser creates a draft, never auto-approves', () => { assert.equal(uploaded.status, 201); assert.equal(uploadedItem.item.approved, false); assert(uploadedItem.item.content.includes('workflow')); });
+  const invalid = new FormData(); invalid.append('file', new Blob(['Not a DOCX archive']), 'invalid.docx');
+  const rejected = await actualFetch(`http://127.0.0.1:${port}/admissions/knowledge-upload`, { method: 'POST', headers: { Authorization: 'Bearer ' + adminToken }, body: invalid });
+  check('Forged document rejected without parsing in HTTP process', () => assert.equal(rejected.status, 400));
   const { PDFParse } = require('pdf-parse'); const mammoth = require('mammoth');
   check('Document extractors installed and callable', () => { assert.equal(typeof PDFParse, 'function'); assert.equal(typeof mammoth.extractRawText, 'function'); });
   server.close(); server.closeAllConnections();

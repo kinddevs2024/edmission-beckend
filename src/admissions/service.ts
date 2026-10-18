@@ -21,15 +21,38 @@ export async function staffAlert(kind: string, lead: any, text: string) {
   await AdmissionJob.updateOne({ dedupeKey: key }, { $setOnInsert: { kind: 'staff', due: new Date(), text: `${kind}\n${lead?.name || ''}\n${text.slice(0, 2500)}`, leadId: lead?._id } }, { upsert: true });
 }
 export async function sendLead(lead: any, text: string, options: Record<string, unknown> = {}, direction = 'out', metadata: any = {}) {
-  let result: any;
+  const deliveryKey = metadata.jobId ? `job:${metadata.jobId}` : undefined;
+  let draft: any = deliveryKey ? await AdmissionMessage.findOne({ deliveryKey }) : null;
+  if (draft?.delivered) return { message_id: draft.telegramMessageId };
+  if (!draft) draft = await AdmissionMessage.create({ leadId: lead._id, direction, text, delivered: false, ...metadata, deliveryKey, deliveryOptions: options, nextAttemptAt: new Date(), lockedUntil: new Date(Date.now() + 45000) });
   try {
-    result = await telegram('sendMessage', { chat_id: lead.chatId, text: text.slice(0, 4000), ...options });
-    await AdmissionMessage.create({ leadId: lead._id, direction, text, delivered: true, telegramMessageId: result.message_id, ...metadata });
+    return await deliverDraft(draft, lead, options);
   } catch (error) {
-    await AdmissionMessage.create({ leadId: lead._id, direction, text, delivered: false, errorCode: error instanceof Error ? error.message.slice(0, 60) : 'SEND_FAILED', ...metadata });
+    if (metadata.jobId) throw error; // The durable job owns retries for this message.
+    return { queued: true }; // Ordinary replies have their own durable outbox retry.
+  }
+}
+async function deliverDraft(draft: any, lead: any, options?: Record<string, unknown>) {
+  draft.deliveryAttempts = (draft.deliveryAttempts || 0) + 1;
+  draft.lockedUntil = new Date(Date.now() + 45000); await draft.save();
+  try {
+    const result = await telegram('sendMessage', { chat_id: lead.chatId, text: draft.text.slice(0, 4000), ...(options || draft.deliveryOptions || {}) });
+    draft.delivered = true; draft.telegramMessageId = result.message_id; draft.sentAt = new Date(); draft.errorCode = undefined; draft.lockedUntil = null; await draft.save(); return result;
+  } catch (error) {
+    draft.errorCode = error instanceof Error ? error.message.slice(0, 60) : 'SEND_FAILED'; draft.lockedUntil = null;
+    draft.nextAttemptAt = new Date(Date.now() + draft.deliveryAttempts * 60000); await draft.save();
+    if (draft.deliveryAttempts >= 3) await recordEvent('delivery_failed', lead._id, { messageId: draft._id, code: draft.errorCode });
     throw error;
   }
-  return result;
+}
+export async function retryOutbox() {
+  for (let i = 0; i < 20; i++) {
+    const draft: any = await AdmissionMessage.findOneAndUpdate({ delivered: false, cancelled: { $ne: true }, direction: { $in: ['out', 'staff'] }, jobId: null, deliveryAttempts: { $lt: 3 }, nextAttemptAt: { $lte: new Date() }, $or: [{ lockedUntil: null }, { lockedUntil: { $lt: new Date() } }] }, { $set: { lockedUntil: new Date(Date.now() + 45000) } }, { new: true });
+    if (!draft) break;
+    const lead = await AdmissionLead.findById(draft.leadId);
+    if (!lead) { await AdmissionMessage.deleteOne({ _id: draft._id }); continue; }
+    await deliverDraft(draft, lead).catch(() => {});
+  }
 }
 export async function createSlot(input: any) {
   const start = new Date(input.start); const end = new Date(input.end);
@@ -63,6 +86,7 @@ export async function cancelBooking(slotId: string, lead: any, actor = 'student'
   const slot: any = await AdmissionSlot.findOneAndUpdate({ _id: slotId, leadId: lead._id, cancelled: false, start: { $gt: new Date() } }, { $set: { leadId: null, confirmedAt: null } }, { new: true });
   if (!slot) throw new Error('BOOKING_NOT_FOUND');
   await AdmissionJob.updateMany({ slotId, kind: 'reminder', status: { $in: ['pending', 'sending'] } }, { $set: { status: 'cancelled' } });
+  await AdmissionMessage.updateMany({ slotId, delivered: false }, { $set: { cancelled: true } });
   await recordEvent('booking_cancelled', lead._id, { slotId }, actor);
   await staffAlert('booking_cancelled', lead, formatSlot(slot, lead.language));
   lead.status = 'qualified'; await lead.save(); return slot;
@@ -125,6 +149,14 @@ export async function processUpdate(update: any) {
   const lang = lead.language as Language; const c = copy[lang];
   if (/^\/delete\b/.test(text)) { await telegram('sendMessage', { chat_id: chatId, text: c.deleted }); await deleteLeadData(lead); return; }
   if (/^\/privacy\b/.test(text)) { await sendLead(lead, c.privacy); return; }
+  if (/^\/external_ai\b/.test(text)) {
+    lead.externalAIConsent = true; await lead.save();
+    await sendLead(lead, lang === 'ru' ? 'Вы разрешили передавать текст этого диалога в Meta для ответов ИИ, если этот провайдер включён администратором. Отозвать разрешение: /local_ai.' : lang === 'uz' ? 'AI javoblari uchun suhbat matnini Meta xizmatiga yuborishga ruxsat berdingiz (agar administrator yoqqan bo‘lsa). Bekor qilish: /local_ai.' : 'You allowed conversation text to be sent to Meta for AI answers when enabled by staff. Revoke with /local_ai.'); return;
+  }
+  if (/^\/local_ai\b/.test(text)) {
+    lead.externalAIConsent = false; await lead.save();
+    await sendLead(lead, lang === 'ru' ? 'Для вашего диалога используется только локальный ИИ.' : lang === 'uz' ? 'Suhbatingiz uchun faqat mahalliy AI ishlatiladi.' : 'Your conversation will use local AI only.'); return;
+  }
   if (/^\/stop\b/.test(text)) { lead.followupConsent = false; await lead.save(); await sendLead(lead, c.stopped); return; }
   if (/^\/followups\b/.test(text)) { lead.followupConsent = true; await lead.save(); await sendLead(lead, c.consent); return; }
   if (/^\/human\b/.test(text) || /(?:speak|talk).*(?:human|person)|жив.*консульт|позовите.*человека|operator kerak/i.test(text)) {
@@ -149,7 +181,7 @@ export async function processUpdate(update: any) {
       const slot = await bookSlot(id, lead);
       for (const oldId of previous) { if (String(oldId) !== id) await cancelBooking(String(oldId), lead).catch(() => {}); }
       lead.status = 'consultation_booked'; await lead.save();
-      await sendLead(lead, `${c.booked}\n${formatSlot(slot, lang)}\n/reschedule`, { reply_markup: { inline_keyboard: [[{ text: '/cancel', callback_data: `cancel:${slot._id}` }]] } });
+      await sendLead(lead, `${c.booked}\n${formatSlot(slot, lang)}\n/reschedule`, { reply_markup: { inline_keyboard: [[{ text: '/cancel', callback_data: `cancel:${slot._id}` }]] } }, 'out', { slotId: slot._id });
     }
     catch { await sendLead(lead, c.unavailable); } return;
   }
@@ -190,6 +222,7 @@ export async function runDueJobs() {
   if (tickBusy) return; tickBusy = true;
   try {
     const cfg = await settings(); if (!cfg.enabled) return;
+    await retryOutbox();
     for (let count = 0; count < 30; count++) {
       const now = new Date();
       const job: any = await AdmissionJob.findOneAndUpdate({ due: { $lte: now }, attempts: { $lt: 3 }, $or: [{ status: 'pending' }, { status: 'sending', lockedUntil: { $lt: now } }] }, { $set: { status: 'sending', lockedUntil: new Date(Date.now() + 90000) }, $inc: { attempts: 1 } }, { sort: { due: 1 }, new: true });
@@ -209,7 +242,7 @@ export async function runDueJobs() {
             text = `${copy[lead.language as Language].booked}\n${formatSlot(slot, lead.language)}`;
             options = { reply_markup: { inline_keyboard: [[{ text: 'Confirm', callback_data: `confirm:${slot._id}` }, { text: 'Cancel / Reschedule', callback_data: `cancel:${slot._id}` }]] } };
           }
-          await sendLead(lead, text, options);
+          await sendLead(lead, text, options, 'out', { jobId: String(job._id), slotId: job.slotId });
         }
         job.status = 'sent'; job.sentAt = new Date();
       } catch (error) {

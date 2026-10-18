@@ -28,11 +28,11 @@ Sales follow-ups require the student to send `/followups`; `/stop` revokes that 
 
 Staff alerts always appear in the authenticated Events workspace. Internal Telegram delivery additionally requires the administrator to configure `staffChatId` and add the assistant bot to that chat. No group is invented or created automatically.
 
-Jobs use database leases and bounded retry with delivery status. Telegram does not offer a send-message idempotency key: a crash between a successful Telegram delivery and saving its receipt can duplicate that notification. Incoming Telegram update IDs are deduplicated. Failed incoming processing is logged for staff review rather than silently replaying financial or booking side effects.
+Jobs use database leases and bounded retry with delivery status. Ordinary replies are persisted before sending and retried from a durable outbox; job retries reuse the same outgoing receipt and preserve inline keyboards. Telegram does not offer a send-message idempotency key: a crash between a successful Telegram delivery and saving its receipt can duplicate that notification. Incoming Telegram update IDs are deduplicated. Failed incoming processing is logged for staff review rather than silently replaying financial or booking side effects.
 
 ## Privacy
 
-Only Telegram's private chats are processed. The bot explains stored data in `/privacy`, discourages identity and payment documents, supports `/delete`, and does not forward uploaded student documents to an LLM. Students are not matched across accounts by name alone. Staff can run retention cleanup for expired closed/uninterested leads; active applications are preserved.
+Only Telegram's private chats are processed. The bot explains stored data in `/privacy`, discourages identity and payment documents, supports `/delete`, and does not forward uploaded student documents to an LLM. External Meta processing additionally requires each student's `/external_ai` opt-in, even if an administrator has selected Meta; `/local_ai` revokes it. The default is local processing. Staff's synthetic preview explicitly uses the selected provider. Students are not matched across accounts by name alone. Staff can run retention cleanup for expired closed/uninterested leads; active applications are preserved. Staff document extraction runs in a separate, time-limited, heap-limited process, not inside the HTTP worker.
 
 ## Verification
 
