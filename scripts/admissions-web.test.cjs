@@ -108,6 +108,7 @@ const message = (token, text, requestId = crypto.randomUUID(), expected = 200) =
     sa = await request('/admissions/web/session', a, undefined, 200, 'en');
     check(sa.lead.name === 'Platform Student' && sa.lead.phone === '' && sa.lead.onboardingStage === 'complete', 'old website phone intake repaired without requiring an optional number');
     check(sa.lead.language === 'en', 'platform request language overrides stored chat and account language');
+    check(sa.messages.some(row => row.options?.reply_markup?.keyboard?.flat().includes('My bookings')), 'existing persistent menu follows newly selected platform language');
     const synced = await M.AdmissionLead.findById(sa.lead.id).lean();
     check(synced.profile.destination === 'CA' && synced.profile.degree === 'master', 'academic platform preferences synchronize to assistant profile');
     await User.updateOne({ _id: users[0]._id }, { $set: { phone: users[0].phone, name: users[0].name } });

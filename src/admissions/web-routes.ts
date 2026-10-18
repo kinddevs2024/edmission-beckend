@@ -11,6 +11,7 @@ import { processUpdate, sendLead } from './service';
 import { askIntake, intakeCopy, normalizePhone } from './onboarding';
 import { nextWebSequence, startWebsiteLeaseHeartbeat } from './web-transport';
 import { settings } from './assistant';
+import { mainMenu } from './menu';
 
 const router = Router();
 const wrap = (fn: any) => (req: any, res: any, next: any) => Promise.resolve(fn(req, res)).catch(next);
@@ -58,7 +59,12 @@ export async function websiteSession(lead: any, before?: string) {
   const current: any = await AdmissionLead.findById(lead._id).lean();
   if (!current) return { lead: null, language: lead.language, messages: [], typing: false, processing: false, nextCursor: null };
   return { lead: { id: String(current._id), language: current.language, name: current.name || '', phone: current.phone || '', onboardingStage: current.onboardingStage, externalAIConsent: current.externalAIConsent }, language: current.language,
-    messages: page.map(row => { const delivery = deliveries.find(item => String(item.receiptId) === String(row._id)); return { id: row.direction === 'out' ? delivery?.messageId ?? row.telegramMessageId : String(row._id), direction: row.direction, text: delivery?.text ?? row.text, createdAt: row.createdAt, editedAt: delivery?.editedAt || null, options: delivery?.options || row.deliveryOptions || {} }; }),
+    messages: page.map(row => {
+      const delivery = deliveries.find(item => String(item.receiptId) === String(row._id));
+      const options = delivery?.options || row.deliveryOptions || {};
+      const localizedOptions = options.reply_markup?.keyboard ? { ...options, reply_markup: mainMenu(current.language) } : options;
+      return { id: row.direction === 'out' ? delivery?.messageId ?? row.telegramMessageId : String(row._id), direction: row.direction, text: delivery?.text ?? row.text, createdAt: row.createdAt, editedAt: delivery?.editedAt || null, options: localizedOptions };
+    }),
     typing: +new Date(current.webTypingUntil || 0) > Date.now(), processing: +new Date(lock?.value?.until || 0) > Date.now(), nextCursor: rows.length > 100 && page.length ? String(page[0]._id) : null };
 }
 router.get('/session', wrap(async (req: any, res: any) => {
