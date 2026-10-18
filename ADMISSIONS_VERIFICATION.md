@@ -50,3 +50,6 @@ Dedicated Meta HTTPS transport now uses IPv4 with a fresh connection per request
 
 ### AI-only flow correction
 107 checks pass:45 intake/calendar/menu/AI-only,40 lifecycle/auth,19 analytics/grounding,2 Meta retry,1 IPv4 transport. Real Meta full processUpdate fixture, isolated QA DB and mocked Telegram transport: incoming «Привет, я хочу поступить в университет» on an existing completed profile with legacy aiPaused=true returned «Какую страну вы рассматриваете для учёбы?» in4.32seconds, provider meta, no human callback. No production synthetic chat was injected.
+
+### Warmer conversational tone
+Tone updated for RU/UZ/EN onboarding, help, booking confirmation and model replies, normally0–1 relevant emoji per message and no emoji in error messages. Existing live staff instructions are preserved when adding the style guidance. Safe clarification validation allows only a brief whitelisted nonfactual acknowledgment, optional emoji and one question; numeric grounding remains tested.48 intake/tone +40 lifecycle +19 analytics/grounding checks pass, with the existing3 transport/retry checks unchanged (110 total). Actual selected Meta model returned «Отлично! Какую страну вы рассматриваете для учёбы?» through the full isolated processUpdate flow in7.39seconds. Telegram delivery was mocked; no synthetic production chat was sent.

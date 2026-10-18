@@ -43,7 +43,7 @@ async function main() {
   lead.onboardingStage = 'complete'; lead.onboardingVersion = 1; lead.onboardedAt = new Date(0); lead.externalAIConsent = true; await lead.save(); // Synthetic fixture opts in to the mocked Meta transport.
   await processUpdate(update(1, '/start')); check('Telegram update deduplicated', () => assert.equal(deliveries.length, 1));
   await processUpdate(update(2, 'What is the Mars visa price?'));
-  check('Unknown fact escalates without invented fee', () => { assert(deliveries.at(-1).text.includes('verify')); });
+  check('Unknown fact escalates without invented fee', () => { assert(deliveries.at(-1).text.includes('verified')); });
   assert.equal(await Event.countDocuments({ kind: 'unanswered_question' }), 1); passed++;
   await processUpdate(update(3, 'I want consultation in Canada for computer science Bachelor'));
   let current = await Lead.findById(lead._id); check('Verified model reply and structured qualification', () => { assert.equal(current.profile.destination, 'Canada'); assert(deliveries.at(-1).text.includes('Book consultation')); });
