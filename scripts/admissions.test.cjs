@@ -43,7 +43,7 @@ async function main() {
   lead.onboardingStage = 'complete'; lead.onboardingVersion = 1; lead.onboardedAt = new Date(0); lead.externalAIConsent = true; await lead.save(); // Synthetic fixture opts in to the mocked Meta transport.
   await processUpdate(update(1, '/start')); check('Telegram update deduplicated', () => assert.equal(deliveries.length, 1));
   await processUpdate(update(2, 'What is the Mars visa price?'));
-  check('Unknown fact escalates without invented fee', () => { assert(deliveries.at(-1).text.includes('verified')); });
+  check('Unknown fact escalates without invented fee', () => { assert(deliveries.at(-1).text.includes('verify')); });
   assert.equal(await Event.countDocuments({ kind: 'unanswered_question' }), 1); passed++;
   await processUpdate(update(3, 'I want consultation in Canada for computer science Bachelor'));
   let current = await Lead.findById(lead._id); check('Verified model reply and structured qualification', () => { assert.equal(current.profile.destination, 'Canada'); assert(deliveries.at(-1).text.includes('Book consultation')); });
@@ -53,14 +53,14 @@ async function main() {
   const rated = await Message.findOne({ updateId: 3 }); check('Resolution is recorded only after student Helpful feedback', () => { assert.equal(rated.inquiryOutcome, 'ai_resolved'); assert(rated.feedbackAt); });
   const beforeTakeover = deliveries.length; pauseDuringInference = lead._id;
   await processUpdate(update(303, 'Please explain consultation booking'));
-  check('Staff takeover during inference suppresses the late AI response', () => assert.equal(deliveries.length, beforeTakeover));
+  check('Legacy handover flag cannot suppress AI-only replies', () => assert(deliveries.length > beforeTakeover));
   await processUpdate(update(304, '/resume'));
   current.externalAIConsent = false; await current.save(); const beforeMeta = externalCalls;
   await processUpdate(update(301, 'How can I book a consultation?'));
   check('No external AI processing without individual student opt-in', () => { assert.equal(externalCalls, beforeMeta); assert.equal(localCalls, 0); });
   current = await Lead.findById(lead._id); current.externalAIConsent = true; await current.save();
-  await processUpdate(update(4, '/human')); current = await Lead.findById(lead._id); check('Human handover pauses AI', () => assert.equal(current.aiPaused, true));
-  await processUpdate(update(5, 'Please answer')); check('Messages wait for staff during handover', () => assert(deliveries.at(-1).text.includes('queue')));
+  await processUpdate(update(4, '/human')); current = await Lead.findById(lead._id); check('Legacy human command returns to AI chat', () => assert.equal(current.aiPaused, false));
+  await processUpdate(update(5, 'Please answer')); check('Subsequent messages continue through AI', () => assert(!deliveries.at(-1).text.includes('queue')));
   await processUpdate(update(6, '/resume')); await processUpdate(update(7, '/followups')); current = await Lead.findById(lead._id);
   const followup = await scheduleFollowup(current, { due: new Date(Date.now() + 86400000), text: 'Would you like help with your Canada application?' }, 'qa');
   const sentFollowup = await Job.create({ leadId: lead._id, kind: 'followup', analyticsVersion: 1, dedupeKey: 'sent-for-response-attribution', due: new Date(Date.now() - 60000), originalDue: new Date(Date.now() - 60000), sentAt: new Date(Date.now() - 60000), status: 'sent', text: 'Previously delivered follow-up' });
@@ -113,6 +113,8 @@ async function main() {
   check('Student cannot access staff CRM', () => assert.equal(forbidden.status, 403));
   const allowed = await actualFetch(`http://127.0.0.1:${port}/admissions/overview`, { headers: { Authorization: 'Bearer ' + adminToken } });
   check('Existing staff JWT can access real analytics', () => assert.equal(allowed.status, 200));
+  const manual = await actualFetch(`http://127.0.0.1:${port}/admissions/leads/${lead._id}/reply`, { method:'POST', headers:{Authorization:'Bearer '+adminToken,'Content-Type':'application/json'},body:JSON.stringify({text:'Manual takeover should be disabled'}) }); check('AI-only mode rejects staff chat takeover endpoint',()=>assert.equal(manual.status,409));
+  const beforeStaff=deliveries.length;await sendLead(current,'Old queued staff reply',{},'staff');check('AI-only mode suppresses queued manual staff replies',()=>assert.equal(deliveries.length,beforeStaff));
   const upload = new FormData(); upload.append('file', new Blob(['Test approved document workflow.']), 'qa.txt');
   const uploaded = await actualFetch(`http://127.0.0.1:${port}/admissions/knowledge-upload`, { method: 'POST', headers: { Authorization: 'Bearer ' + adminToken }, body: upload });
   const uploadedItem = await uploaded.json();

@@ -92,7 +92,7 @@
     const layout = el('div', null, 'split'); const left = card('Student conversations'); const right = card('Select a student');
     const search = el('input'); search.placeholder = 'Search name, username or phone'; left.append(search);
     const list = el('div'); left.append(list);
-    async function updateList() { const result = await api('/leads?q=' + encodeURIComponent(search.value)); list.replaceChildren(); for (const lead of result.items) { list.append(button(`${lead.name || lead.username || 'Student'} · ${lead.status.replace(/_/g, ' ')}${lead.aiPaused ? ' · HUMAN' : ''}`, async () => { selectedLead = lead._id; await leadDetails(right); }, 'listitem')); } if (!result.items.length) list.append(el('p', 'No students found.')); }
+    async function updateList() { const result = await api('/leads?q=' + encodeURIComponent(search.value)); list.replaceChildren(); for (const lead of result.items) { list.append(button(`${lead.name || lead.username || 'Student'} · ${lead.status.replace(/_/g, ' ')}`, async () => { selectedLead = lead._id; await leadDetails(right); }, 'listitem')); } if (!result.items.length) list.append(el('p', 'No students found.')); }
     search.onchange = () => updateList().catch(showError); await updateList();
     append(layout, left, right); view.replaceChildren(layout); if (selectedLead) await leadDetails(right);
   }
@@ -103,13 +103,12 @@
     if (lead.summary) panel.append(el('p', lead.summary));
     panel.append(el('p', lead.nextAction || '', 'muted'));
     const controls = el('div', null, 'controls');
-    append(controls, button(lead.aiPaused ? 'Resume AI' : 'Take over / Pause AI', async () => { await post('/leads/' + selectedLead, { aiPaused: !lead.aiPaused }, 'PATCH'); await leadDetails(panel); }), button('Edit profile & notes', () => editLead(lead, panel), 'secondary'), button('Schedule follow-up', () => followup(lead, panel), 'secondary'), button('Delete data', async () => { if (confirm('Permanently delete this student conversation and personal data?')) { await api('/leads/' + selectedLead, { method: 'DELETE' }); selectedLead = ''; await load(); } }, 'danger'));
+    append(controls, button('Edit profile & notes', () => editLead(lead, panel), 'secondary'), button('Schedule follow-up', () => followup(lead, panel), 'secondary'), button('Delete data', async () => { if (confirm('Permanently delete this student conversation and personal data?')) { await api('/leads/' + selectedLead, { method: 'DELETE' }); selectedLead = ''; await load(); } }, 'danger'));
     panel.append(controls); const profile = el('details'); append(profile, el('summary', 'Profile, interests & booking history'), el('pre', JSON.stringify({ phone: lead.phone, interests: lead.profile, notes: lead.notes, assignedTo: lead.assignedTo, objections: lead.objections, followupConsent: lead.followupConsent }, null, 2)));
     for (const booking of leadData.bookings) profile.append(el('p', `${date(booking.start)} · ${booking.consultantName} · ${booking.mode} · ${booking.location}`)); panel.append(profile);
     const messages = el('div'); messages.style.maxHeight = '520px'; messages.style.overflowY = 'auto';
     for (const item of leadData.messages) { const node = el('div', null, 'message ' + item.direction); append(node, el('small', `${item.direction === 'in' ? 'Student' : item.direction === 'staff' ? 'Consultant' : 'AI assistant'} · ${date(item.createdAt)}${item.delivered === false ? ' · DELIVERY FAILED' : ''}`), el('div', item.text)); messages.append(node); } panel.append(messages);
-    const reply = el('textarea'); reply.placeholder = 'Reply as a consultant. Sending pauses AI for this student.'; panel.append(reply);
-    panel.append(button('Send consultant reply', async () => { if (!reply.value.trim()) return; await post('/leads/' + selectedLead + '/reply', { text: reply.value }); await leadDetails(panel); }));
+    panel.append(el('p', 'Student chat uses AI only. Human takeover and manual chat replies are disabled.', 'muted'));
   }
   function editLead(lead, panel) {
     const form = el('form'); field(form, 'Full name', 'name', lead.name); field(form, 'Phone', 'phone', lead.phone); select(form, 'Status', 'status', statuses, lead.status); field(form, 'Assigned consultant (staff ID)', 'assignedTo', lead.assignedTo); field(form, 'Staff notes', 'notes', lead.notes, 'textarea');

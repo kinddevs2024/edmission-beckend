@@ -32,7 +32,7 @@ export async function sendLead(lead: any, text: string, options: Record<string, 
   text = publicText(text, lead.language || 'en');
   const cleanOptions = (value: any): any => Array.isArray(value) ? value.map(cleanOptions) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key,val]) => [key, key === 'text' && typeof val === 'string' ? publicText(val, lead.language || 'en') : cleanOptions(val)])) : value;
   options = cleanOptions(options);
-  if (!options.reply_markup && lead.onboardingStage === 'complete') options.reply_markup = mainMenu(lead.language);
+  if (!options.reply_markup && lead.onboardingStage === 'complete') options.reply_markup = mainMenu(lead.language, lead.aiPaused);
   const deliveryKey = metadata.jobId ? `job:${metadata.jobId}` : undefined;
   let draft: any = deliveryKey ? await AdmissionMessage.findOne({ deliveryKey }) : null;
   if (draft?.delivered) return { message_id: draft.telegramMessageId };
@@ -46,6 +46,7 @@ export async function sendLead(lead: any, text: string, options: Record<string, 
   }
 }
 async function deliverDraft(draft: any, lead: any, options?: Record<string, unknown>) {
+  if (draft.direction === 'staff') { draft.cancelled = true; await draft.save(); return { cancelled: true }; }
   draft.deliveryAttempts = (draft.deliveryAttempts || 0) + 1;
   draft.lockedUntil = new Date(Date.now() + 45000); await draft.save();
   try {
@@ -66,7 +67,7 @@ export async function retryOutbox() {
     if (!draft) break;
     const lead = await AdmissionLead.findById(draft.leadId);
     if (!lead) { await AdmissionMessage.deleteOne({ _id: draft._id }); continue; }
-    if (lead.aiPaused && draft.provider) { draft.cancelled = true; await draft.save(); continue; }
+    if (draft.direction === 'staff') { draft.cancelled = true; await draft.save(); continue; }
     await deliverDraft(draft, lead).catch(() => {});
   }
 }
@@ -239,8 +240,7 @@ async function processUpdateInternal(update: any) {
       original.inquiryOutcome = 'ai_resolved'; original.feedbackAt = new Date(); await original.save();
       await sendLead(lead, lang === 'ru' ? 'Спасибо за отзыв!' : lang === 'uz' ? 'Fikringiz uchun rahmat!' : 'Thank you for your feedback!'); return;
     }
-    original.inquiryOutcome = 'handover'; original.feedbackAt = new Date(); await original.save();
-    lead.aiPaused = true; await lead.save(); await staffAlert('handover_requested', lead, lead.summary || original.text); await sendLead(lead, c.human); return;
+    lead.aiPaused = false; await lead.save(); await sendLead(lead, intakeCopy[lang].help); return;
   }
   const menu = menuCopy[lang];
   if (rawText === menu.language) { await languagePicker(lead, sendLead); return; }
@@ -257,17 +257,13 @@ async function processUpdateInternal(update: any) {
   }
   if (/^\/local_ai\b/.test(text)) {
     lead.externalAIConsent = false; await lead.save();
-    await sendLead(lead, lang === 'ru' ? 'Обработка Meta отключена. Вы можете связаться с консультантом.' : lang === 'uz' ? 'Meta orqali qayta ishlash o‘chirildi. Maslahatchiga murojaat qilishingiz mumkin.' : 'Meta processing is disabled. You can contact a human consultant.'); return;
+    await sendLead(lead, lang === 'ru' ? 'Обработка Meta отключена. Разрешите Meta AI в настройках, чтобы получать ответы ИИ.' : lang === 'uz' ? 'Meta orqali qayta ishlash o‘chirildi. AI javoblari uchun sozlamalarda Meta AI ga ruxsat bering.' : 'Meta processing is disabled. Enable Meta AI in preferences to receive AI replies.'); return;
   }
   if (/^\/stop\b/.test(text)) { lead.followupConsent = false; await lead.save(); await sendLead(lead, c.stopped); return; }
   if (/^\/followups\b/.test(text)) { lead.followupConsent = true; await lead.save(); await sendLead(lead, c.consent); return; }
-  if (/^\/human\b/.test(text) || Object.values(intakeCopy).some(row => row.human === text) || /(?:speak|talk).*(?:human|person)|жив.*консульт|позовите.*человека|operator kerak/i.test(text)) {
-    await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'handover' } });
-    lead.aiPaused = true; await lead.save(); await staffAlert('handover_requested', lead, lead.summary || text); await sendLead(lead, c.human); return;
-  }
-  if (/^\/resume\b/.test(text)) { lead.aiPaused = false; await lead.save(); await sendLead(lead, c.resumed); return; }
-  if (update.message?.document) { await staffAlert('document_submitted', lead, 'Student sent a document; review it in the original Telegram chat. Files are not forwarded to AI.'); await sendLead(lead, c.paused); return; }
-  if (lead.aiPaused) { await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'staff_waiting' } }); await recordEvent('handover_message', lead._id); await sendLead(lead, c.paused); return; }
+  if (/^\/human\b/.test(text) || Object.values(intakeCopy).some(row => row.human === text)) { lead.aiPaused = false; await lead.save(); await sendLead(lead, intakeCopy[lang].help); return; }
+  if (/^\/resume\b/.test(text)) { lead.aiPaused = false; await lead.save(); await sendLead(lead, intakeCopy[lang].help); return; }
+  if (update.message?.document) { await staffAlert('document_submitted', lead, 'Student sent a document; review it in the original Telegram chat. Files are not forwarded to AI.'); await sendLead(lead, lang === 'ru' ? 'Документ получен. Задайте вопрос текстом — я ИИ-помощник.' : lang === 'uz' ? 'Hujjat olindi. Savolingizni matn bilan yozing — men AI yordamchiman.' : 'Document received. Please ask your question in text — I am your AI assistant.'); return; }
   if (await calendarChoice(lead, text, cfg)) return;
   if (text.startsWith('cancel:')) {
     const id = text.slice(7); if (!/^[a-f\d]{24}$/i.test(id)) return;
@@ -306,7 +302,7 @@ async function processUpdateInternal(update: any) {
   const analysis = scoreLead(text, lead.profile); Object.assign(lead, analysis);
   const answer = await answerQuestion(text, lead, history);
   const currentAutomation: any = await AdmissionLead.findById(lead._id).select('aiPaused').lean();
-  if (!currentAutomation || currentAutomation.aiPaused) {
+  if (!currentAutomation) {
     await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'staff_waiting' } });
     await recordEvent('ai_suppressed_on_takeover', lead._id); return;
   }
@@ -322,7 +318,7 @@ async function processUpdateInternal(update: any) {
   if (answer.errorCode) await recordEvent('ai_error', lead._id, { code: answer.errorCode });
   if (lead.score >= 60 && originalScore < 60) await staffAlert('high_priority', lead, lead.summary || text);
   if ('action' in answer && answer.action?.type === 'show_booking_calendar') { await showMonthCalendar(lead, undefined, cfg); return; }
-  const buttons = [{ text: lang === 'ru' ? 'Консультант' : lang === 'uz' ? 'Maslahatchi' : 'Ask a consultant', callback_data: `human:${update.update_id}` }];
+  const buttons: {text:string;callback_data:string}[] = [{ text: menuCopy[lang].book, callback_data: `cal:m:${tashkentDay().slice(0, 7)}` }];
   if (!answer.needsHuman) buttons.unshift({ text: lang === 'ru' ? 'Помогло ✓' : lang === 'uz' ? 'Foydali ✓' : 'Helpful ✓', callback_data: `helpful:${update.update_id}` });
   if (answer.provider === 'meta-unavailable' || answer.provider === 'meta-consent-required') buttons.unshift({ text: lang === 'ru' ? 'Календарь консультаций' : lang === 'uz' ? 'Maslahat taqvimi' : 'Consultation calendar', callback_data: `cal:m:${tashkentDay().slice(0, 7)}` });
   if (answer.provider === 'meta-consent-required') buttons.unshift({ text: lang === 'ru' ? 'Разрешить ИИ Meta' : lang === 'uz' ? 'Meta AI ga ruxsat' : 'Allow Meta AI', callback_data: 'ai:consent' });

@@ -2,9 +2,9 @@ import { mainMenu } from './menu';
 import { Language } from './policy';
 
 export const intakeCopy = {
-  en: { intro: 'Hello! I’m Edmission’s virtual admissions assistant. I can help with study destinations, universities, programs and consultation booking using information approved by our team. When information needs verification, I will ask a consultant.', name: 'What is your name?', phone: 'Share your phone number or type it with its country code. Continuing enables Meta AI for your chat; a human consultant is also available.', share: 'Share my phone number', human: 'Talk to a consultant', help: 'How can I help you?', badName: 'Please enter your name using letters (2–120 characters).', badPhone: 'Please enter a valid phone number with country code, for example +998901234567, or use the share button.' },
-  ru: { intro: 'Здравствуйте! Я виртуальный помощник Edmission по поступлению. Помогаю с выбором страны, вопросами об университетах и программах и записью на консультацию по проверенной информации команды. Если сведения требуют уточнения, обращусь к консультанту.', name: 'Как вас зовут?', phone: 'Поделитесь номером телефона или введите его с кодом страны. Продолжая, вы разрешаете обработку диалога Meta AI; можно выбрать консультанта.', share: 'Поделиться номером телефона', human: 'Связаться с консультантом', help: 'Чем я могу вам помочь?', badName: 'Введите имя буквами (от 2 до 120 символов).', badPhone: 'Введите действительный номер с кодом страны, например +998901234567, или нажмите кнопку отправки номера.' },
-  uz: { intro: 'Salom! Men Edmission’ning qabul bo‘yicha virtual yordamchisiman. Jamoamiz tasdiqlagan ma’lumotlar asosida o‘qish mamlakati, universitet, dastur va maslahatga yozilish bo‘yicha yordam beraman. Ma’lumotni aniqlashtirish kerak bo‘lsa, maslahatchiga murojaat qilaman.', name: 'Ismingiz nima?', phone: 'Telefon raqamingizni ulashing yoki mamlakat kodi bilan yozing. Davom etsangiz, suhbat Meta AI orqali qayta ishlanadi; maslahatchini ham tanlashingiz mumkin.', share: 'Telefon raqamimni ulashish', human: 'Maslahatchi bilan bog‘lanish', help: 'Sizga qanday yordam bera olaman?', badName: 'Ismingizni harflar bilan yozing (2–120 belgi).', badPhone: 'Mamlakat kodi bilan to‘g‘ri raqam kiriting, masalan +998901234567, yoki raqamni ulashish tugmasini bosing.' },
+  en: { intro: 'Hello! I’m Edmission’s virtual admissions assistant. I can help with study destinations, universities, programs and consultation booking using information approved by our team. I will explain clearly when information is not yet verified.', name: 'What is your name?', phone: 'Share your phone number or type it with its country code. Continuing enables Meta AI for your chat.', share: 'Share my phone number', human: 'Talk to a consultant', help: 'How can I help you?', badName: 'Please enter your name using letters (2–120 characters).', badPhone: 'Please enter a valid phone number with country code, for example +998901234567, or use the share button.' },
+  ru: { intro: 'Здравствуйте! Я виртуальный помощник Edmission по поступлению. Помогаю с выбором страны, вопросами об университетах и программах и записью на консультацию по проверенной информации команды. Если информация не подтверждена, я прямо об этом скажу.', name: 'Как вас зовут?', phone: 'Поделитесь номером телефона или введите его с кодом страны. Продолжая, вы разрешаете обработку диалога Meta AI.', share: 'Поделиться номером телефона', human: 'Связаться с консультантом', help: 'Чем я могу вам помочь?', badName: 'Введите имя буквами (от 2 до 120 символов).', badPhone: 'Введите действительный номер с кодом страны, например +998901234567, или нажмите кнопку отправки номера.' },
+  uz: { intro: 'Salom! Men Edmission’ning qabul bo‘yicha virtual yordamchisiman. Jamoamiz tasdiqlagan ma’lumotlar asosida o‘qish mamlakati, universitet, dastur va maslahatga yozilish bo‘yicha yordam beraman. Ma’lumot tasdiqlanmagan bo‘lsa, buni aniq aytaman.', name: 'Ismingiz nima?', phone: 'Telefon raqamingizni ulashing yoki mamlakat kodi bilan yozing. Davom etsangiz, suhbat Meta AI orqali qayta ishlanadi.', share: 'Telefon raqamimni ulashish', human: 'Maslahatchi bilan bog‘lanish', help: 'Sizga qanday yordam bera olaman?', badName: 'Ismingizni harflar bilan yozing (2–120 belgi).', badPhone: 'Mamlakat kodi bilan to‘g‘ri raqam kiriting, masalan +998901234567, yoki raqamni ulashish tugmasini bosing.' },
 };
 export function normalizePhone(value: string): string | null {
   if (!/^\+?[\d\s().-]+$/.test(value)) return null;
@@ -20,7 +20,7 @@ export async function askIntake(lead: any, send: Send) {
   const c = intakeCopy[lead.language as Language];
   if (lead.onboardingStage === 'language') return languagePicker(lead, send);
   if (lead.onboardingStage === 'name') return send(lead, c.name, { reply_markup: { remove_keyboard: true } });
-  if (lead.onboardingStage === 'phone') return send(lead, c.phone, { reply_markup: { keyboard: [[{ text: c.share, request_contact: true }], [c.human]], resize_keyboard: true, one_time_keyboard: true } });
+  if (lead.onboardingStage === 'phone') return send(lead, c.phone, { reply_markup: { keyboard: [[{ text: c.share, request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } });
   return send(lead, c.help, { reply_markup: mainMenu(lead.language) });
 }
 export async function handleOnboarding(lead: any, text: string, update: any, send: Send): Promise<boolean> {
@@ -44,7 +44,7 @@ export async function handleOnboarding(lead: any, text: string, update: any, sen
     else await askIntake(lead, send);
     return true;
   }
-  if (/^\/(?:privacy|delete|stop|human|resume|external_ai|local_ai)\b/.test(text) || lead.aiPaused) return false;
+  if (/^\/(?:privacy|delete|stop|human|resume|external_ai|local_ai)\b/.test(text)) return false;
   if (Object.values(intakeCopy).some(c => c.human === text)) return false;
   if (lead.onboardingStage === 'complete') return false;
   const c = intakeCopy[lead.language as Language];

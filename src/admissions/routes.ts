@@ -77,19 +77,18 @@ router.get('/leads/:id', asyncRoute(async (req, res) => {
   res.json({ lead, messages: (await AdmissionMessage.find({ leadId: req.params.id }).sort({ createdAt: -1 }).limit(150).lean()).reverse(), bookings: await AdmissionSlot.find({ leadId: req.params.id }).sort({ start: -1 }).lean(), jobs: await AdmissionJob.find({ leadId: req.params.id }).sort({ due: -1 }).limit(100).lean(), events: await AdmissionEvent.find({ leadId: req.params.id }).sort({ createdAt: -1 }).limit(100).lean() });
 }));
 router.patch('/leads/:id', asyncRoute(async (req, res) => {
-  const data = z.object({ status: z.enum(leadStatuses).optional(), aiPaused: z.boolean().optional(), assignedTo: z.string().max(100).optional(), notes: z.string().max(10000).optional(), profile: z.record(z.string(), z.string().max(1000)).optional(), name: z.string().max(150).optional(), phone: z.string().max(30).optional() }).parse(req.body);
+  const data = z.object({ status: z.enum(leadStatuses).optional(),  assignedTo: z.string().max(100).optional(), notes: z.string().max(10000).optional(), profile: z.record(z.string(), z.string().max(1000)).optional(), name: z.string().max(150).optional(), phone: z.string().max(30).optional() }).parse(req.body);
   const lead = await AdmissionLead.findByIdAndUpdate(req.params.id, { $set: data }, { new: true });
   if (!lead) { res.status(404).json({ error: 'Lead not found' }); return; }
   if (data.status) await markMilestone(lead, data.status);
-  if (data.aiPaused || ['not_interested', 'closed', 'on_hold', 'enrolled'].includes(data.status || '')) await AdmissionJob.updateMany({ leadId: lead._id, kind: 'followup', status: 'pending' }, { $set: { status: 'cancelled' } });
+  if (['not_interested', 'closed', 'on_hold', 'enrolled'].includes(data.status || '')) await AdmissionJob.updateMany({ leadId: lead._id, kind: 'followup', status: 'pending' }, { $set: { status: 'cancelled' } });
   await recordEvent('lead_updated', lead._id, { fields: Object.keys(data) }, req.user!.id); res.json(lead);
 }));
 router.delete('/leads/:id', requireAdminOnly, asyncRoute(async (req, res) => { const lead = await AdmissionLead.findById(req.params.id); if (!lead) { res.sendStatus(404); return; } await deleteLeadData(lead); res.json({ deleted: true }); }));
 router.post('/leads/:id/reply', asyncRoute(async (req, res) => {
   const { text } = z.object({ text: z.string().min(1).max(3500) }).parse(req.body);
   const lead: any = await AdmissionLead.findById(req.params.id); if (!lead) { res.sendStatus(404); return; }
-  lead.aiPaused = true; lead.assignedTo = req.user!.id; await lead.save();
-  const delivery = await sendLead(lead, text, {}, 'staff'); await recordEvent('staff_reply', lead._id, {}, req.user!.id); res.json({ sent: !delivery.queued, queued: Boolean(delivery.queued) });
+  res.status(409).json({ error: 'Student chat is AI-only; consultant takeover is disabled' });
 }));
 router.post('/leads/:id/followup', asyncRoute(async (req, res) => {
   const data = z.object({ due: z.coerce.date(), text: z.string().min(1).max(2000) }).parse(req.body);
