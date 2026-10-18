@@ -29,7 +29,7 @@ export const AdmissionMessage = model('AdmissionMessage', new Schema({
   deliveryKey: { type: String, unique: true, sparse: true }, jobId: String,
   deliveryAttempts: { type: Number, default: 0 }, nextAttemptAt: Date, lockedUntil: Date, sentAt: Date,
   deliveryOptions: Schema.Types.Mixed, slotId: Schema.Types.ObjectId, cancelled: { type: Boolean, default: false },
-  replyToUpdateId: Number, inboundAt: Date, isInquiry: Boolean, analyticsVersion: Number,
+  isCallback: Boolean, replyToUpdateId: Number, inboundAt: Date, isInquiry: Boolean, analyticsVersion: Number,
   inquiryOutcome: { type: String, enum: ['pending', 'ai_answered', 'ai_resolved', 'unanswered', 'handover', 'staff_waiting'] },
   answeredAt: Date, feedbackAt: Date,
 }, opts));
@@ -77,3 +77,11 @@ export const AdmissionState = model('AdmissionState', new Schema({
   key: { type: String, unique: true, required: true },
   value: { type: Schema.Types.Mixed, default: {} },
 }, opts));
+
+export const AdmissionCalendarAnchor = model('AdmissionCalendarAnchor', new Schema({
+ leadId: {type:Schema.Types.ObjectId,required:true,index:true},chatId:{type:String,required:true},rootMessageId:{type:Number,required:true},currentMessageId:Number,aliases:[Number],
+ pendingText:String,pendingOptions:Schema.Types.Mixed,pendingHash:String,displayText:String,displayOptions:Schema.Types.Mixed,
+ revision:{type:Number,default:0},deliveredRevision:Number,status:{type:String,default:'sent'},attempts:{type:Number,default:0},nextAttemptAt:Date,lockedUntil:Date,lockOwner:String,errorCode:String,updateId:Number,
+ rescheduleIds:[String],selectedSlotId:String,confirmedSlotId:String,confirmedBookingId:Schema.Types.ObjectId,
+ history:[{at:Date,revision:Number,text:String,options:Schema.Types.Mixed,messageId:Number,updateId:Number,fallback:Boolean}],
+},opts).index({leadId:1,rootMessageId:1},{unique:true}));
