@@ -4,7 +4,7 @@ const express=require('express');
 const {AdmissionLead:Lead,AdmissionMessage:Message,AdmissionBooking:Booking,AdmissionSlot:Slot,AdmissionCalendarAnchor:Anchor}=require('../dist/admissions/models');
 const {listStaffBookings,staffConversationPage,listStaffQuestions}=require('../dist/admissions/admin-data');
 async function main(){
- await mongoose.connect('mongodb://127.0.0.1:27939/admissions_qa_admin_data_20261018?directConnection=true');await mongoose.connection.dropDatabase();
+ const uri=process.env.ADMISSIONS_ADMIN_TEST_MONGO||'mongodb://127.0.0.1:27939/admissions_qa_admin_data_20261018?directConnection=true';if(!/^mongodb:\/\/127\.0\.0\.1:(?:27939|27941)\/admissions_qa_/.test(uri))throw Error('Refusing nonisolated test database');await mongoose.connect(uri);await mongoose.connection.dropDatabase();
  let passed=0;const check=(name,fn)=>{fn();passed++;console.log('PASS',name);};
  const a=await Lead.create({chatId:'81001',name:'Literal [student].*',language:'ru'}),b=await Lead.create({chatId:'81002',name:'Other student',language:'en'});
  const slot=await Slot.create({consultantId:'qa',consultantName:'QA consultant',start:new Date('2030-01-01T04:00Z'),end:new Date('2030-01-01T05:00Z'),leadId:b._id,mode:'office',location:'QA'});
@@ -12,12 +12,15 @@ async function main(){
  await Booking.create({reservationKey:'new',slotId:slot._id,leadId:b._id,start:slot.start,end:slot.end,bookedAt:new Date(),status:'active'});
  let result=await listStaffBookings(1,50,'[student].*');check('Search is escaped and cancelled historical receipt retains original student',()=>{assert.equal(result.total,1);assert.equal(String(result.items[0].leadId._id),String(a._id));assert.equal(result.items[0].status,'cancelled');assert.equal(result.items[0].slot.location,'QA');});
  result=await listStaffBookings(1,1,'','active');check('Booking pagination and status use historical receipts',()=>{assert.equal(result.total,1);assert.equal(result.items.length,1);assert.equal(String(result.items[0].leadId._id),String(b._id));});
- const messages=await Message.insertMany(Array.from({length:161},(_,i)=>({leadId:a._id,direction:i%2?'out':'in',text:'History '+i,telegramMessageId:i+1})));
+ const messages=await Message.insertMany(Array.from({length:161},(_,i)=>({leadId:a._id,direction:i%2?'in':'out',text:'History '+i,telegramMessageId:i+1})));
  await Message.create({leadId:b._id,direction:'in',text:'Foreign history',telegramMessageId:999});
  await Anchor.create({leadId:a._id,chatId:a.chatId,rootMessageId:161,currentMessageId:200,aliases:[161,200],displayText:'Current calendar',history:[{text:'Previous calendar',at:new Date()}]});
+ await Message.create({leadId:a._id,direction:'in',text:'ai:consent',isCallback:true,isInquiry:true,updateId:499,telegramMessageId:161});
+ await Message.create({leadId:a._id,direction:'in',text:'Actual student question',telegramMessageId:161});
  let before,seen=[];do{result=await staffConversationPage(String(a._id),50,before);seen.push(...result.items);before=result.nextCursor;}while(before);
- check('Cursor traverses entire history beyond150 without duplicates or foreign lead',()=>{assert.equal(seen.length,161);assert.equal(new Set(seen.map(x=>String(x._id))).size,161);assert(!seen.some(x=>x.text==='Foreign history'));});
- check('Calendar history shows latest edited text with original and revisions',()=>{const row=seen.find(x=>x.telegramMessageId===161);assert.equal(row.text,'Current calendar');assert.equal(row.originalText,'History 160');assert.equal(row.edits[0].text,'Previous calendar');});
+ check('Cursor traverses entire history beyond150 without duplicates or foreign lead',()=>{assert.equal(seen.length,162);assert.equal(new Set(seen.map(x=>String(x._id))).size,162);assert(!seen.some(x=>x.text==='Foreign history'));});
+ check('Calendar history shows latest edited outgoing text with original and revisions',()=>{const row=seen.find(x=>x.telegramMessageId===161&&x.direction==='out');assert.equal(row.text,'Current calendar');assert.equal(row.originalText,'History 160');assert.equal(row.edits[0].text,'Previous calendar');});
+ check('Opaque callbacks are hidden and source-message collisions cannot replace student text',()=>{assert(!seen.some(x=>x.text==='ai:consent'));const row=seen.find(x=>x.text==='Actual student question');assert(row);assert.equal(row.originalText,undefined);});
  await Message.create({leadId:a._id,direction:'in',text:'Question exact',updateId:500,isInquiry:true});
  await Message.create({leadId:a._id,direction:'out',text:'Exact answer',replyToUpdateId:500,provider:'meta',delivered:true});
  await Message.create({leadId:b._id,direction:'out',text:'Foreign answer',replyToUpdateId:500});
@@ -26,6 +29,7 @@ async function main(){
  await Message.create({leadId:a._id,direction:'out',text:'Legacy unrelated reply'});
  result=await listStaffQuestions(1,50,'Question exact');check('Question answer join matches both lead and exact inquiry update',()=>{assert.equal(result.total,1);assert.equal(result.items[0].direction,'in');assert.equal(result.items[0].answers.length,1);assert.equal(result.items[0].answers[0].text,'Exact answer');assert.equal(result.items[0].answers[0].direction,'out');});
  result=await listStaffQuestions(1,50,'Legacy question');check('Missing legacy update IDs cannot join unrelated replies',()=>assert.equal(result.items[0].answers.length,0));
+ result=await listStaffQuestions(1,50,'ai:consent');check('Callbacks cannot appear as student inquiry even when legacy flag is incorrect',()=>assert.equal(result.total,0));
  const {User}=require('../dist/models'),{signAccessToken}=require('../dist/utils/jwt');
  const admin=new mongoose.Types.ObjectId(),student=new mongoose.Types.ObjectId();await User.collection.insertMany([{_id:admin,email:'admin@example.test',role:'admin',tokenVersion:0},{_id:student,email:'student@example.test',role:'student',tokenVersion:0}]);
  const token=role=>signAccessToken({sub:String(role==='admin'?admin:student),email:role+'@example.test',role});

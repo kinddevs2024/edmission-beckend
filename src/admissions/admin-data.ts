@@ -27,7 +27,7 @@ export async function listStaffBookings(page: number, limit: number, q = '', sta
 }
 
 export async function staffConversationPage(leadId: string, limit: number, before?: string) {
-  const rows: any[] = await AdmissionMessage.find({ leadId, ...(before ? { _id: { $lt: new mongoose.Types.ObjectId(before) } } : {}) })
+  const rows: any[] = await AdmissionMessage.find({ leadId, isCallback: { $ne: true }, ...(before ? { _id: { $lt: new mongoose.Types.ObjectId(before) } } : {}) })
     .select('direction text provider sourceIds delivered responseMs telegramMessageId createdAt updatedAt replyToUpdateId inquiryOutcome errorCode')
     .sort({ _id: -1 }).limit(limit + 1).lean();
   const hasMore = rows.length > limit;
@@ -37,7 +37,7 @@ export async function staffConversationPage(leadId: string, limit: number, befor
     { rootMessageId: { $in: messageIds } }, { currentMessageId: { $in: messageIds } }, { aliases: { $in: messageIds } },
   ] }).select('rootMessageId currentMessageId aliases displayText history updatedAt').lean() : [];
   const items = page.reverse().map(row => {
-    const anchor = anchors.find(item => [item.rootMessageId, item.currentMessageId, ...(item.aliases || [])].includes(row.telegramMessageId));
+    const anchor = row.direction === 'out' && anchors.find(item => [item.rootMessageId, item.currentMessageId, ...(item.aliases || [])].includes(row.telegramMessageId));
     return anchor ? { ...row, text: anchor.displayText || row.text, originalText: row.text,
       edits: (anchor.history || []).map((edit: any) => ({ text: edit.text, at: edit.at })), editedAt: anchor.updatedAt } : row;
   });
@@ -46,7 +46,7 @@ export async function staffConversationPage(leadId: string, limit: number, befor
 
 export async function listStaffQuestions(page: number, limit: number, q = '') {
   const [result] = await AdmissionMessage.aggregate([
-    { $match: { direction: 'in', isInquiry: true } }, ...leadLookup(), ...studentSearch(q, true), { $sort: { _id: -1 } },
+    { $match: { direction: 'in', isInquiry: true, isCallback: { $ne: true } } }, ...leadLookup(), ...studentSearch(q, true), { $sort: { _id: -1 } },
     { $facet: { count: [{ $count: 'total' }], items: [
       { $skip: (page - 1) * limit }, { $limit: limit },
       { $lookup: { from: AdmissionMessage.collection.name, let: { lead: '$leadId', update: '$updateId' }, pipeline: [
