@@ -9,6 +9,7 @@ import { logger } from './utils/logger';
 import * as aiProvider from './ai/provider';
 import { ensureDefaultAdmin } from './services/auth.service';
 import { startTelegramBotPolling } from './services/telegramBot.service';
+import { startAdmissionsAssistant } from './admissions/service';
 import { PERIMETER_SECURITY_NPM_PACKAGES } from './middlewares/perimeter.middleware';
 
 const httpServer = http.createServer(app);
@@ -31,6 +32,7 @@ async function initializeAfterDbConnected() {
   if (!workersStarted && config.nodeEnv !== 'test') {
     startRecommendationWorker();
     startLifecycleWorker();
+    startAdmissionsAssistant();
     workersStarted = true;
   }
 }
