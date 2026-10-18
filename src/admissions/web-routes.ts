@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { requireDb } from '../middlewares/requireDb.middleware';
-import { User } from '../models';
+import { User, StudentProfile } from '../models';
 import { AdmissionLead, AdmissionMessage, AdmissionState, AdmissionWebDelivery, AdmissionWebRequest } from './models';
 import { processUpdate, sendLead } from './service';
 import { askIntake, intakeCopy, normalizePhone } from './onboarding';
@@ -19,18 +19,26 @@ const mutations = rateLimit({ windowMs: 60000, max: 20, standardHeaders: true, l
 let indexes: Promise<any> | undefined;
 async function ready() { if (!indexes) indexes = Promise.all([AdmissionWebDelivery.init(), AdmissionWebRequest.init(), AdmissionLead.init(), AdmissionState.init()]); await indexes; }
 
-async function ownLead(userId: string) {
+async function ownLead(userId: string, requestedLanguage?: string) {
   await ready();
   const user: any = await User.findById(userId).select('name phone language').lean();
   if (!user) throw Object.assign(Error('Account not found'), { statusCode: 401 });
-  const name = String(user.name || '').trim().slice(0, 120), phone = normalizePhone(user.phone || '');
-  const language = ['en', 'ru', 'uz'].includes(user.language) ? user.language : 'uz';
-  const initial = { chatId: `web:${userId}`, channel: 'website', webUserId: userId, name, phone: phone || '', language, languageExplicit: true,
-    nameConfirmed: Boolean(name), phoneConfirmed: Boolean(phone), onboardingVersion: 1,
-    onboardingStage: !name ? 'name' : !phone ? 'phone' : 'complete', onboardedAt: name && phone ? new Date() : undefined };
+  const student: any = await StudentProfile.findOne({ userId }).select('firstName lastName preferredCountries targetDegreeLevel interestedFaculties interests budgetAmount budgetCurrency languageLevel highestEducationLevel educationStatus').lean();
+  const name = String([student?.firstName, student?.lastName].filter(Boolean).join(' ') || user.name || '').trim().slice(0, 120), phone = normalizePhone(user.phone || '');
+  const language = ['en', 'ru', 'uz'].includes(requestedLanguage || '') ? requestedLanguage! : ['en', 'ru', 'uz'].includes(user.language) ? user.language : 'uz';
+  const profile: Record<string, string> = {};
+  const values = { destination: student?.preferredCountries?.join(', '), degree: student?.targetDegreeLevel,
+    program: (student?.interestedFaculties?.length ? student.interestedFaculties : student?.interests)?.join(', '),
+    budget: student?.budgetAmount != null ? `${student.budgetAmount} ${student.budgetCurrency || 'USD'}` : '',
+    english: student?.languageLevel, education: student?.highestEducationLevel || student?.educationStatus };
+  for (const [key, value] of Object.entries(values)) if (value) profile[`profile.${key}`] = String(value).slice(0, 300);
+  const initial = { chatId: `web:${userId}`, channel: 'website', webUserId: userId, onboardingVersion: 1, onboardedAt: new Date() };
+  // Website authentication replaces Telegram intake, even when optional profile fields are empty.
+  const synced = { name, phone: phone || '', language, languageExplicit: true, nameConfirmed: true, phoneConfirmed: true,
+    onboardingStage: 'complete', ...profile };
   let lead: any;
-  try { lead = await AdmissionLead.findOneAndUpdate({ chatId: initial.chatId }, { $setOnInsert: initial }, { upsert: true, new: true }); }
-  catch (error: any) { if (error.code !== 11000) throw error; lead = await AdmissionLead.findOne({ chatId: initial.chatId }); }
+  try { lead = await AdmissionLead.findOneAndUpdate({ chatId: initial.chatId }, { $setOnInsert: initial, $set: synced }, { upsert: true, new: true }); }
+  catch (error: any) { if (error.code !== 11000) throw error; lead = await AdmissionLead.findOneAndUpdate({ chatId: initial.chatId }, { $set: synced }, { new: true }); }
   let claim: any;
   try { claim = await AdmissionState.updateOne({ key: `web-welcome:${lead._id}` }, { $setOnInsert: { value: { initialized: true } } }, { upsert: true }); }
   catch (error: any) { if (error.code !== 11000) throw error; }
@@ -38,7 +46,11 @@ async function ownLead(userId: string) {
   return lead;
 }
 export async function websiteSession(lead: any, before?: string) {
-  const rows: any[] = await AdmissionMessage.find({ leadId: lead._id, isCallback: { $ne: true }, direction: { $in: ['in', 'out'] },
+  const obsoleteIntake = Object.values(intakeCopy).flatMap(c => [c.name, c.phone]);
+  obsoleteIntake.push('Введите номер телефона с кодом страны. Продолжая, вы разрешаете обработку диалога Meta AI.',
+    'Telefon raqamingizni mamlakat kodi bilan yozing. Davom etsangiz, suhbat Meta AI orqali qayta ishlanadi.',
+    'Enter your phone number with its country code. Continuing enables Meta AI for your chat.');
+  const rows: any[] = await AdmissionMessage.find({ leadId: lead._id, text: { $nin: obsoleteIntake }, isCallback: { $ne: true }, direction: { $in: ['in', 'out'] },
     $or: [{ direction: 'in' }, { delivered: true }], ...(before ? { _id: { $lt: new mongoose.Types.ObjectId(before) } } : {}) }).sort({ _id: -1 }).limit(101).lean();
   const page = rows.slice(0, 100).reverse();
   const deliveries: any[] = await AdmissionWebDelivery.find({ chatId: lead.chatId, receiptId: { $in: page.map(row => row._id) } }).lean();
@@ -51,7 +63,7 @@ export async function websiteSession(lead: any, before?: string) {
 }
 router.get('/session', wrap(async (req: any, res: any) => {
   const query = z.object({ before: z.string().regex(/^[a-f\d]{24}$/i).optional() }).parse(req.query);
-  res.json(await websiteSession(await ownLead(req.user.id), query.before));
+  res.json(await websiteSession(await ownLead(req.user.id, req.get('X-User-Language')), query.before));
 }));
 
 const requestId = z.string().uuid();
@@ -60,7 +72,7 @@ const actionSchema = z.object({ data: z.string().min(1).max(100), messageId: z.n
 async function submit(req: any, res: any, kind: 'message' | 'action') {
   const input: any = kind === 'message' ? messageSchema.parse(req.body) : actionSchema.parse(req.body);
   const cfg = await settings(); if (!cfg.enabled) { res.status(503).json({ error: 'AI assistant is temporarily disabled' }); return; }
-  const lead = await ownLead(req.user.id);
+  const lead = await ownLead(req.user.id, req.get('X-User-Language'));
   const payloadHash = createHash('sha256').update(JSON.stringify({ kind, ...input })).digest('hex');
   const prior: any = await AdmissionWebRequest.findOne({ userId: req.user.id, requestId: input.requestId }).lean();
   if (prior) {

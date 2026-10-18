@@ -69,10 +69,10 @@ const message = (token, text, requestId = crypto.randomUUID(), expected = 200) =
     { role: 'student', name: 'QA Student Alpha', language: 'ru', phone: '+998900000001', email: `web-alpha-${suffix}@example.invalid` },
     { role: 'student', name: 'QA Student Beta', language: 'ru', phone: '+998900000001', email: `web-beta-${suffix}@example.invalid` },
     { role: 'admin', name: 'QA Administrator', language: 'ru', phone: '+998900000002', email: `web-admin-${suffix}@example.invalid` },
-    { role: 'student', name: 'QA Browser Student', language: 'ru', phone: '+998900000003', email: `web-browser-${suffix}@example.invalid` },
+    { role: 'student', name: 'QA Browser Student', language: 'ru', phone: '', email: `web-browser-${suffix}@example.invalid` },
   ];
   const users = await User.create(accounts.map(user => ({ ...user, passwordHash, emailVerified: true, localPasswordConfigured: true, mustChangePassword: false, onboardingTutorialSeen: true })));
-  for (const user of users.filter(user => user.role === 'student')) await StudentProfile.create({ userId: user._id, firstName: 'QA', lastName: 'Student', onboardingCompleted: true, educationStatus: 'finished_school', schoolCompleted: true });
+  for (const user of users.filter(user => user.role === 'student')) await StudentProfile.create({ userId: user._id, firstName: user.name, onboardingCompleted: true, educationStatus: 'finished_school', schoolCompleted: true });
   const knowledge = await M.AdmissionKnowledge.create({ title: 'Synthetic QA fixture', content: 'QA synthetic guidance: discuss your study goals at a consultation.', language: 'ru', approved: true });
   knowledgeId = String(knowledge._id);
   await M.AdmissionState.init();
@@ -96,9 +96,24 @@ const message = (token, text, requestId = crypto.randomUUID(), expected = 200) =
     const auth = [];
     for (const user of users) auth.push(await request('/auth/login', null, { email: user.email, password }));
     const [a, b, admin] = auth.map(value => value.accessToken);
+    const noPhone = await request('/admissions/web/session', auth[3].accessToken, undefined, 200, 'uz');
+    check(noPhone.lead.onboardingStage === 'complete' && noPhone.lead.phone === '' && !noPhone.messages.some(row => /Telefon raqamingizni|Share your phone|номер телефона/.test(row.text)), 'first website visit with no phone skips phone registration');
+    await M.AdmissionLead.deleteOne({ _id: noPhone.lead.id });
     check(auth.every(value => value.accessToken && value.user), 'normal password login works for all isolated accounts');
     let sa = await request('/admissions/web/session', a);
     check(sa.lead.name === users[0].name && sa.lead.phone === users[0].phone && sa.lead.language === 'ru' && sa.lead.onboardingStage === 'complete', 'existing profile name phone and language reused');
+    await User.updateOne({ _id: users[0]._id }, { $set: { phone: '', name: '' } });
+    await StudentProfile.updateOne({ userId: users[0]._id }, { $set: { firstName: 'Platform', lastName: 'Student', preferredCountries: ['CA'], targetDegreeLevel: 'master' } });
+    await M.AdmissionLead.updateOne({ _id: sa.lead.id }, { $set: { onboardingStage: 'phone', phoneConfirmed: false } });
+    sa = await request('/admissions/web/session', a, undefined, 200, 'en');
+    check(sa.lead.name === 'Platform Student' && sa.lead.phone === '' && sa.lead.onboardingStage === 'complete', 'old website phone intake repaired without requiring an optional number');
+    check(sa.lead.language === 'en', 'platform request language overrides stored chat and account language');
+    const synced = await M.AdmissionLead.findById(sa.lead.id).lean();
+    check(synced.profile.destination === 'CA' && synced.profile.degree === 'master', 'academic platform preferences synchronize to assistant profile');
+    await User.updateOne({ _id: users[0]._id }, { $set: { phone: users[0].phone, name: users[0].name } });
+    await StudentProfile.updateOne({ userId: users[0]._id }, { $set: { firstName: users[0].name, lastName: '' } });
+    sa = await request('/admissions/web/session', a);
+    check(sa.lead.language === 'ru', 'changing platform language updates existing conversation without registration');
     const initialIds = sa.messages.map(item => item.id);
     check(JSON.stringify((await request('/admissions/web/session', a)).messages.map(item => item.id)) === JSON.stringify(initialIds), 'refresh does not duplicate welcome');
     let sb = await request('/admissions/web/session', b);
