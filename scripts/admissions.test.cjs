@@ -21,6 +21,7 @@ global.fetch = async (url, init = {}) => {
   if (pauseDuringInference) { await Lead.updateOne({ _id: pauseDuringInference }, { $set: { aiPaused: true } }); pauseDuringInference = null; }
   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ reply: body.messages?.at(-1)?.content.includes('Mars') ? '' : 'A consultation is available by appointment. /book', sourceIds: body.messages?.at(-1)?.content.includes('Mars') ? [] : [sourceId], needsHuman: false, profile: { destination: 'Canada', program: 'Computer science', degree: 'Bachelor' }, summary: 'Interested in Canada and computer science.' }) } }] }) };
 };
+require('../dist/admissions/assistant').aiTransport.meta=(...args)=>global.fetch(...args);
 process.env.ADMISSIONS_TELEGRAM_TOKEN = '123:test'; process.env.LLAMA_API_KEY = 'test-placeholder';
 function update(id, text, chatId = 10001) { return { update_id: id, message: { message_id: id, chat: { id: chatId, type: 'private' }, from: { id: chatId, first_name: 'Test Student', language_code: 'en' }, text } }; }
 async function main() {

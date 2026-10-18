@@ -4,6 +4,7 @@ const {processUpdate,bookSlot,createSlot}=require('../dist/admissions/service');
 const {availableSlots,monthKeyboard,hourKeyboard,tashkentDay,monthShift,dayDate}=require('../dist/admissions/calendar');
 const {parseAnswer,answerQuestion,modelCompletion,defaultSettings}=require('../dist/admissions/assistant');
 let sent=[],calls=[],id=90000,fail=false;
+require('../dist/admissions/assistant').aiTransport.meta=(...args)=>global.fetch(...args);
 process.env.ADMISSIONS_TELEGRAM_TOKEN='123:test';process.env.LLAMA_API_KEY='test-placeholder';
 global.fetch=async(url,init)=>{const b=JSON.parse(init.body);if(String(url).includes('api.telegram')){sent.push(b);return{ok:true,json:async()=>({ok:true,result:{message_id:sent.length}})}}calls.push(b);if(fail)return{ok:false,status:404};return{ok:true,json:async()=>({output:[{type:'reasoning',summary:[{text:'SECRET REASONING'}]},{type:'message',content:[{type:'output_text',text:JSON.stringify({reply:'',action:{type:'show_booking_calendar'},sourceIds:[]})}]}]})}};
 function update(chat,text){return{update_id:++id,message:{from:{id:chat,first_name:'Telegram Display'},chat:{id:chat,type:'private'},text}}}

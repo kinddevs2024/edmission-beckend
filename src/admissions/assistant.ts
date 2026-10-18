@@ -1,3 +1,4 @@
+import { request as httpsRequest } from 'https';
 import { AdmissionKnowledge, AdmissionState } from './models';
 import { copy, Language, rankKnowledge } from './policy';
 import { defaultAvailability } from './calendar';
@@ -27,6 +28,20 @@ export async function approvedKnowledge(query: string, language: Language): Prom
   const matching = rankKnowledge(query, entries);
   return matching.sort((a, b) => Number(b.language === language) - Number(a.language === language));
 }
+// Meta's IPv6 edge intermittently exposes an inconsistent catalog for this account.
+// Scope IPv4 to this provider only; normal TLS hostname/certificate verification remains enabled.
+export function metaRequest(url: string, init: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest(url, { method: init.method, headers: init.headers, family: 4, agent: false, signal: init.signal }, response => {
+      const chunks: Buffer[] = []; let length = 0;
+      response.on('data', (chunk: Buffer) => { length += chunk.length; if (length > 2 * 1024 * 1024) { response.destroy(new Error('META_RESPONSE_TOO_LARGE')); return; } chunks.push(chunk); });
+      response.on('error', reject);
+      response.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); resolve({ ok: (response.statusCode || 500) >= 200 && (response.statusCode || 500) < 300, status: response.statusCode, json: async () => JSON.parse(text) }); });
+    });
+    request.on('error', reject); request.end(init.body);
+  });
+}
+export const aiTransport = { meta: metaRequest };
 export async function modelCompletion(messages: { role: string; content: string }[], cfg: any): Promise<{ text: string; provider: string }> {
   const useMeta = cfg.provider === 'meta';
   if (useMeta && !(process.env.MODEL_API_KEY || process.env.LLAMA_API_KEY)) throw new Error('META_NOT_CONFIGURED');
@@ -38,7 +53,7 @@ export async function modelCompletion(messages: { role: string; content: string 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), useMeta ? 60000 : 45000);
   try {
-    const response = await fetch(url, {
+    const response = await (useMeta ? aiTransport.meta : fetch)(url, {
       method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json', ...(useMeta ? { Authorization: `Bearer ${process.env.MODEL_API_KEY || process.env.LLAMA_API_KEY}` } : {}) },
       body: JSON.stringify(useMeta ? (responses ? { model: cfg.model, input: messages, reasoning: { effort: cfg.reasoningEffort || 'high', summary: 'auto' }, max_output_tokens: 4096, stream: false, store: false } : { model: cfg.model, messages, max_completion_tokens: 4096, stream: false }) : { model: process.env.ADMISSIONS_OLLAMA_MODEL || 'qwen3:0.6b', messages: [messages[0], ...messages.slice(1).slice(-5)].map((message, index) => ({ ...message, content: message.content.slice(0, index === 0 ? 5500 : 600) })), stream: false, think: false, options: { temperature: 0, num_predict: 500, num_ctx: 4096 } }),
