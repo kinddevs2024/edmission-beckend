@@ -13,6 +13,9 @@ export const AdmissionLead = model('AdmissionLead', new Schema({
   objections: [String], assignedTo: String, aiPaused: { type: Boolean, default: false },
   followupConsent: { type: Boolean, default: false }, lastInboundAt: Date,
   externalAIConsent: { type: Boolean, default: false },
+  externalAIConsentAt: Date, consentVersion: String,
+  onboardingStage: { type: String, enum: ['language', 'name', 'phone', 'complete'], default: 'language' },
+  onboardingVersion: Number, onboardedAt: Date, nameConfirmed: Boolean, phoneConfirmed: Boolean, languageExplicit: Boolean,
   workflow: { type: Schema.Types.Mixed, default: {} }, deletedAt: Date,
   milestones: { type: Schema.Types.Mixed, default: {} }, analyticsVersion: Number,
 }, opts));

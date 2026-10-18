@@ -5,6 +5,9 @@ import { AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, Adm
 import { answerQuestion, settings } from './assistant';
 import { canFollowUp, copy, detectLanguage, formatSlot, Language, scoreLead } from './policy';
 import { markMilestone, trackingStartedAt } from './analytics';
+import { commandFromButton, mainMenu, menuCopy, publicText } from './menu';
+import { handleOnboarding, intakeCopy, languagePicker } from './onboarding';
+import { availableSlots, dayAllowed, defaultAvailability, hourKeyboard, monthAllowed, monthKeyboard, tashkentDay } from './calendar';
 
 const incomingContext = new AsyncLocalStorage<{ updateId: number; inboundAt: Date }>();
 
@@ -26,6 +29,10 @@ export async function staffAlert(kind: string, lead: any, text: string) {
   await AdmissionJob.updateOne({ dedupeKey: key }, { $setOnInsert: { kind: 'staff', due: new Date(), text: `${kind}\n${lead?.name || ''}\n${text.slice(0, 2500)}`, leadId: lead?._id } }, { upsert: true });
 }
 export async function sendLead(lead: any, text: string, options: Record<string, unknown> = {}, direction = 'out', metadata: any = {}) {
+  text = publicText(text, lead.language || 'en');
+  const cleanOptions = (value: any): any => Array.isArray(value) ? value.map(cleanOptions) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key,val]) => [key, key === 'text' && typeof val === 'string' ? publicText(val, lead.language || 'en') : cleanOptions(val)])) : value;
+  options = cleanOptions(options);
+  if (!options.reply_markup && lead.onboardingStage === 'complete') options.reply_markup = mainMenu(lead.language);
   const deliveryKey = metadata.jobId ? `job:${metadata.jobId}` : undefined;
   let draft: any = deliveryKey ? await AdmissionMessage.findOne({ deliveryKey }) : null;
   if (draft?.delivered) return { message_id: draft.telegramMessageId };
@@ -106,10 +113,58 @@ export async function cancelBooking(slotId: string, lead: any, actor = 'student'
   lead.status = 'qualified'; await lead.save(); return slot;
 }
 export async function showSlots(lead: any) {
-  const slots: any[] = await AdmissionSlot.find({ leadId: null, cancelled: false, start: { $gte: new Date() } }).sort({ start: 1 }).limit(12).lean();
-  if (!slots.length) return sendLead(lead, copy[lead.language as Language].noSlots);
-  const buttons = slots.map(slot => [{ text: formatSlot(slot, lead.language).split('\n')[0].slice(0, 60), callback_data: `book:${slot._id}` }]);
-  return sendLead(lead, copy[lead.language as Language].choose, { reply_markup: { inline_keyboard: buttons } });
+  return showMonthCalendar(lead);
+}
+export async function showMonthCalendar(lead: any, month = tashkentDay().slice(0, 7), suppliedConfig?: any) {
+  const cfg = suppliedConfig || await settings();
+  if (!monthAllowed(month, cfg)) month = tashkentDay().slice(0, 7);
+  const slots = await availableSlots(month, cfg); const keyboard = monthKeyboard(month, slots, cfg, lead.language);
+  const lang = lead.language as Language;
+  const prompt = lang === 'ru' ? 'Выберите свободный день' : lang === 'uz' ? 'Bo‘sh kunni tanlang' : 'Choose an available day';
+  const empty = lang === 'ru' ? 'В этом месяце свободных дней нет. Выберите другой месяц.' : lang === 'uz' ? 'Bu oyda bo‘sh kun yo‘q. Boshqa oyni tanlang.' : 'No available days in this month. Choose another month.';
+  keyboard.inline_keyboard.push([{ text: lang === 'ru' ? '← Назад' : lang === 'uz' ? '← Orqaga' : '← Back', callback_data: 'cal:back' }]);
+  return sendLead(lead, `${keyboard.title}\n${keyboard.days.length ? prompt : empty}\n${lang === 'ru' ? 'Время по Ташкенту' : lang === 'uz' ? 'Toshkent vaqti' : 'Tashkent time'}`, { reply_markup: { inline_keyboard: keyboard.inline_keyboard } });
+}
+async function showDayCalendar(lead: any, day: string, cfg: any) {
+  if (!dayAllowed(day, cfg)) return showMonthCalendar(lead, day.slice(0, 7), cfg);
+  const slots = await availableSlots(day.slice(0, 7), cfg); const keyboard = hourKeyboard(day, slots, lead.language);
+  if (!keyboard.available.length) { await sendLead(lead, copy[lead.language as Language].unavailable); return showMonthCalendar(lead, day.slice(0, 7), cfg); }
+  const label = lead.language === 'ru' ? 'Выберите свободное время' : lead.language === 'uz' ? 'Bo‘sh vaqtni tanlang' : 'Choose an available time';
+  return sendLead(lead, `${day}\n${label} · UTC+5`, { reply_markup: { inline_keyboard: keyboard.inline_keyboard } });
+}
+async function calendarChoice(lead: any, text: string, cfg: any): Promise<boolean> {
+  if (!cfg.bookings) return false;
+  const lang = lead.language as Language;
+  if (text === 'cal:back') { lead.workflow = {}; await lead.save(); await sendLead(lead, intakeCopy[lang].help); return true; }
+  if (/^\/(book|reschedule)\b/.test(text) || text === 'cal:reschedule') {
+    const reschedule = text.includes('reschedule');
+    const old: any[] = reschedule ? await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).select('_id').lean() : [];
+    lead.workflow = { rescheduleIds: old.map(slot => String(slot._id)) }; await lead.save(); await showMonthCalendar(lead, undefined, cfg); return true;
+  }
+  const month = /^cal:m:(\d{4}-\d{2})$/.exec(text)?.[1]; if (month) { await showMonthCalendar(lead, month, cfg); return true; }
+  const day = /^cal:d:(\d{4}-\d{2}-\d{2})$/.exec(text)?.[1]; if (day) { await showDayCalendar(lead, day, cfg); return true; }
+  const selected = /^(?:cal:t:|book:)([a-f\d]{24})$/i.exec(text)?.[1];
+  const confirmed = /^cal:c:([a-f\d]{24})$/i.exec(text)?.[1];
+  if (!selected && !confirmed) return text.startsWith('cal:');
+  const id = selected || confirmed!;
+  const candidate: any = await AdmissionSlot.findById(id).lean();
+  const candidateDay = candidate ? tashkentDay(new Date(candidate.start)) : tashkentDay();
+  const currentSlots = candidate && dayAllowed(candidateDay, cfg) ? await availableSlots(candidateDay.slice(0, 7), cfg) : [];
+  const slot = currentSlots.find(row => String(row._id) === id);
+  if (!slot || (confirmed && String(lead.workflow?.selectedSlotId) !== id)) { await sendLead(lead, copy[lang].unavailable); await showMonthCalendar(lead, candidateDay.slice(0, 7), cfg); return true; }
+  if (selected) {
+    lead.workflow = { ...(lead.workflow || {}), selectedSlotId: id, selectedDate: candidateDay }; await lead.save();
+    const title = lang === 'ru' ? 'Подтвердить запись?' : lang === 'uz' ? 'Yozilishni tasdiqlaysizmi?' : 'Confirm this appointment?';
+    await sendLead(lead, `${title}\n${formatSlot(slot, lang)}\n${lead.name}`, { reply_markup: { inline_keyboard: [[{ text: lang === 'ru' ? 'Подтвердить' : lang === 'uz' ? 'Tasdiqlash' : 'Confirm booking', callback_data: `cal:c:${id}` }], [{ text: lang === 'ru' ? '← К времени' : lang === 'uz' ? '← Vaqtlarga' : '← Back to times', callback_data: `cal:d:${candidateDay}` }]] } }); return true;
+  }
+  try {
+    const previous = Array.isArray(lead.workflow?.rescheduleIds) ? lead.workflow.rescheduleIds : [];
+    const booking = await bookSlot(id, lead);
+    for (const old of previous) if (old !== id) await cancelBooking(old, lead).catch(() => {});
+    lead.status = 'consultation_booked'; await lead.save();
+    await sendLead(lead, `${copy[lang].booked}\n${formatSlot(booking, lang)}`, { reply_markup: { inline_keyboard: [[{ text: lang === 'ru' ? 'Изменить время' : lang === 'uz' ? 'Vaqtni o‘zgartirish' : 'Change time', callback_data: 'cal:reschedule' }, { text: lang === 'ru' ? 'Отменить' : lang === 'uz' ? 'Bekor qilish' : 'Cancel booking', callback_data: `cancel:${id}` }]] } }, 'out', { slotId: booking._id });
+  } catch { await sendLead(lead, copy[lang].unavailable); await showDayCalendar(lead, candidateDay, cfg); }
+  return true;
 }
 export async function deleteLeadData(lead: any) {
   // Keep a non-reversible suppression receipt for inbound dedupe, not a student profile.
@@ -156,13 +211,14 @@ async function processUpdateInternal(update: any) {
   if (await AdmissionMessage.exists({ updateId: update.update_id })) return;
   const deleted: any = await AdmissionState.findOne({ key: `deleted:${createHash('sha256').update(chatId).digest('hex')}` }).lean();
   if (deleted?.value?.lastUpdate >= update.update_id) return;
-  const text = String(update.message?.text || (update.message?.contact ? `+${update.message.contact.phone_number.replace(/^\+/, '')}` : update.callback_query?.data || (update.message?.document ? '[Document received: staff review requested]' : '[Unsupported message]'))).trim().slice(0, 8000);
+  let text = String(update.message?.text || (update.message?.contact ? `+${update.message.contact.phone_number.replace(/^\+/, '')}` : update.callback_query?.data || (update.message?.document ? '[Document received: staff review requested]' : '[Unsupported message]'))).trim().slice(0, 8000);
   const lead: any = await AdmissionLead.findOneAndUpdate({ chatId }, { $setOnInsert: { chatId, username: sender.username, name: [sender.first_name, sender.last_name].filter(Boolean).join(' '), analyticsVersion: 1, milestones: { new: new Date() }, language: detectLanguage(text, sender.language_code === 'ru' ? 'ru' : sender.language_code === 'uz' ? 'uz' : 'en') } }, { upsert: true, new: true });
+  const rawText = text; text = commandFromButton(text, lead.language);
   const started = Date.now();
-  const isInquiry = !update.callback_query && !text.startsWith('/') && !lead.workflow?.step && !update.message?.document;
+  const isInquiry = lead.onboardingStage === 'complete' && !update.callback_query && !text.startsWith('/') && !lead.workflow?.step && !update.message?.document;
   try { await AdmissionMessage.create({ leadId: lead._id, direction: 'in', text, updateId: update.update_id, telegramMessageId: message.message_id, isInquiry, inquiryOutcome: isInquiry ? 'pending' : undefined, analyticsVersion: 1 }); }
   catch (error: any) { if (error?.code === 11000) return; throw error; }
-  lead.lastInboundAt = new Date(); lead.language = detectLanguage(text, lead.language);
+  lead.lastInboundAt = new Date(); if (!lead.languageExplicit) lead.language = detectLanguage(text, lead.language);
   if (isInquiry) {
     const latest: any = await AdmissionJob.findOne({ leadId: lead._id, kind: 'followup', status: 'sent', analyticsVersion: 1, sentAt: { $gte: new Date(Date.now() - 7 * 86400000), $lte: lead.lastInboundAt } }).sort({ sentAt: -1 }).lean();
     const followedUp = latest && !latest.respondedAt ? await AdmissionJob.findOneAndUpdate({ _id: latest._id, respondedAt: null }, { $set: { respondedAt: lead.lastInboundAt, responseUpdateId: update.update_id } }, { new: true }) : null;
@@ -172,6 +228,8 @@ async function processUpdateInternal(update: any) {
   await lead.save();
   if (update.callback_query) await telegram('answerCallbackQuery', { callback_query_id: update.callback_query.id }).catch(() => {});
   const lang = lead.language as Language; const c = copy[lang];
+  if (rawText === menuCopy[lang].language) { await languagePicker(lead, sendLead); return; }
+  if (await handleOnboarding(lead, text, update, sendLead)) return;
   if (/^(?:helpful|human):\d+$/.test(text)) {
     const originalUpdate = Number(text.split(':')[1]);
     const original = await AdmissionMessage.findOne({ leadId: lead._id, direction: 'in', updateId: originalUpdate, inquiryOutcome: { $in: ['ai_answered', 'ai_resolved', 'unanswered'] } });
@@ -184,26 +242,33 @@ async function processUpdateInternal(update: any) {
     original.inquiryOutcome = 'handover'; original.feedbackAt = new Date(); await original.save();
     lead.aiPaused = true; await lead.save(); await staffAlert('handover_requested', lead, lead.summary || original.text); await sendLead(lead, c.human); return;
   }
+  const menu = menuCopy[lang];
+  if (rawText === menu.language) { await languagePicker(lead, sendLead); return; }
+  if (rawText === menu.help || text === 'cal:back') { await sendLead(lead, intakeCopy[lang].help); return; }
+  if (rawText === menu.preferences) { await sendLead(lead, menu.preferences, { reply_markup: { inline_keyboard: [[{ text: menu.privacy, callback_data: '/privacy' }], [{ text: menu.follow, callback_data: '/followups' }, { text: menu.stop, callback_data: '/stop' }], [{ text: menu.external, callback_data: '/external_ai' }, { text: menu.local, callback_data: '/local_ai' }], [{ text: menu.remove, callback_data: 'data:delete-request' }], [{ text: menu.back, callback_data: 'cal:back' }]] } }); return; }
+  if (text === 'data:delete-request' || rawText === menu.remove) { await sendLead(lead, menu.remove + '?', { reply_markup: { inline_keyboard: [[{ text: menu.confirmDelete, callback_data: 'data:delete-confirm' }], [{ text: menu.back, callback_data: 'cal:back' }]] } }); return; }
+  if (text === 'data:delete-confirm') text = '/delete';
+  if (rawText === menu.mine) { const rows: any[] = await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).sort({ start: 1 }).lean(); if (!rows.length) await sendLead(lead, lang === 'ru' ? 'Предстоящих записей пока нет.' : lang === 'uz' ? 'Hozircha kelgusi yozilishlar yo‘q.' : 'No upcoming bookings yet.'); for (const row of rows) await sendLead(lead, formatSlot(row,lang), { reply_markup: { inline_keyboard: [[{ text: menu.reschedule, callback_data: 'cal:reschedule' }, { text: menu.cancel, callback_data: 'cancel:'+row._id }]] } }); return; }
   if (/^\/delete\b/.test(text)) { await telegram('sendMessage', { chat_id: chatId, text: c.deleted }); await deleteLeadData(lead); return; }
   if (/^\/privacy\b/.test(text)) { await sendLead(lead, c.privacy); return; }
-  if (/^\/external_ai\b/.test(text)) {
+  if (/^\/external_ai\b/.test(text) || text === 'ai:consent') {
     lead.externalAIConsent = true; await lead.save();
     await sendLead(lead, lang === 'ru' ? 'Вы разрешили передавать текст этого диалога в Meta для ответов ИИ, если этот провайдер включён администратором. Отозвать разрешение: /local_ai.' : lang === 'uz' ? 'AI javoblari uchun suhbat matnini Meta xizmatiga yuborishga ruxsat berdingiz (agar administrator yoqqan bo‘lsa). Bekor qilish: /local_ai.' : 'You allowed conversation text to be sent to Meta for AI answers when enabled by staff. Revoke with /local_ai.'); return;
   }
   if (/^\/local_ai\b/.test(text)) {
     lead.externalAIConsent = false; await lead.save();
-    await sendLead(lead, lang === 'ru' ? 'Для вашего диалога используется только локальный ИИ.' : lang === 'uz' ? 'Suhbatingiz uchun faqat mahalliy AI ishlatiladi.' : 'Your conversation will use local AI only.'); return;
+    await sendLead(lead, lang === 'ru' ? 'Обработка Meta отключена. Вы можете связаться с консультантом.' : lang === 'uz' ? 'Meta orqali qayta ishlash o‘chirildi. Maslahatchiga murojaat qilishingiz mumkin.' : 'Meta processing is disabled. You can contact a human consultant.'); return;
   }
   if (/^\/stop\b/.test(text)) { lead.followupConsent = false; await lead.save(); await sendLead(lead, c.stopped); return; }
   if (/^\/followups\b/.test(text)) { lead.followupConsent = true; await lead.save(); await sendLead(lead, c.consent); return; }
-  if (/^\/human\b/.test(text) || /(?:speak|talk).*(?:human|person)|жив.*консульт|позовите.*человека|operator kerak/i.test(text)) {
+  if (/^\/human\b/.test(text) || Object.values(intakeCopy).some(row => row.human === text) || /(?:speak|talk).*(?:human|person)|жив.*консульт|позовите.*человека|operator kerak/i.test(text)) {
     await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'handover' } });
     lead.aiPaused = true; await lead.save(); await staffAlert('handover_requested', lead, lead.summary || text); await sendLead(lead, c.human); return;
   }
   if (/^\/resume\b/.test(text)) { lead.aiPaused = false; await lead.save(); await sendLead(lead, c.resumed); return; }
-  if (/^\/start\b|^\/(?:ru|uz|en)\b/.test(text)) { await sendLead(lead, c.welcome, { reply_markup: { keyboard: [['/book', '/human'], ['/privacy', '/followups']], resize_keyboard: true } }); return; }
   if (update.message?.document) { await staffAlert('document_submitted', lead, 'Student sent a document; review it in the original Telegram chat. Files are not forwarded to AI.'); await sendLead(lead, c.paused); return; }
   if (lead.aiPaused) { await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'staff_waiting' } }); await recordEvent('handover_message', lead._id); await sendLead(lead, c.paused); return; }
+  if (await calendarChoice(lead, text, cfg)) return;
   if (text.startsWith('cancel:')) {
     const id = text.slice(7); if (!/^[a-f\d]{24}$/i.test(id)) return;
     try { await cancelBooking(id, lead); await sendLead(lead, c.cancelled); } catch { await sendLead(lead, c.unavailable); } return;
@@ -239,7 +304,6 @@ async function processUpdateInternal(update: any) {
   const history = (await AdmissionMessage.find({ leadId: lead._id, updateId: { $ne: update.update_id } }).sort({ createdAt: -1 }).limit(12).lean()).reverse();
   const originalScore = lead.score;
   const analysis = scoreLead(text, lead.profile); Object.assign(lead, analysis);
-  if (analysis.intent === 'career_guidance') { await lead.save(); await sendLead(lead, c.career); return; }
   const answer = await answerQuestion(text, lead, history);
   const currentAutomation: any = await AdmissionLead.findById(lead._id).select('aiPaused').lean();
   if (!currentAutomation || currentAutomation.aiPaused) {
@@ -257,8 +321,11 @@ async function processUpdateInternal(update: any) {
   if (answer.needsHuman) await staffAlert('unanswered_question', lead, text);
   if (answer.errorCode) await recordEvent('ai_error', lead._id, { code: answer.errorCode });
   if (lead.score >= 60 && originalScore < 60) await staffAlert('high_priority', lead, lead.summary || text);
+  if ('action' in answer && answer.action?.type === 'show_booking_calendar') { await showMonthCalendar(lead, undefined, cfg); return; }
   const buttons = [{ text: lang === 'ru' ? 'Консультант' : lang === 'uz' ? 'Maslahatchi' : 'Ask a consultant', callback_data: `human:${update.update_id}` }];
   if (!answer.needsHuman) buttons.unshift({ text: lang === 'ru' ? 'Помогло ✓' : lang === 'uz' ? 'Foydali ✓' : 'Helpful ✓', callback_data: `helpful:${update.update_id}` });
+  if (answer.provider === 'meta-unavailable' || answer.provider === 'meta-consent-required') buttons.unshift({ text: lang === 'ru' ? 'Календарь консультаций' : lang === 'uz' ? 'Maslahat taqvimi' : 'Consultation calendar', callback_data: `cal:m:${tashkentDay().slice(0, 7)}` });
+  if (answer.provider === 'meta-consent-required') buttons.unshift({ text: lang === 'ru' ? 'Разрешить ИИ Meta' : lang === 'uz' ? 'Meta AI ga ruxsat' : 'Allow Meta AI', callback_data: 'ai:consent' });
   await sendLead(lead, answer.reply, { reply_markup: { inline_keyboard: [buttons] } }, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: answer.needsHuman ? 'unanswered' : 'ai_answered' });
   await maybeScheduleFollowup(lead, cfg);
 }
@@ -286,7 +353,7 @@ export async function runDueJobs() {
             const slot: any = await AdmissionSlot.findOne({ _id: job.slotId, leadId: lead._id, ...(job.bookingId ? { bookingId: job.bookingId } : {}), cancelled: false, start: { $gt: new Date() } }).lean();
             if (!cfg.reminders || !slot) { job.status = 'cancelled'; await job.save(); continue; }
             text = `${copy[lead.language as Language].booked}\n${formatSlot(slot, lead.language)}`;
-            options = { reply_markup: { inline_keyboard: [[{ text: 'Confirm', callback_data: `confirm:${slot._id}` }, { text: 'Cancel / Reschedule', callback_data: `cancel:${slot._id}` }]] } };
+            options = { reply_markup: { inline_keyboard: [[{ text: menuCopy[lead.language as Language].confirm, callback_data: `confirm:${slot._id}` }, { text: menuCopy[lead.language as Language].cancel, callback_data: `cancel:${slot._id}` }, { text: menuCopy[lead.language as Language].reschedule, callback_data: 'cal:reschedule' }]] } };
           }
           await sendLead(lead, text, options, 'out', { jobId: String(job._id), slotId: job.slotId });
         }
@@ -308,7 +375,7 @@ export function startAdmissionsAssistant() {
   void (async () => {
     for (const model of [AdmissionLead, AdmissionMessage, AdmissionKnowledge, AdmissionSlot, AdmissionBooking, AdmissionJob, AdmissionState]) await model.init();
     await trackingStartedAt();
-    await telegram('setMyCommands', { commands: [ { command: 'start', description: 'Edmission AI assistant' }, { command: 'book', description: 'Book a consultation' }, { command: 'reschedule', description: 'Change consultation time' }, { command: 'human', description: 'Contact a consultant' }, { command: 'resume', description: 'Resume AI support' }, { command: 'followups', description: 'Allow follow-up messages' }, { command: 'stop', description: 'Stop follow-up messages' }, { command: 'privacy', description: 'Privacy information' }, { command: 'delete', description: 'Delete my conversation data' }, { command: 'ru', description: 'Русский' }, { command: 'uz', description: 'O‘zbekcha' }, { command: 'en', description: 'English' } ] }).catch(() => {});
+    for (const language_code of ['', 'en', 'ru', 'uz']) await telegram('deleteMyCommands', language_code ? { language_code } : {}).catch(() => {});
     let delay = 1000;
     while (running) {
       try {

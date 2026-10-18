@@ -43,13 +43,16 @@ router.get('/analytics', asyncRoute(async (req, res) => {
 router.get('/settings', asyncRoute(async (_req, res) => { res.json(await settings()); }));
 const settingsSchema = z.object({
   enabled: z.boolean(), autoReplies: z.boolean(), bookings: z.boolean(), reminders: z.boolean(), followups: z.boolean(),
+  metaWireApi: z.enum(['responses', 'chat/completions']).optional(), reasoningEffort: z.enum(['low','medium','high']).optional(),
+  metaEndpoint: z.enum(['https://api.meta.ai/v1', 'https://api.llama.com/v1']).optional(),
+  availability: z.object({ enabled: z.boolean(), consultantId: z.string().min(1).max(100), consultantName: z.string().min(1).max(120), startHour: z.number().int().min(0).max(23), lastStartHour: z.number().int().min(0).max(23), monthsAhead: z.number().int().min(1).max(12), weekdays: z.array(z.number().int().min(0).max(6)).max(7), closedDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(366), mode: z.enum(['online','office']), location: z.string().min(1).max(500) }).refine(v => v.lastStartHour >= v.startHour).optional(),
   provider: z.enum(['meta', 'ollama']), model: z.string().min(1).max(100).refine(v => !/contributor/i.test(v)),
   staffChatId: z.string().max(30).regex(/^-?\d*$|^@\w+$/), retentionDays: z.number().int().min(30).max(3650), instructions: z.string().max(4000),
   followupDays: z.record(z.string(), z.number().int().min(1).max(90)).optional(),
   followupTemplates: z.object({ en: z.string().min(1).max(2000), ru: z.string().min(1).max(2000), uz: z.string().min(1).max(2000) }).optional(),
 });
 router.put('/settings', requireAdminOnly, asyncRoute(async (req, res) => {
-  const value = settingsSchema.parse(req.body);
+  const value = { ...(await settings()), ...settingsSchema.parse(req.body) };
   await AdmissionState.updateOne({ key: 'settings' }, { $set: { value } }, { upsert: true });
   await recordEvent('settings_updated', undefined, { enabled: value.enabled, provider: value.provider }, req.user!.id);
   res.json({ ...defaultSettings, ...value });
@@ -132,7 +135,7 @@ router.post('/knowledge-upload', upload.single('file'), asyncRoute(async (req, r
   const item = await AdmissionKnowledge.create({ title: req.file.originalname.slice(0, 200), content: text.slice(0, 60000), category: 'Documents', language: ['uz', 'ru', 'en'].includes(req.body.language) ? req.body.language : 'en', approved: false, updatedBy: req.user!.id, sourceFilename: req.file.originalname.slice(0, 200) });
   await recordEvent('knowledge_uploaded', undefined, { id: item._id }, req.user!.id); res.status(201).json({ item, truncated: extracted.truncated });
 }));
-router.get('/slots', asyncRoute(async (_req, res) => { res.json(await AdmissionSlot.find({ end: { $gte: new Date(Date.now() - 30 * 86400000) } }).sort({ start: 1 }).limit(500).populate('leadId', 'name phone').lean()); }));
+router.get('/slots', asyncRoute(async (_req, res) => { res.json(await AdmissionSlot.find({ end: { $gte: new Date(Date.now() - 30 * 86400000) } }).sort({ leadId: -1, start: 1 }).limit(2000).populate('leadId', 'name phone').lean()); }));
 router.post('/slots', asyncRoute(async (req, res) => {
   const data = z.object({ consultantId: z.string().min(1).max(100), consultantName: z.string().min(1).max(120), start: z.coerce.date(), end: z.coerce.date(), mode: z.enum(['online', 'office']), location: z.string().min(1).max(500) }).parse(req.body);
   const slot = await createSlot(data); await recordEvent('slot_created', undefined, { slotId: slot._id }, req.user!.id); res.status(201).json(slot);

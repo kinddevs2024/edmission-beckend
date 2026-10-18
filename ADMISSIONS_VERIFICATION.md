@@ -36,3 +36,9 @@ Date: 18 October 2026. This is the first Telegram implementation inside the exis
 Telegram cannot guarantee exactly-once delivery across a crash after send and before receipt persistence. Outgoing retries reuse stored message receipts to reduce duplication. Failed incoming workflow processing is visible in the staff event queue rather than automatically repeating booking side effects. The built-in calendar protects reservations inside this service; an independently maintained external calendar is not synchronized.
 
 Deployment has a server-side backup of prior code, environment and dependencies under the existing Edmission backend backups directory. The public frontend, including its custom hero, was not rebuilt or replaced. Secrets are server-only and excluded from source control.
+
+
+### Revised intake / calendar release
+Meta provider host checks: api.meta.ai/v1/models HTTP200 with object=list,data=[]; legacy api.llama.com/v1/models HTTP401. Documented Muse1.3/1.2/1.1 chat inference and Muse1.3 native responses return404 model_not_found. Replacement-key Responses inference succeeds from the user’s Windows machine; the server’s endpoint response differs, so production inference must be verified separately. New onboarding/calendar fixtures use isolated QA Mongo and mocked Telegram/Meta; no synthetic messages are injected into production. Default hourly start times include17:00 in Asia/Tashkent.
+
+Public bot navigation uses localized readable message buttons; legacy slash commands remain internal compatibility routes and are removed from Telegram’s command menu. Outgoing text and button labels sanitize old command references in approved knowledge and scheduled messages. Privacy preferences and deletion confirmation are available in the main menu.

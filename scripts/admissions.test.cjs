@@ -15,11 +15,11 @@ let externalCalls = 0; let localCalls = 0;
 let pauseDuringInference;
 global.fetch = async (url, init = {}) => {
   if (String(url).startsWith('http://127.0.0.1:') && !String(url).includes(':11434/')) return actualFetch(url, init);
-  const body = JSON.parse(init.body || '{}');
+  const body = JSON.parse(init.body || '{}'); body.messages = body.messages || body.input;
   if (String(url).includes('api.telegram.org')) { if (failDelivery) { failDelivery = false; throw new Error('TELEGRAM_503'); } deliveries.push(body); return { ok: true, json: async () => ({ ok: true, result: { message_id: ++sequence } }) }; }
   if (String(url).includes('api.meta.ai')) externalCalls++; else localCalls++;
   if (pauseDuringInference) { await Lead.updateOne({ _id: pauseDuringInference }, { $set: { aiPaused: true } }); pauseDuringInference = null; }
-  return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ reply: 'A consultation is available by appointment. /book', sourceIds: [sourceId], needsHuman: false, profile: { destination: 'Canada', program: 'Computer science', degree: 'Bachelor' }, summary: 'Interested in Canada and computer science.' }) } }] }) };
+  return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ reply: body.messages?.at(-1)?.content.includes('Mars') ? '' : 'A consultation is available by appointment. /book', sourceIds: body.messages?.at(-1)?.content.includes('Mars') ? [] : [sourceId], needsHuman: false, profile: { destination: 'Canada', program: 'Computer science', degree: 'Bachelor' }, summary: 'Interested in Canada and computer science.' }) } }] }) };
 };
 process.env.ADMISSIONS_TELEGRAM_TOKEN = '123:test'; process.env.LLAMA_API_KEY = 'test-placeholder';
 function update(id, text, chatId = 10001) { return { update_id: id, message: { message_id: id, chat: { id: chatId, type: 'private' }, from: { id: chatId, first_name: 'Test Student', language_code: 'en' }, text } }; }
@@ -38,14 +38,14 @@ async function main() {
   check('Invented citation IDs rejected', () => assert.equal(parseAnswer(JSON.stringify({ reply: 'bad', sourceIds: ['not-real'] }), [item]).needsHuman, true));
   check('Local model trailing explanation parsed safely', () => assert.equal(parseAnswer(JSON.stringify({ reply: 'Valid {quoted} answer', sourceIds: [sourceId] }) + '\nextra explanation', [item]).reply, 'Valid {quoted} answer'));
   await processUpdate(update(1, '/start')); const lead = await Lead.findOne({ chatId: '10001' });
-  check('Start persists lead and multilingual welcome', () => { assert(lead); assert(deliveries.at(-1).text.includes('Edmission')); });
-  lead.externalAIConsent = true; await lead.save(); // Synthetic fixture opts in to the mocked Meta transport.
+  check('Start persists lead and multilingual welcome', () => { assert(lead); assert(deliveries.at(-1).text.includes('Choose your language')); });
+  lead.onboardingStage = 'complete'; lead.onboardingVersion = 1; lead.onboardedAt = new Date(0); lead.externalAIConsent = true; await lead.save(); // Synthetic fixture opts in to the mocked Meta transport.
   await processUpdate(update(1, '/start')); check('Telegram update deduplicated', () => assert.equal(deliveries.length, 1));
   await processUpdate(update(2, 'What is the Mars visa price?'));
   check('Unknown fact escalates without invented fee', () => { assert(deliveries.at(-1).text.includes('verified')); });
   assert.equal(await Event.countDocuments({ kind: 'unanswered_question' }), 1); passed++;
   await processUpdate(update(3, 'I want consultation in Canada for computer science Bachelor'));
-  let current = await Lead.findById(lead._id); check('Verified model reply and structured qualification', () => { assert.equal(current.profile.destination, 'Canada'); assert(deliveries.at(-1).text.includes('/book')); });
+  let current = await Lead.findById(lead._id); check('Verified model reply and structured qualification', () => { assert.equal(current.profile.destination, 'Canada'); assert(deliveries.at(-1).text.includes('Book consultation')); });
   const linked = await Message.findOne({ replyToUpdateId: 3, direction: 'out' });
   check('Delivered answer records its inquiry link for first-reply latency', () => { assert(linked.sentAt); assert(linked.inboundAt); assert.equal(linked.analyticsVersion, 1); });
   await processUpdate({ update_id: 302, callback_query: { id: 'qa_feedback', from: { id: 10001, first_name: 'Test Student' }, message: { message_id: 3, chat: { id: 10001, type: 'private' } }, data: 'helpful:3' } });
@@ -56,7 +56,7 @@ async function main() {
   await processUpdate(update(304, '/resume'));
   current.externalAIConsent = false; await current.save(); const beforeMeta = externalCalls;
   await processUpdate(update(301, 'How can I book a consultation?'));
-  check('No external AI processing without individual student opt-in', () => { assert.equal(externalCalls, beforeMeta); assert(localCalls > 0); });
+  check('No external AI processing without individual student opt-in', () => { assert.equal(externalCalls, beforeMeta); assert.equal(localCalls, 0); });
   current = await Lead.findById(lead._id); current.externalAIConsent = true; await current.save();
   await processUpdate(update(4, '/human')); current = await Lead.findById(lead._id); check('Human handover pauses AI', () => assert.equal(current.aiPaused, true));
   await processUpdate(update(5, 'Please answer')); check('Messages wait for staff during handover', () => assert(deliveries.at(-1).text.includes('queue')));

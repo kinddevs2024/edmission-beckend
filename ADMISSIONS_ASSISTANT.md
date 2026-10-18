@@ -54,3 +54,13 @@ The Overview workspace uses `/api/admissions/analytics` with an optional `from`/
 - **FAQ/unanswered:** exact question text grouped case-insensitively, excluding commands and booking-form fields.
 
 Personal-data deletion removes the corresponding metric records as well. `node scripts/admissions-analytics.test.cjs` verifies deterministic denominator, date, maturity, attribution, skipped-stage, empty-history and numeric-grounding fixtures in its own disposable QA database.
+
+
+## Guided Telegram intake and calendar
+The bot first asks language, sends an introduction and a separate name question, then accepts a shared or typed international phone number. Intake persists across restarts; explicit language remains selected. Intake messages (including name and phone) are excluded from model history. AI processing is enabled by the clear intake notice and can be revoked with /local_ai; /human works throughout.
+
+Meta is the active provider; failed Meta requests never silently use Ollama. The supplied key authenticates to api.meta.ai but its models list is empty; documented Muse models and the native responses endpoint currently return model_not_found. The replacement key works from the user’s Windows computer, while the server currently receives model_not_found. This is an environment/network discrepancy under investigation, not proof of missing account access. Calendar and human assistance remain available.
+
+The hidden show_booking_calendar action only opens validated server availability. Monthly buttons show available future dates only; hours default to 09:00 through17:00 inclusive, Asia/Tashkent (the final appointment ends18:00). Slot generation and staff manual scheduling share a consultant lease. Selecting a time does not reserve it: explicit confirmation rechecks and atomically reserves the slot. Rescheduling holds the existing reservation until the new one succeeds. Staff schedule JSON in Settings controls hours, horizon, weekdays, closed dates, consultant and meeting location. Bookings appear in the existing Calendar workspace.
+
+Public bot navigation uses localized readable message buttons; legacy slash commands remain internal compatibility routes and are removed from Telegram’s command menu. Outgoing text and button labels sanitize old command references in approved knowledge and scheduled messages. Privacy preferences and deletion confirmation are available in the main menu.
