@@ -27,7 +27,7 @@ export async function handleOnboarding(lead: any, text: string, update: any, sen
   // Existing, fully supplied CRM profiles are preserved during this release.
   if (!lead.onboardingVersion && lead.name && normalizePhone(lead.phone || '')) {
     lead.onboardingStage = 'complete'; lead.nameConfirmed = true; lead.phoneConfirmed = true;
-    lead.onboardedAt = lead.onboardedAt || new Date(); lead.onboardingVersion = 1; await lead.save();
+    lead.onboardedAt = lead.onboardedAt || new Date(); lead.onboardingVersion = 1; lead.languageExplicit = true; await lead.save();
   }
   const chosen = /^(?:lang:|\/)(en|ru|uz)\b/.exec(text)?.[1] as Language | undefined;
   if (chosen) {
@@ -40,8 +40,7 @@ export async function handleOnboarding(lead: any, text: string, update: any, sen
     await askIntake(lead, send); return true;
   }
   if (/^\/start\b/.test(text)) {
-    if (lead.onboardingStage === 'complete') await languagePicker(lead, send);
-    else await askIntake(lead, send);
+    await askIntake(lead, send);
     return true;
   }
   if (/^\/(?:privacy|delete|stop|human|resume|external_ai|local_ai)\b/.test(text)) return false;
