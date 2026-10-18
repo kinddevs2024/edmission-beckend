@@ -221,6 +221,7 @@ async function processUpdateInternal(update: any) {
   let text = String(update.message?.text || (update.message?.contact ? `+${update.message.contact.phone_number.replace(/^\+/, '')}` : update.callback_query?.data || (update.message?.document ? '[Document received: staff review requested]' : '[Unsupported message]'))).trim().slice(0, 8000);
   const lead: any = await AdmissionLead.findOneAndUpdate({ chatId }, { $setOnInsert: { chatId, username: sender.username, name: [sender.first_name, sender.last_name].filter(Boolean).join(' '), analyticsVersion: 1, milestones: { new: new Date() }, language: detectLanguage(text, sender.language_code === 'ru' ? 'ru' : sender.language_code === 'uz' ? 'uz' : 'en') } }, { upsert: true, new: true });
   const rawText = text; text = commandFromButton(text, lead.language);
+  if (lead.onboardingStage === 'complete' && lead.workflow?.step) { const { step, ...workflow } = lead.workflow; lead.workflow = workflow; await lead.save(); }
   const started = Date.now();
   const isInquiry = lead.onboardingStage === 'complete' && !update.callback_query && !text.startsWith('/') && !lead.workflow?.step && !update.message?.document;
   try { await AdmissionMessage.create({ leadId: lead._id, direction: 'in', text, updateId: update.update_id, telegramMessageId: message.message_id, isInquiry, inquiryOutcome: isInquiry ? 'pending' : undefined, analyticsVersion: 1 }); }
@@ -271,29 +272,7 @@ async function processUpdateInternal(update: any) {
     const slot = await AdmissionSlot.findOne({ _id: text.slice(8), leadId: lead._id, cancelled: false });
     if (slot) { await recordEvent('attendance_confirmed', lead._id, { slotId: slot._id }); await sendLead(lead, `${c.booked}\n${formatSlot(slot, lang)}`); } return;
   }
-  if (text.startsWith('book:') && cfg.bookings) {
-    const id = text.slice(5); if (!/^[a-f\d]{24}$/i.test(id) || !lead.phone || !lead.workflow?.purpose) { await sendLead(lead, c.bookName); lead.workflow = { step: 'name' }; await lead.save(); return; }
-    try {
-      const previous = Array.isArray(lead.workflow?.rescheduleIds) ? lead.workflow.rescheduleIds : [];
-      const slot = await bookSlot(id, lead);
-      for (const oldId of previous) { if (String(oldId) !== id) await cancelBooking(String(oldId), lead).catch(() => {}); }
-      lead.status = 'consultation_booked'; await lead.save();
-      await sendLead(lead, `${c.booked}\n${formatSlot(slot, lang)}\n/reschedule`, { reply_markup: { inline_keyboard: [[{ text: '/cancel', callback_data: `cancel:${slot._id}` }]] } }, 'out', { slotId: slot._id });
-    }
-    catch { await sendLead(lead, c.unavailable); } return;
-  }
   if (/^\/cancel\b/.test(text)) { lead.workflow = {}; await lead.save(); const slots: any[] = await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).lean(); for (const slot of slots) await cancelBooking(String(slot._id), lead); await sendLead(lead, c.cancelled); return; }
-  if (/^\/(?:book|reschedule)\b/.test(text) && cfg.bookings) {
-    const previous = text.startsWith('/reschedule') ? await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).select('_id').lean() : [];
-    // Preserve the old appointment until the replacement is successfully reserved.
-    lead.workflow = { step: 'name', rescheduleIds: previous.map(s => String(s._id)) }; await lead.save(); await sendLead(lead, c.bookName); return;
-  }
-  if (cfg.bookings && lead.workflow?.step) {
-    const workflow = { ...lead.workflow };
-    if (workflow.step === 'name') { if (text.length < 2 || text.length > 120) { await sendLead(lead, c.bookName); return; } lead.name = text; workflow.step = 'phone'; lead.workflow = workflow; await lead.save(); await sendLead(lead, c.bookPhone, { reply_markup: { keyboard: [[{ text: 'Share phone', request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } }); return; }
-    if (workflow.step === 'phone') { if (!/^\+?[0-9()\s-]{7,22}$/.test(text)) { await sendLead(lead, c.bookPhone); return; } lead.phone = text; workflow.step = 'purpose'; lead.workflow = workflow; await lead.save(); await sendLead(lead, c.bookPurpose, { reply_markup: { remove_keyboard: true } }); return; }
-    if (workflow.step === 'purpose') { workflow.purpose = text.slice(0, 500); delete workflow.step; lead.workflow = workflow; lead.profile = { ...lead.profile, consultationPurpose: workflow.purpose }; await lead.save(); await showSlots(lead); return; }
-  }
   if (!cfg.autoReplies) { await recordEvent('automation_paused', lead._id); return; }
   const history = (await AdmissionMessage.find({ leadId: lead._id, updateId: { $ne: update.update_id } }).sort({ createdAt: -1 }).limit(12).lean()).reverse();
   const originalScore = lead.score;
@@ -315,7 +294,7 @@ async function processUpdateInternal(update: any) {
   if (answer.needsHuman) await staffAlert('unanswered_question', lead, text);
   if (answer.errorCode) await recordEvent('ai_error', lead._id, { code: answer.errorCode });
   if (lead.score >= 60 && originalScore < 60) await staffAlert('high_priority', lead, lead.summary || text);
-  if ('action' in answer && answer.action?.type === 'show_booking_calendar') { await sendLead(lead, lang === 'ru' ? 'Давайте выберем удобное время для консультации.' : lang === 'uz' ? 'Maslahat uchun qulay vaqtni tanlaymiz.' : 'Let’s find a convenient time for your consultation.', { reply_markup: { inline_keyboard: [[{ text: menuCopy[lang].book, callback_data: `cal:m:${tashkentDay().slice(0, 7)}` }]] } }, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: 'ai_answered' }); return; }
+  if ('action' in answer && answer.action?.type === 'show_booking_calendar') { await sendLead(lead, answer.reply || (lang === 'ru' ? 'Выберите удобное время для консультации.' : lang === 'uz' ? 'Maslahat uchun qulay vaqtni tanlang.' : 'Choose a convenient consultation time.'), { reply_markup: { inline_keyboard: [[{ text: menuCopy[lang].book, callback_data: `cal:m:${tashkentDay().slice(0, 7)}` }]] } }, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: 'ai_answered' }); return; }
   const buttons: {text:string;callback_data:string}[] = [];
   if (answer.provider === 'meta-consent-required') buttons.push({ text: lang === 'ru' ? 'Разрешить ИИ Meta' : lang === 'uz' ? 'Meta AI ga ruxsat' : 'Allow Meta AI', callback_data: 'ai:consent' });
   await sendLead(lead, answer.reply, buttons.length ? { reply_markup: { inline_keyboard: [buttons] } } : {}, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: answer.needsHuman ? 'unanswered' : 'ai_answered' });

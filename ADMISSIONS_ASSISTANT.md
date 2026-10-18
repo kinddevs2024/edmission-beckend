@@ -68,3 +68,7 @@ Public bot navigation uses localized readable message buttons; legacy slash comm
 
 ## Current student chat mode: AI only
 The latest user instruction supersedes the original human-handover requirement. Student questions go to Meta after intake and consent. Old handover pause flags do not block replies; legacy human buttons return to AI help. Consultant chat buttons, queues, takeover controls and manual staff chat replies are disabled. Scheduled internal staff alerts and real consultation bookings remain. Unknown business facts are disclosed as unverified; the AI may ask one strictly validated short clarification question without a source citation, while all numeric business claims still require approved support.
+
+
+## Answer-first behavior
+The assistant answers the current question before optional clarification and does not run a qualification questionnaire. Real Meta text is preserved for ordinary conversation, grounded information and honest uncertainty. General study-preparation context is maintained separately from staff-approved business knowledge in general-guidance.ts, with official source URLs and explicit scope caveats. It never authorizes invented Edmission fees, institution-specific thresholds or guarantees. Booking actions require explicit request/acceptance; their text is actual Meta output when available.

@@ -60,13 +60,13 @@ export const copy = {
 };
 export function terms(text: string): string[] {
   const stop = new Set(['what', 'where', 'when', 'your', 'have', 'about', 'please', 'with', 'this', 'that', 'как', 'что', 'для', 'мне', 'это', 'есть', 'какие', 'можно', 'the', 'and']);
-  return [...new Set(text.toLocaleLowerCase().replace(/[’‘ʻ]/g, "'").match(/[\p{L}\p{N}']{3,}/gu) || [])].filter(t => !stop.has(t));
+  return [...new Set(text.toLocaleLowerCase().replace(/[’‘ʻ']/g, '').match(/[\p{L}\p{N}']{3,}/gu) || [])].filter(t => !stop.has(t));
 }
 export function rankKnowledge(query: string, entries: any[]): any[] {
   const words = terms(query);
   return entries.map(entry => {
-    const title = String(entry.title).toLowerCase();
-    const content = `${entry.category} ${entry.content}`.toLowerCase();
+    const title = String(entry.title).toLowerCase().replace(/[’‘ʻ']/g, '');
+    const content = `${entry.category} ${entry.content}`.toLowerCase().replace(/[’‘ʻ']/g, '');
     const score = words.reduce((sum, word) => sum + (title.includes(word) ? 4 : content.includes(word) ? 1 : 0), 0);
     return { entry, score };
   }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5).map(x => x.entry);
