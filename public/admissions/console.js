@@ -3,6 +3,8 @@
   'use strict';
   let token = sessionStorage.getItem('admissions_staff_token') || localStorage.getItem('auth_accessToken') || '';
   let tab = 'Overview'; let selectedLead = ''; let leadData; let config;
+  const localDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  let analyticsFrom = localDay(new Date(Date.now() - 30 * 86400000)); let analyticsTo = localDay(new Date());
   const $ = s => document.querySelector(s);
   const el = (tag, text, cls) => { const node = document.createElement(tag); if (text != null) node.textContent = text; if (cls) node.className = cls; return node; };
   const append = (parent, ...children) => { children.forEach(child => parent.append(child)); return parent; };
@@ -51,14 +53,39 @@
     if (tab === 'Events') await events(view);
   }
   async function overview(view) {
-    const data = await api('/overview'); const grid = el('div', null, 'grid');
-    for (const [label, value] of [['Student leads', data.leads], ['Incoming messages', data.incoming], ['Verified AI replies', data.aiResolvedMessages], ['Active bookings', data.bookings], ['Human handovers', data.handovers], ['Average response (s)', Math.round(data.averageResponseMs / 1000)]]) { const c = card(); append(c, el('div', String(value), 'stat'), el('p', label, 'muted')); grid.append(c); }
+    const start = new Date(analyticsFrom + 'T00:00:00'); const end = new Date(analyticsTo + 'T00:00:00'); end.setDate(end.getDate() + 1);
+    const [data, metrics] = await Promise.all([api('/overview'), api('/analytics?from=' + encodeURIComponent(start.toISOString()) + '&to=' + encodeURIComponent(end.toISOString()))]);
+    const filters = card('Performance period'); const filterForm = el('form', null, 'row');
+    const from = field(filterForm, 'From (your local date)', 'from', analyticsFrom, 'date'); from.style.maxWidth = '190px';
+    const to = field(filterForm, 'Through (your local date)', 'to', analyticsTo, 'date'); to.style.maxWidth = '190px';
+    filterForm.append(button('Apply dates', async () => { if (!from.value || !to.value || from.value > to.value) throw new Error('Choose a valid date range'); analyticsFrom = from.value; analyticsTo = to.value; await load(); })); filters.append(filterForm);
+    filters.append(el('p', `Measurement began ${date(metrics.range.trackingStartedAt)}. Outcomes observed through ${date(metrics.range.asOf)}. Earlier milestones are not reconstructed from current statuses. Deleted personal records are excluded.`, 'muted'));
+    const rate = metric => metric.percent == null ? 'n/a' : `${metric.percent}%`;
+    const fraction = metric => `${metric.numerator} / ${metric.denominator}`;
+    const grid = el('div', null, 'grid');
+    for (const [label, value, note] of [
+      ['New leads', metrics.activity.newLeads, 'First contacted in this period'], ['Incoming messages', metrics.activity.incomingMessages, `${metrics.activity.trackedInquiries} tracked non-command inquiries`],
+      ['Consultations booked', metrics.activity.trackedBookings, 'Recorded booking receipts in this period'], ['AI-answered inquiries', metrics.inquiries.aiAnswered, 'Delivered answers with approved sources; not a satisfaction claim'],
+      ['Resolved by student feedback', metrics.inquiries.studentConfirmedResolved, 'Student explicitly selected Helpful'], ['Human handover requests', metrics.inquiries.handovers, 'Includes explicit consultant commands'],
+      ['Reminder delivery', rate(metrics.reminders.delivered), fraction(metrics.reminders.delivered) + ' due reminders · cancellations excluded'],
+      ['Follow-up response (7 days)', rate(metrics.followups.responseRate7Days), fraction(metrics.followups.responseRate7Days) + ` closed windows · ${metrics.followups.pendingObservation} still observing`],
+      ['Recorded attendance', rate(metrics.attendance.recordedRate), fraction(metrics.attendance.recordedRate) + ` attended / attended+missed · ${metrics.attendance.counts.pending || 0} unrecorded`],
+      ['Average first reply', metrics.latency.averageMs == null ? 'n/a' : `${(metrics.latency.averageMs / 1000).toFixed(2)}s`, `${metrics.latency.replies} first delivered replies · includes commands`],
+    ]) { const c = card(); append(c, el('div', String(value), 'stat'), el('p', label), el('small', note)); grid.append(c); }
     const integrations = card('Integrations');
     integrations.append(el('p', `Telegram: ${data.integration.telegramConfigured ? 'configured' : 'not configured'} · AI: ${data.integration.provider} · ${data.integration.model}`));
     integrations.append(el('p', `${data.integration.calendar} · Internal Telegram alerts: ${data.integration.staffTelegramConfigured ? 'configured' : 'not configured (events are available below)'}`, 'muted'));
-    const funnel = card('Lead pipeline'); const rows = data.statuses.map(item => `${item._id.replace(/_/g, ' ')}: ${item.count}`); funnel.append(el('pre', rows.join('\n') || 'No leads yet.'));
-    const unresolved = card('Questions awaiting an approved answer'); for (const q of data.unanswered) unresolved.append(el('p', `${q.count} × ${q._id}`)); if (!data.unanswered.length) unresolved.append(el('p', 'No unanswered questions.'));
-    view.replaceChildren(grid, integrations, funnel, unresolved);
+    const funnel = card(`Observed conversion cohort · ${metrics.cohort.count} leads`); funnel.append(el('p', metrics.cohort.definition, 'muted'));
+    funnel.append(el('p', `Booked consultation → application: ${rate(metrics.cohort.transitions.consultationToApplication)} (${fraction(metrics.cohort.transitions.consultationToApplication)}). Completed consultation → application: ${rate(metrics.cohort.transitions.completedConsultationToApplication)}. Application → enrollment: ${rate(metrics.cohort.transitions.applicationToEnrollment)} (${fraction(metrics.cohort.transitions.applicationToEnrollment)}).`));
+    const table = el('table'); const heading = el('tr'); ['Recorded milestone', 'Reached', 'Share of cohort', 'From previous recorded stage'].forEach(text => heading.append(el('th', text))); table.append(heading);
+    for (const stage of metrics.cohort.stages) { const row = el('tr'); append(row, el('td', stage.stage.replace(/_/g, ' ')), el('td', String(stage.observed)), el('td', rate(stage.shareOfCohort)), el('td', stage.fromPrevious ? `${rate(stage.fromPrevious)} (${fraction(stage.fromPrevious)})` : '—')); table.append(row); }
+    const scroll = el('div', null, 'scroll'); scroll.append(table); funnel.append(scroll);
+    const snapshot = card('Current status snapshot — separate from conversion history'); snapshot.append(el('p', 'Current statuses of leads first seen in the selected period. A status alone does not prove that earlier stages occurred.', 'muted')); for (const status of metrics.currentStatusSnapshot) snapshot.append(el('p', `${status._id.replace(/_/g, ' ')}: ${status.count}`));
+    const delivery = card('Delivery & observation details');
+    append(delivery, el('p', metrics.reminders.definition, 'muted'), el('pre', JSON.stringify(metrics.reminders.counts, null, 2)), el('p', metrics.followups.definition, 'muted'), el('p', `${metrics.followups.respondedSoFar} responses observed so far / ${metrics.followups.delivered} delivered follow-ups, including windows still open.`), el('p', metrics.attendance.definition, 'muted'), el('p', `Attendance recording coverage: ${rate(metrics.attendance.recordingCoverage)} (${fraction(metrics.attendance.recordingCoverage)}).`), el('p', metrics.latency.replies ? `First reply latency: min ${(metrics.latency.minMs / 1000).toFixed(2)}s, max ${(metrics.latency.maxMs / 1000).toFixed(2)}s. Measured from server receipt to first successful Telegram delivery, including retries.` : 'First reply latency: n/a until a linked reply is successfully delivered.', 'muted'));
+    const frequent = card('Frequently asked questions'); frequent.append(el('p', 'Exact question text grouped case-insensitively; commands and booking-form answers excluded.', 'muted')); for (const q of metrics.frequentlyAsked) frequent.append(el('p', `${q.count} × ${q._id}`)); if (!metrics.frequentlyAsked.length) frequent.append(el('p', 'No tracked inquiries in this period.'));
+    const unresolved = card('Unanswered inquiries requiring staff'); for (const q of metrics.unanswered) unresolved.append(el('p', `${q.count} × ${q._id}`)); if (!metrics.unanswered.length) unresolved.append(el('p', 'No tracked unanswered inquiries in this period.'));
+    view.replaceChildren(filters, grid, funnel, snapshot, frequent, unresolved, delivery, integrations);
   }
   const statuses = ['new', 'qualified', 'consultation_booked', 'consultation_completed', 'considering', 'application', 'offer', 'enrolled', 'not_interested', 'on_hold', 'closed'];
   async function conversations(view) {
@@ -97,6 +124,7 @@
   async function knowledge(view) {
     const data = await api('/knowledge'); const c = card('Approved knowledge'); c.append(el('p', 'Only approved, unexpired information is used in answers. Documents start as drafts for review. Versions are kept when editing.', 'muted'));
     const controls = el('div', null, 'controls'); controls.append(button('Add FAQ / University / Service', () => knowledgeEditor()));
+    controls.append(button('Import public university drafts', async () => { const result = await post('/knowledge-import-public', {}); message(`${result.created} new drafts · ${result.updated} updated · ${result.unchanged} unchanged. Staff approval required.${result.truncated ? ' Import limited to first 500 public records.' : ''}`); await load(); }, 'secondary'));
     const upload = el('input'); upload.type = 'file'; upload.accept = '.pdf,.docx,.txt,.md,.csv'; upload.style.maxWidth = '310px'; controls.append(upload);
     controls.append(button('Upload draft document', async () => { if (!upload.files[0]) return; const form = new FormData(); form.append('file', upload.files[0]); form.append('language', 'en'); const result = await api('/knowledge-upload', { method: 'POST', body: form }); message(result.truncated ? 'Draft uploaded. Only first 60,000 characters imported; split large documents.' : 'Draft uploaded. Review and approve before use.'); await load(); }, 'secondary')); c.append(controls);
     const table = el('table'); const head = el('tr'); ['Title', 'Category', 'Language', 'Status', 'Version', 'Actions'].forEach(t => head.append(el('th', t))); table.append(head);
@@ -105,6 +133,7 @@
   }
   function knowledgeEditor(item) {
     const form = el('form'); field(form, 'Title', 'title', item?.title); field(form, 'Category (FAQ, University, Programs, Fees, Office…)', 'category', item?.category || 'FAQ'); select(form, 'Language', 'language', ['en', 'ru', 'uz'], item?.language || 'en'); field(form, 'Approved factual content', 'content', item?.content, 'textarea'); field(form, 'Valid until (optional)', 'validUntil', item?.validUntil ? item.validUntil.slice(0, 10) : '', 'date'); field(form, 'Approved for student answers (administrators only)', 'approved', item?.approved || false, 'checkbox');
+    if (item?.sourceUrl) { const link = el('a', 'View public catalog source'); link.href = item.sourceUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; form.append(link, el('p', `Imported ${date(item.importedAt)}. Review source details before approving.`, 'muted')); }
     form.append(button('Save', async () => { const data = new FormData(form); await post('/knowledge' + (item ? '/' + item._id : ''), { title: data.get('title'), category: data.get('category'), language: data.get('language'), content: data.get('content'), approved: form.approved.checked, validUntil: data.get('validUntil') ? new Date(data.get('validUntil')).toISOString() : null }, item ? 'PUT' : 'POST'); $('#dialog').close(); await load(); }));
     if (item) form.append(button('Delete', async () => { if (!confirm('Remove this knowledge entry from the approved knowledge base?')) return; await api('/knowledge/' + item._id, { method: 'DELETE' }); $('#dialog').close(); await load(); }, 'danger')); modal(item ? 'Edit knowledge' : 'New knowledge entry', form);
   }
@@ -115,7 +144,7 @@
     }));
     for (const slot of slots) { const row = card(); append(row, el('strong', `${date(slot.start)} — ${date(slot.end)}`), el('p', `${slot.consultantName} · ${slot.mode} · ${slot.location}`), el('p', slot.cancelled ? 'Cancelled' : slot.leadId ? `${slot.leadId.name || 'Student'} · ${slot.leadId.phone || ''}` : 'Available', 'pill'));
       const controls = el('div', null, 'controls'); if (!slot.cancelled) controls.append(button('Cancel slot', async () => { if (!confirm('Cancel this slot and notify the booked student?')) return; await post('/slots/' + slot._id, { cancelled: true }, 'PATCH'); await load(); }, 'secondary'));
-      if (slot.leadId) { controls.append(button('Mark attended', async () => { await post('/slots/' + slot._id, { attendance: 'attended' }, 'PATCH'); await load(); }, 'secondary')); controls.append(el('span', slot.attendance, 'pill')); } row.append(controls); c.append(row); } view.replaceChildren(c);
+      if (slot.leadId && new Date(slot.start) <= new Date()) { for (const status of ['attended', 'missed', 'pending']) controls.append(button(status === 'pending' ? 'Reset attendance' : 'Mark ' + status, async () => { await post('/slots/' + slot._id, { attendance: status }, 'PATCH'); await load(); }, 'secondary')); controls.append(el('span', slot.attendance, 'pill')); } row.append(controls); c.append(row); } view.replaceChildren(c);
   }
   async function automation(view) {
     config = await api('/settings'); const c = card('Automation controls'); const form = el('form');

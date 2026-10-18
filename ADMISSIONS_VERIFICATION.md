@@ -5,7 +5,7 @@ Date: 18 October 2026. This is the first Telegram implementation inside the exis
 | Requested module | Implemented in this release | Limits / setup |
 | --- | --- | --- |
 | Automatic replies | Private Telegram messages, saved conversational context, approved-information retrieval, unknown-question staff queue | Real Telegram response awaits a user-started chat. Tiny local model can fall back to approved excerpts. |
-| Knowledge base | Staff CRUD, categories/languages, admin approval, expiration, draft PDF/DOCX/TXT/MD/CSV extraction, edit history | Actual office/fee/university content must be approved by Edmission staff. Scanned files require OCR; `.doc` unsupported. |
+| Knowledge base | Staff CRUD, categories/languages, admin approval, expiration, draft PDF/DOCX/TXT/MD/CSV extraction, edit history, source-tracked public university draft synchronization | Actual business content requires staff approval. Scanned files require OCR; `.doc` unsupported. |
 | Consultation booking | Built-in availability calendar, consultant slots, atomic reservation, overlap protection, cancellation/rescheduling | Google Calendar synchronization is not implemented. Staff supply meeting links/addresses. |
 | Reminders | Confirmation plus scheduled 24/6/2/1-hour reminders; cancellations invalidate pending reminders | Tests exercise scheduling; real scheduled delivery requires an actual booked chat. |
 | Follow-ups | Individual opt-in, staff scheduling, configurable timing/templates, considering/parents/completed-consultation triggers, reply cancellation, monthly cap | Personalized templates/rules, not unrestricted autonomous sales. Other agreed dates are entered by staff. |
@@ -16,7 +16,7 @@ Date: 18 October 2026. This is the first Telegram implementation inside the exis
 | CRM | Profile, history, statuses, notes, interests, assignment, bookings and follow-up history | Instagram and cross-channel identity matching are not implemented. |
 | Analysis/scoring | Rule-assisted intent/objections/readiness priority and next action; model summaries | This is explainable initial scoring, not a trained conversion model. |
 | Staff alerts | Database events for bookings/cancellation, unknown answers, handover, documents, failures and high priority | Group delivery requires a configured `staffChatId`. |
-| Analytics | Actual lead/message/booking/handover counts, response time, lead pipeline, unanswered topics and delivery queues | Advanced attribution, attendance conversion charts and experiment dashboards are not yet implemented. No illustrative numbers shown as real. |
+| Analytics | Date-filtered activity, sourced AI answers, student-confirmed resolution, handovers, first-delivered response latency, reminder delivery rate, seven-day follow-up response attribution, recorded attendance/coverage, timestamped cohort conversion and separate current-status snapshot, FAQ/unanswered topics | Tracking starts explicitly at this release. Earlier historical denominators are not reconstructed. Rates show n/a until enough observations exist. This is operational attribution, not causal marketing attribution. |
 | Administration | Existing staff auth/RBAC, admin-only publication/settings/deletion, per-lead pause, provider and feature controls, synthetic preview, retention/deletion, logs | Console is directly accessible at `/api/admissions/console`; original frontend/navigation was preserved. |
 
 ## Verified checks
@@ -28,6 +28,8 @@ Date: 18 October 2026. This is the first Telegram implementation inside the exis
 - Telegram authorized the bot identity and the live poller held its database lease without integration errors. No student conversation existed when checked, so getMe/poller success is not represented as delivered reply evidence.
 - Meta's key authenticated successfully, but the account returned an empty model list and the documented example model returned `model_not_found`. Local Ollama is active; the Meta adapter/key are available for a future accessible model. Contributor models are prohibited.
 - A synthetic local-model question completed and returned grounded approved workflow information. Weak model output is not allowed to invent business facts.
+- Analytics fixtures separately verify current snapshot versus observed cohort, skipped stages, direct consultation/application/enrollment conversions, original reminder due dates, complete follow-up observation windows, missing attendance, first-successful-delivery latency, absent denominators and source-grounded numerical fee rejection. A source ID with an invented fee does not pass validation.
+- Public university draft import selects existing public API fields, excludes private data and unqualified prices, preserves unchanged staff edits and requires renewed approval when public source content changes.
 
 ## Residual reliability boundaries
 

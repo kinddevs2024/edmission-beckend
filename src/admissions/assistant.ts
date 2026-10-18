@@ -64,6 +64,15 @@ export function parseAnswer(raw: string, entries: Entry[]) {
   const parsed = JSON.parse(start >= 0 && end > start ? cleaned.slice(start, end) : cleaned);
   const allowed = new Set(entries.map(e => String(e._id)));
   const sources = Array.isArray(parsed.sourceIds) ? parsed.sourceIds.filter((id: unknown) => typeof id === 'string' && allowed.has(id)) : [];
+  const reply = typeof parsed.reply === 'string' ? parsed.reply.trim().slice(0, 3500) : '';
+  const normalizeFigure = (figure: string) => {
+    const value = /^(?:\d{1,3})(?:[,.]\d{3})+$/.test(figure) ? figure.replace(/[,.]/g, '') : figure.replace(',', '.');
+    return String(Number(value));
+  };
+  const figures = (text: string) => (text.replace(/^\s*\d+[.)]\s+/gm, '').match(/(?<![\p{L}\p{N}])\d+(?:[.,]\d+)*/gu) || []).map(normalizeFigure);
+  const cited = entries.filter(entry => sources.includes(String(entry._id))).map(entry => `${entry.title}\n${entry.content}`).join('\n');
+  const allowedFigures = new Set(figures(cited));
+  const unsupportedFigures = figures(reply).filter(figure => !allowedFigures.has(figure));
   const profile: Record<string, string> = {};
   const fields = ['name', 'phone', 'destination', 'degree', 'program', 'intake', 'budget', 'english', 'education', 'scholarship', 'readiness'];
   for (const field of fields) {
@@ -71,10 +80,10 @@ export function parseAnswer(raw: string, entries: Entry[]) {
     if (typeof value === 'string' && value.trim() && value.length <= 300) profile[field] = value.trim();
   }
   return {
-    reply: typeof parsed.reply === 'string' ? parsed.reply.trim().slice(0, 3500) : '',
+    reply: unsupportedFigures.length ? '' : reply,
     sourceIds: sources as string[], profile,
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 1500) : '',
-    needsHuman: Boolean(parsed.needsHuman) || !sources.length,
+    needsHuman: Boolean(parsed.needsHuman) || !sources.length || unsupportedFigures.length > 0,
   };
 }
 export async function answerQuestion(text: string, lead: any, history: any[], override?: any) {

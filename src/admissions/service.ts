@@ -1,7 +1,12 @@
 import { createHash } from 'crypto';
-import { AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState } from './models';
+import { AsyncLocalStorage } from 'async_hooks';
+import { hostname } from 'os';
+import { AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState } from './models';
 import { answerQuestion, settings } from './assistant';
 import { canFollowUp, copy, detectLanguage, formatSlot, Language, scoreLead } from './policy';
+import { markMilestone, trackingStartedAt } from './analytics';
+
+const incomingContext = new AsyncLocalStorage<{ updateId: number; inboundAt: Date }>();
 
 export async function telegram(method: string, body: Record<string, unknown> = {}, token = process.env.ADMISSIONS_TELEGRAM_TOKEN): Promise<any> {
   if (!token) throw new Error('BOT_NOT_CONFIGURED');
@@ -24,7 +29,8 @@ export async function sendLead(lead: any, text: string, options: Record<string, 
   const deliveryKey = metadata.jobId ? `job:${metadata.jobId}` : undefined;
   let draft: any = deliveryKey ? await AdmissionMessage.findOne({ deliveryKey }) : null;
   if (draft?.delivered) return { message_id: draft.telegramMessageId };
-  if (!draft) draft = await AdmissionMessage.create({ leadId: lead._id, direction, text, delivered: false, ...metadata, deliveryKey, deliveryOptions: options, nextAttemptAt: new Date(), lockedUntil: new Date(Date.now() + 45000) });
+  const context = incomingContext.getStore();
+  if (!draft) draft = await AdmissionMessage.create({ leadId: lead._id, direction, text, delivered: false, replyToUpdateId: context?.updateId, inboundAt: context?.inboundAt, analyticsVersion: 1, ...metadata, deliveryKey, deliveryOptions: options, nextAttemptAt: new Date(), lockedUntil: new Date(Date.now() + 45000) });
   try {
     return await deliverDraft(draft, lead, options);
   } catch (error) {
@@ -37,7 +43,9 @@ async function deliverDraft(draft: any, lead: any, options?: Record<string, unkn
   draft.lockedUntil = new Date(Date.now() + 45000); await draft.save();
   try {
     const result = await telegram('sendMessage', { chat_id: lead.chatId, text: draft.text.slice(0, 4000), ...(options || draft.deliveryOptions || {}) });
-    draft.delivered = true; draft.telegramMessageId = result.message_id; draft.sentAt = new Date(); draft.errorCode = undefined; draft.lockedUntil = null; await draft.save(); return result;
+    draft.delivered = true; draft.telegramMessageId = result.message_id; draft.sentAt = new Date(); draft.errorCode = undefined; draft.lockedUntil = null; await draft.save();
+    if (draft.replyToUpdateId != null && draft.inquiryOutcome) await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: draft.replyToUpdateId }, { $set: { inquiryOutcome: draft.inquiryOutcome, answeredAt: draft.sentAt } });
+    return result;
   } catch (error) {
     draft.errorCode = error instanceof Error ? error.message.slice(0, 60) : 'SEND_FAILED'; draft.lockedUntil = null;
     draft.nextAttemptAt = new Date(Date.now() + draft.deliveryAttempts * 60000); await draft.save();
@@ -51,6 +59,7 @@ export async function retryOutbox() {
     if (!draft) break;
     const lead = await AdmissionLead.findById(draft.leadId);
     if (!lead) { await AdmissionMessage.deleteOne({ _id: draft._id }); continue; }
+    if (lead.aiPaused && draft.provider) { draft.cancelled = true; await draft.save(); continue; }
     await deliverDraft(draft, lead).catch(() => {});
   }
 }
@@ -71,22 +80,27 @@ export async function scheduleReminders(slot: any, lead: any) {
   for (const hours of [24, 6, 2, 1]) {
     const due = new Date(+new Date(slot.start) - hours * 3600000);
     if (+due <= Date.now()) continue;
-    await AdmissionJob.updateOne({ dedupeKey: `reminder:${slot._id}:${+new Date(slot.confirmedAt)}:${hours}` }, { $setOnInsert: { kind: 'reminder', leadId: lead._id, slotId: slot._id, due } }, { upsert: true });
+    await AdmissionJob.updateOne({ dedupeKey: `reminder:${slot._id}:${+new Date(slot.confirmedAt)}:${hours}` }, { $setOnInsert: { kind: 'reminder', leadId: lead._id, slotId: slot._id, bookingId: slot.bookingId, due, originalDue: due, analyticsVersion: 1 } }, { upsert: true });
   }
 }
 export async function bookSlot(slotId: string, lead: any) {
   const slot: any = await AdmissionSlot.findOneAndUpdate({ _id: slotId, leadId: null, cancelled: false, start: { $gt: new Date() } }, { $set: { leadId: lead._id, confirmedAt: new Date() } }, { new: true });
   if (!slot) throw new Error('SLOT_UNAVAILABLE');
+  const booking = await AdmissionBooking.create({ reservationKey: `${slot._id}:${+new Date(slot.confirmedAt)}`, slotId: slot._id, leadId: lead._id, consultantId: slot.consultantId, start: slot.start, end: slot.end, bookedAt: slot.confirmedAt });
+  slot.bookingId = booking._id; slot.attendance = 'pending'; await slot.save();
   await scheduleReminders(slot, lead);
   lead.status = 'consultation_booked'; lead.workflow = {}; await lead.save();
+  await markMilestone(lead, 'consultation_booked', slot.confirmedAt);
   await staffAlert('booking_created', lead, formatSlot(slot, lead.language));
   return slot;
 }
 export async function cancelBooking(slotId: string, lead: any, actor = 'student') {
-  const slot: any = await AdmissionSlot.findOneAndUpdate({ _id: slotId, leadId: lead._id, cancelled: false, start: { $gt: new Date() } }, { $set: { leadId: null, confirmedAt: null } }, { new: true });
+  const slot: any = await AdmissionSlot.findOneAndUpdate({ _id: slotId, leadId: lead._id, cancelled: false, start: { $gt: new Date() } }, { $set: { leadId: null, confirmedAt: null, bookingId: null, attendance: 'pending' } });
   if (!slot) throw new Error('BOOKING_NOT_FOUND');
-  await AdmissionJob.updateMany({ slotId, kind: 'reminder', status: { $in: ['pending', 'sending'] } }, { $set: { status: 'cancelled' } });
-  await AdmissionMessage.updateMany({ slotId, delivered: false }, { $set: { cancelled: true } });
+  const reservationFilter = slot.bookingId ? { bookingId: slot.bookingId } : { leadId: lead._id, bookingId: null };
+  if (slot.bookingId) await AdmissionBooking.updateOne({ _id: slot.bookingId, leadId: lead._id, status: 'active' }, { $set: { status: 'cancelled', cancelledAt: new Date() } });
+  await AdmissionJob.updateMany({ slotId, ...reservationFilter, kind: 'reminder', status: { $in: ['pending', 'sending'] } }, { $set: { status: 'cancelled' } });
+  await AdmissionMessage.updateMany({ slotId, leadId: lead._id, delivered: false }, { $set: { cancelled: true } });
   await recordEvent('booking_cancelled', lead._id, { slotId }, actor);
   await staffAlert('booking_cancelled', lead, formatSlot(slot, lead.language));
   lead.status = 'qualified'; await lead.save(); return slot;
@@ -106,13 +120,14 @@ export async function deleteLeadData(lead: any) {
   await Promise.all([
     AdmissionMessage.deleteMany({ leadId: lead._id }), AdmissionJob.deleteMany({ leadId: lead._id }),
     AdmissionEvent.deleteMany({ leadId: lead._id }), AdmissionSlot.updateMany({ leadId: lead._id }, { $set: { leadId: null, confirmedAt: null } }),
+    AdmissionBooking.deleteMany({ leadId: lead._id }),
   ]);
   await AdmissionLead.deleteOne({ _id: lead._id });
 }
 export async function scheduleFollowup(lead: any, input: { due: Date; text: string }, actor: string) {
   if (!lead.followupConsent || lead.aiPaused || ['not_interested', 'closed', 'on_hold', 'enrolled'].includes(lead.status)) throw new Error('FOLLOWUP_NOT_PERMITTED');
   if (+input.due < Date.now() + 60000) throw new Error('INVALID_FOLLOWUP_DATE');
-  const job = await AdmissionJob.create({ leadId: lead._id, kind: 'followup', dedupeKey: `followup:${lead._id}:${+input.due}`, due: input.due, text: input.text, inboundVersion: lead.lastInboundAt });
+  const job = await AdmissionJob.create({ leadId: lead._id, kind: 'followup', dedupeKey: `followup:${lead._id}:${+input.due}`, due: input.due, originalDue: input.due, analyticsVersion: 1, text: input.text, inboundVersion: lead.lastInboundAt });
   await recordEvent('followup_scheduled', lead._id, { jobId: job._id }, actor); return job;
 }
 export async function maybeScheduleFollowup(lead: any, cfg: any) {
@@ -127,9 +142,13 @@ export async function maybeScheduleFollowup(lead: any, cfg: any) {
   const text = template.replace(/\{name\}/g, String(lead.name || '').slice(0, 120)).replace(/\{program\}/g, lead.profile?.program ? ` (${String(lead.profile.program).slice(0, 150)})` : '');
   await scheduleFollowup(lead, { due: new Date(Date.now() + days * 86400000), text }, 'automation');
 }
-export async function processUpdate(update: any) {
+export function processUpdate(update: any) {
+  return incomingContext.run({ updateId: update.update_id, inboundAt: new Date() }, () => processUpdateInternal(update));
+}
+async function processUpdateInternal(update: any) {
   const cfg = await settings();
   if (!cfg.enabled) return;
+  await trackingStartedAt();
   const message = update.message || update.callback_query?.message;
   const sender = update.message?.from || update.callback_query?.from;
   if (!message || !sender || sender.is_bot || message.chat?.type !== 'private') return;
@@ -138,15 +157,33 @@ export async function processUpdate(update: any) {
   const deleted: any = await AdmissionState.findOne({ key: `deleted:${createHash('sha256').update(chatId).digest('hex')}` }).lean();
   if (deleted?.value?.lastUpdate >= update.update_id) return;
   const text = String(update.message?.text || (update.message?.contact ? `+${update.message.contact.phone_number.replace(/^\+/, '')}` : update.callback_query?.data || (update.message?.document ? '[Document received: staff review requested]' : '[Unsupported message]'))).trim().slice(0, 8000);
-  const lead: any = await AdmissionLead.findOneAndUpdate({ chatId }, { $setOnInsert: { chatId, username: sender.username, name: [sender.first_name, sender.last_name].filter(Boolean).join(' '), language: detectLanguage(text, sender.language_code === 'ru' ? 'ru' : sender.language_code === 'uz' ? 'uz' : 'en') } }, { upsert: true, new: true });
+  const lead: any = await AdmissionLead.findOneAndUpdate({ chatId }, { $setOnInsert: { chatId, username: sender.username, name: [sender.first_name, sender.last_name].filter(Boolean).join(' '), analyticsVersion: 1, milestones: { new: new Date() }, language: detectLanguage(text, sender.language_code === 'ru' ? 'ru' : sender.language_code === 'uz' ? 'uz' : 'en') } }, { upsert: true, new: true });
   const started = Date.now();
-  try { await AdmissionMessage.create({ leadId: lead._id, direction: 'in', text, updateId: update.update_id, telegramMessageId: message.message_id }); }
+  const isInquiry = !update.callback_query && !text.startsWith('/') && !lead.workflow?.step && !update.message?.document;
+  try { await AdmissionMessage.create({ leadId: lead._id, direction: 'in', text, updateId: update.update_id, telegramMessageId: message.message_id, isInquiry, inquiryOutcome: isInquiry ? 'pending' : undefined, analyticsVersion: 1 }); }
   catch (error: any) { if (error?.code === 11000) return; throw error; }
   lead.lastInboundAt = new Date(); lead.language = detectLanguage(text, lead.language);
+  if (isInquiry) {
+    const latest: any = await AdmissionJob.findOne({ leadId: lead._id, kind: 'followup', status: 'sent', analyticsVersion: 1, sentAt: { $gte: new Date(Date.now() - 7 * 86400000), $lte: lead.lastInboundAt } }).sort({ sentAt: -1 }).lean();
+    const followedUp = latest && !latest.respondedAt ? await AdmissionJob.findOneAndUpdate({ _id: latest._id, respondedAt: null }, { $set: { respondedAt: lead.lastInboundAt, responseUpdateId: update.update_id } }, { new: true }) : null;
+    if (followedUp) await recordEvent('followup_response', lead._id, { jobId: followedUp._id });
+  }
   await AdmissionJob.updateMany({ leadId: lead._id, kind: 'followup', status: { $in: ['pending', 'sending'] } }, { $set: { status: 'cancelled' } });
   await lead.save();
   if (update.callback_query) await telegram('answerCallbackQuery', { callback_query_id: update.callback_query.id }).catch(() => {});
   const lang = lead.language as Language; const c = copy[lang];
+  if (/^(?:helpful|human):\d+$/.test(text)) {
+    const originalUpdate = Number(text.split(':')[1]);
+    const original = await AdmissionMessage.findOne({ leadId: lead._id, direction: 'in', updateId: originalUpdate, inquiryOutcome: { $in: ['ai_answered', 'ai_resolved', 'unanswered'] } });
+    if (!original) return;
+    if (text.startsWith('helpful:')) {
+      if (original.inquiryOutcome === 'unanswered') return;
+      original.inquiryOutcome = 'ai_resolved'; original.feedbackAt = new Date(); await original.save();
+      await sendLead(lead, lang === 'ru' ? 'Спасибо за отзыв!' : lang === 'uz' ? 'Fikringiz uchun rahmat!' : 'Thank you for your feedback!'); return;
+    }
+    original.inquiryOutcome = 'handover'; original.feedbackAt = new Date(); await original.save();
+    lead.aiPaused = true; await lead.save(); await staffAlert('handover_requested', lead, lead.summary || original.text); await sendLead(lead, c.human); return;
+  }
   if (/^\/delete\b/.test(text)) { await telegram('sendMessage', { chat_id: chatId, text: c.deleted }); await deleteLeadData(lead); return; }
   if (/^\/privacy\b/.test(text)) { await sendLead(lead, c.privacy); return; }
   if (/^\/external_ai\b/.test(text)) {
@@ -160,12 +197,13 @@ export async function processUpdate(update: any) {
   if (/^\/stop\b/.test(text)) { lead.followupConsent = false; await lead.save(); await sendLead(lead, c.stopped); return; }
   if (/^\/followups\b/.test(text)) { lead.followupConsent = true; await lead.save(); await sendLead(lead, c.consent); return; }
   if (/^\/human\b/.test(text) || /(?:speak|talk).*(?:human|person)|жив.*консульт|позовите.*человека|operator kerak/i.test(text)) {
+    await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'handover' } });
     lead.aiPaused = true; await lead.save(); await staffAlert('handover_requested', lead, lead.summary || text); await sendLead(lead, c.human); return;
   }
   if (/^\/resume\b/.test(text)) { lead.aiPaused = false; await lead.save(); await sendLead(lead, c.resumed); return; }
   if (/^\/start\b|^\/(?:ru|uz|en)\b/.test(text)) { await sendLead(lead, c.welcome, { reply_markup: { keyboard: [['/book', '/human'], ['/privacy', '/followups']], resize_keyboard: true } }); return; }
   if (update.message?.document) { await staffAlert('document_submitted', lead, 'Student sent a document; review it in the original Telegram chat. Files are not forwarded to AI.'); await sendLead(lead, c.paused); return; }
-  if (lead.aiPaused) { await recordEvent('handover_message', lead._id); await sendLead(lead, c.paused); return; }
+  if (lead.aiPaused) { await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'staff_waiting' } }); await recordEvent('handover_message', lead._id); await sendLead(lead, c.paused); return; }
   if (text.startsWith('cancel:')) {
     const id = text.slice(7); if (!/^[a-f\d]{24}$/i.test(id)) return;
     try { await cancelBooking(id, lead); await sendLead(lead, c.cancelled); } catch { await sendLead(lead, c.unavailable); } return;
@@ -203,6 +241,11 @@ export async function processUpdate(update: any) {
   const analysis = scoreLead(text, lead.profile); Object.assign(lead, analysis);
   if (analysis.intent === 'career_guidance') { await lead.save(); await sendLead(lead, c.career); return; }
   const answer = await answerQuestion(text, lead, history);
+  const currentAutomation: any = await AdmissionLead.findById(lead._id).select('aiPaused').lean();
+  if (!currentAutomation || currentAutomation.aiPaused) {
+    await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: update.update_id }, { $set: { inquiryOutcome: 'staff_waiting' } });
+    await recordEvent('ai_suppressed_on_takeover', lead._id); return;
+  }
   const extractedProfile: Record<string, string> = answer.profile;
   lead.profile = { ...lead.profile, ...extractedProfile }; if (extractedProfile.name) lead.name = extractedProfile.name;
   if (extractedProfile.phone && /^\+?[0-9()\s-]{7,22}$/.test(extractedProfile.phone)) lead.phone = extractedProfile.phone;
@@ -210,10 +253,13 @@ export async function processUpdate(update: any) {
   Object.assign(lead, scoreLead(text, lead.profile));
   if (lead.status === 'new' && Object.keys(lead.profile).length >= 3) lead.status = 'qualified';
   await lead.save();
+  if (lead.status === 'qualified') await markMilestone(lead, 'qualified');
   if (answer.needsHuman) await staffAlert('unanswered_question', lead, text);
   if (answer.errorCode) await recordEvent('ai_error', lead._id, { code: answer.errorCode });
   if (lead.score >= 60 && originalScore < 60) await staffAlert('high_priority', lead, lead.summary || text);
-  await sendLead(lead, answer.reply, {}, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started });
+  const buttons = [{ text: lang === 'ru' ? 'Консультант' : lang === 'uz' ? 'Maslahatchi' : 'Ask a consultant', callback_data: `human:${update.update_id}` }];
+  if (!answer.needsHuman) buttons.unshift({ text: lang === 'ru' ? 'Помогло ✓' : lang === 'uz' ? 'Foydali ✓' : 'Helpful ✓', callback_data: `helpful:${update.update_id}` });
+  await sendLead(lead, answer.reply, { reply_markup: { inline_keyboard: [buttons] } }, 'out', { provider: answer.provider, sourceIds: answer.sourceIds, responseMs: Date.now() - started, inquiryOutcome: answer.needsHuman ? 'unanswered' : 'ai_answered' });
   await maybeScheduleFollowup(lead, cfg);
 }
 
@@ -237,7 +283,7 @@ export async function runDueJobs() {
           let text = job.text;
           let options = {};
           if (job.kind === 'reminder') {
-            const slot: any = await AdmissionSlot.findOne({ _id: job.slotId, leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).lean();
+            const slot: any = await AdmissionSlot.findOne({ _id: job.slotId, leadId: lead._id, ...(job.bookingId ? { bookingId: job.bookingId } : {}), cancelled: false, start: { $gt: new Date() } }).lean();
             if (!cfg.reminders || !slot) { job.status = 'cancelled'; await job.save(); continue; }
             text = `${copy[lead.language as Language].booked}\n${formatSlot(slot, lead.language)}`;
             options = { reply_markup: { inline_keyboard: [[{ text: 'Confirm', callback_data: `confirm:${slot._id}` }, { text: 'Cancel / Reschedule', callback_data: `cancel:${slot._id}` }]] } };
@@ -260,15 +306,25 @@ export function startAdmissionsAssistant() {
   running = true;
   const interval = setInterval(() => { runDueJobs().catch(() => {}); }, 20000); interval.unref();
   void (async () => {
-    for (const model of [AdmissionLead, AdmissionMessage, AdmissionKnowledge, AdmissionSlot, AdmissionJob, AdmissionState]) await model.init();
+    for (const model of [AdmissionLead, AdmissionMessage, AdmissionKnowledge, AdmissionSlot, AdmissionBooking, AdmissionJob, AdmissionState]) await model.init();
+    await trackingStartedAt();
     await telegram('setMyCommands', { commands: [ { command: 'start', description: 'Edmission AI assistant' }, { command: 'book', description: 'Book a consultation' }, { command: 'reschedule', description: 'Change consultation time' }, { command: 'human', description: 'Contact a consultant' }, { command: 'resume', description: 'Resume AI support' }, { command: 'followups', description: 'Allow follow-up messages' }, { command: 'stop', description: 'Stop follow-up messages' }, { command: 'privacy', description: 'Privacy information' }, { command: 'delete', description: 'Delete my conversation data' }, { command: 'ru', description: 'Русский' }, { command: 'uz', description: 'O‘zbekcha' }, { command: 'en', description: 'English' } ] }).catch(() => {});
     let delay = 1000;
     while (running) {
       try {
         const cfg = await settings(); if (!cfg.enabled) { await new Promise(r => setTimeout(r, 10000)); continue; }
         // DB lease prevents two PM2 instances consuming the same bot update queue.
-        const owner = String(process.pid);
+        const owner = `${hostname()}:${process.pid}`;
         await AdmissionState.updateOne({ key: 'poller-lease' }, { $setOnInsert: { value: { until: new Date(0) } } }, { upsert: true });
+        const previous: any = await AdmissionState.findOne({ key: 'poller-lease' }).lean();
+        const localPrefix = `${hostname()}:`;
+        if (previous?.value?.owner?.startsWith(localPrefix) && previous.value.owner !== owner) {
+          const previousPid = Number(previous.value.owner.slice(localPrefix.length));
+          if (Number.isInteger(previousPid) && previousPid > 0) {
+            try { process.kill(previousPid, 0); }
+            catch (error: any) { if (error.code === 'ESRCH') await AdmissionState.updateOne({ key: 'poller-lease', 'value.owner': previous.value.owner }, { $set: { 'value.until': new Date(0) } }); }
+          }
+        }
         const lease = await AdmissionState.findOneAndUpdate({ key: 'poller-lease', $or: [{ 'value.owner': owner }, { 'value.until': { $lt: new Date() } }] }, { $set: { 'value.owner': owner, 'value.until': new Date(Date.now() + 120000) } }, { new: true });
         if (!lease) { await new Promise(r => setTimeout(r, 15000)); continue; }
         const state: any = await AdmissionState.findOne({ key: 'telegram-offset' }).lean();

@@ -20,6 +20,8 @@ Meta uses the documented `https://api.meta.ai/v1/chat/completions` endpoint. Con
 
 Populate approved knowledge with Edmission's actual office details, services, fees and university requirements. Unapproved and expired records never participate in retrieval. Uploaded PDF, DOCX, TXT, Markdown and CSV documents become drafts; scanned PDFs require OCR first. Documents are limited to 8 MB and 60,000 extracted characters, with a visible truncation warning. Historical Word `.doc` is not supported. Files are parsed as data, never executed.
 
+Administrators can import drafts from the existing publicly exposed university catalog. Only the public name, location, description and language/GPA requirements are selected; account identities, documents and unqualified tuition values are excluded. Source URL, source digest and import time are retained. Unchanged synchronization preserves staff edits; changed source content becomes a new draft with prior-version history. Explicit staff approval is still required. Imports are capped at 500 public entries per synchronization and report truncation.
+
 ## Calendar and outreach
 
 The built-in calendar is the source of availability; this is not a Google Calendar integration. Staff create non-overlapping slots per consultant with an office address or meeting link. Slot reservation uses an atomic database update. Rescheduling retains the old appointment until the replacement is booked. Booking confirmation is immediate; future reminders are scheduled at 24, 6, 2 and 1 hours before the appointment. Cancellation invalidates reminders. Student times are shown in Asia/Tashkent; staff times follow the browser timezone.
@@ -37,3 +39,18 @@ Only Telegram's private chats are processed. The bot explains stored data in `/p
 ## Verification
 
 `npm run build` compiles the module with the existing application. `node scripts/admissions.test.cjs` exercises only the isolated QA listener on port 27939 and a disposable `admissions_qa_` database. It checks languages, approved/expired sources, citation validation, Telegram dedupe, unknown-question escalation, qualification, takeover, opt-in/opt-out, reply cancellation, overlapping slots, concurrent booking, reminders, deletion and HTTP authorization. Tests mock AI and Telegram transport; they do not prove real chat delivery. Verify live Telegram independently with a user-started chat.
+
+## Analytics definitions
+
+The Overview workspace uses `/api/admissions/analytics` with an optional `from`/`to` date range of at most 366 days. Tracking has an explicit persisted start date. No legacy milestones, responses or attendance are invented from current statuses. Missing rate denominators are `null` in the API and `n/a` in the workspace.
+
+- **Activity:** incoming messages, newly created leads and actual booking receipts in the selected period.
+- **AI answers:** delivered sourced answers to non-command inquiries. **Resolved** means the student explicitly selected Helpful; a valid source ID alone is not a satisfaction outcome. Consultant requests are counted separately. Numerical figures not present in cited source content are rejected; this is a useful guard, not universal semantic entailment proof.
+- **Reminder delivery:** sent / due tracked reminders, excluding cancellations; the original scheduled due time is retained through retries.
+- **Follow-up response:** the first non-command response is attributed only to the most recent delivered follow-up. The seven-day response rate uses only closed seven-day windows; newer deliveries are shown as still observing.
+- **Attendance:** attended / (attended + missed) for non-cancelled tracked appointments that have started. Pending attendance and recording coverage are displayed separately. Immutable reservation receipts survive reuse of a free calendar slot.
+- **Response latency:** server receipt to first successful Telegram delivery, including retries, grouped once per incoming update. Commands and queue acknowledgements are included and labeled; this is not consultant handling time.
+- **Conversion cohort:** leads first seen in the selected range after tracking began. Only observed, timestamped milestones count, through the stated as-of time. Ordered intersections define stage conversions. Direct consultation-to-application and application-to-enrollment rates do not require optional intervening stages. A separate current-status snapshot is not presented as historical conversion.
+- **FAQ/unanswered:** exact question text grouped case-insensitively, excluding commands and booking-form fields.
+
+Personal-data deletion removes the corresponding metric records as well. `node scripts/admissions-analytics.test.cjs` verifies deterministic denominator, date, maturity, attribution, skipped-stage, empty-history and numeric-grounding fixtures in its own disposable QA database.

@@ -14,6 +14,7 @@ export const AdmissionLead = model('AdmissionLead', new Schema({
   followupConsent: { type: Boolean, default: false }, lastInboundAt: Date,
   externalAIConsent: { type: Boolean, default: false },
   workflow: { type: Schema.Types.Mixed, default: {} }, deletedAt: Date,
+  milestones: { type: Schema.Types.Mixed, default: {} }, analyticsVersion: Number,
 }, opts));
 export const AdmissionMessage = model('AdmissionMessage', new Schema({
   leadId: { type: Schema.Types.ObjectId, required: true, index: true },
@@ -24,6 +25,9 @@ export const AdmissionMessage = model('AdmissionMessage', new Schema({
   deliveryKey: { type: String, unique: true, sparse: true }, jobId: String,
   deliveryAttempts: { type: Number, default: 0 }, nextAttemptAt: Date, lockedUntil: Date, sentAt: Date,
   deliveryOptions: Schema.Types.Mixed, slotId: Schema.Types.ObjectId, cancelled: { type: Boolean, default: false },
+  replyToUpdateId: Number, inboundAt: Date, isInquiry: Boolean, analyticsVersion: Number,
+  inquiryOutcome: { type: String, enum: ['pending', 'ai_answered', 'ai_resolved', 'unanswered', 'handover', 'staff_waiting'] },
+  answeredAt: Date, feedbackAt: Date,
 }, opts));
 export const AdmissionKnowledge = model('AdmissionKnowledge', new Schema({
   title: { type: String, required: true }, category: { type: String, default: 'FAQ' },
@@ -32,6 +36,7 @@ export const AdmissionKnowledge = model('AdmissionKnowledge', new Schema({
   validUntil: Date, version: { type: Number, default: 1 }, updatedBy: String,
   history: [{ content: String, title: String, approved: Boolean, version: Number, at: Date, by: String }],
   deletedAt: Date, sourceFilename: String,
+  sourceRecordId: { type: String, unique: true, sparse: true }, sourceUrl: String, sourceDigest: String, importedAt: Date,
 }, opts));
 export const AdmissionSlot = model('AdmissionSlot', new Schema({
   consultantId: { type: String, required: true }, consultantName: { type: String, required: true },
@@ -39,7 +44,16 @@ export const AdmissionSlot = model('AdmissionSlot', new Schema({
   mode: { type: String, enum: ['online', 'office'], required: true }, location: { type: String, required: true },
   leadId: { type: Schema.Types.ObjectId, default: null }, cancelled: { type: Boolean, default: false },
   confirmedAt: Date, attendance: { type: String, enum: ['pending', 'attended', 'missed'], default: 'pending' },
+  bookingId: Schema.Types.ObjectId,
 }, opts).index({ consultantId: 1, start: 1 }, { unique: true }));
+export const AdmissionBooking = model('AdmissionBooking', new Schema({
+  reservationKey: { type: String, required: true, unique: true },
+  slotId: { type: Schema.Types.ObjectId, required: true }, leadId: { type: Schema.Types.ObjectId, required: true, index: true },
+  consultantId: String, start: Date, end: Date, bookedAt: { type: Date, required: true },
+  status: { type: String, enum: ['active', 'cancelled'], default: 'active' },
+  attendance: { type: String, enum: ['pending', 'attended', 'missed'], default: 'pending' },
+  attendanceRecordedAt: Date, cancelledAt: Date, analyticsVersion: { type: Number, default: 1 },
+}, opts));
 export const AdmissionJob = model('AdmissionJob', new Schema({
   leadId: { type: Schema.Types.ObjectId, index: true },
   kind: { type: String, enum: ['reminder', 'followup', 'staff'], required: true },
@@ -48,6 +62,8 @@ export const AdmissionJob = model('AdmissionJob', new Schema({
   status: { type: String, enum: ['pending', 'sending', 'sent', 'cancelled', 'failed'], default: 'pending' },
   attempts: { type: Number, default: 0 }, lockedUntil: Date, errorCode: String, sentAt: Date,
   inboundVersion: Date,
+  originalDue: Date, bookingId: Schema.Types.ObjectId, analyticsVersion: Number,
+  respondedAt: Date, responseUpdateId: Number,
 }, opts).index({ status: 1, due: 1 }));
 export const AdmissionEvent = model('AdmissionEvent', new Schema({
   leadId: Schema.Types.ObjectId, actor: String, kind: { type: String, required: true },

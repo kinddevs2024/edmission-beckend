@@ -7,9 +7,11 @@ import mongoose from 'mongoose';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { requireAdminOnly, requireRole } from '../middlewares/rbac.middleware';
 import { requireDb } from '../middlewares/requireDb.middleware';
-import { AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState, leadStatuses } from './models';
+import { AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState, leadStatuses } from './models';
 import { answerQuestion, defaultSettings, settings } from './assistant';
 import { cancelBooking, createSlot, deleteLeadData, maybeScheduleFollowup, recordEvent, scheduleFollowup, sendLead, staffAlert, telegram } from './service';
+import { admissionAnalytics, markMilestone } from './analytics';
+import { importPublicUniversityDrafts } from './public-knowledge';
 
 const router = Router();
 const asyncRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
@@ -29,8 +31,14 @@ router.get('/overview', asyncRoute(async (_req, res) => {
     AdmissionEvent.aggregate([{ $match: { kind: 'unanswered_question', resolvedAt: null } }, { $group: { _id: '$detail.text', count: { $sum: 1 } } }, { $sort: { count: -1 } }, { $limit: 10 }]),
     settings(),
   ]);
-  res.json({ leads, incoming, aiResolvedMessages: aiResolved, bookings, handovers, jobs, statuses, averageResponseMs: average[0]?.responseMs || 0, unanswered: frequent,
+  res.json({ leads, incoming, aiAnsweredMessages: aiResolved, bookings, handovers, jobs, statuses, averageResponseMs: average[0]?.responseMs ?? null, unanswered: frequent,
     integration: { telegramConfigured: Boolean(process.env.ADMISSIONS_TELEGRAM_TOKEN), metaConfigured: Boolean(process.env.LLAMA_API_KEY), provider: cfg.provider, model: cfg.provider === 'ollama' ? process.env.ADMISSIONS_OLLAMA_MODEL || 'qwen3:0.6b' : cfg.model, calendar: 'Built-in consultation calendar', staffTelegramConfigured: Boolean(cfg.staffChatId) } });
+}));
+router.get('/analytics', asyncRoute(async (req, res) => {
+  const query = z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional() }).parse(req.query);
+  const to = query.to || new Date(); const from = query.from || new Date(+to - 30 * 86400000);
+  if (+from >= +to || +to - +from > 366 * 86400000 || +to > Date.now() + 86400000) { res.status(400).json({ error: 'Choose a valid range of up to 366 days' }); return; }
+  res.json(await admissionAnalytics(from, to));
 }));
 router.get('/settings', asyncRoute(async (_req, res) => { res.json(await settings()); }));
 const settingsSchema = z.object({
@@ -69,6 +77,7 @@ router.patch('/leads/:id', asyncRoute(async (req, res) => {
   const data = z.object({ status: z.enum(leadStatuses).optional(), aiPaused: z.boolean().optional(), assignedTo: z.string().max(100).optional(), notes: z.string().max(10000).optional(), profile: z.record(z.string(), z.string().max(1000)).optional(), name: z.string().max(150).optional(), phone: z.string().max(30).optional() }).parse(req.body);
   const lead = await AdmissionLead.findByIdAndUpdate(req.params.id, { $set: data }, { new: true });
   if (!lead) { res.status(404).json({ error: 'Lead not found' }); return; }
+  if (data.status) await markMilestone(lead, data.status);
   if (data.aiPaused || ['not_interested', 'closed', 'on_hold', 'enrolled'].includes(data.status || '')) await AdmissionJob.updateMany({ leadId: lead._id, kind: 'followup', status: 'pending' }, { $set: { status: 'cancelled' } });
   await recordEvent('lead_updated', lead._id, { fields: Object.keys(data) }, req.user!.id); res.json(lead);
 }));
@@ -85,6 +94,10 @@ router.post('/leads/:id/followup', asyncRoute(async (req, res) => {
   res.json(await scheduleFollowup(lead, data, req.user!.id));
 }));
 router.get('/knowledge', asyncRoute(async (_req, res) => { res.json(await AdmissionKnowledge.find({ deletedAt: null }).sort({ updatedAt: -1 }).limit(1500).lean()); }));
+router.post('/knowledge-import-public', requireAdminOnly, asyncRoute(async (req, res) => {
+  const result = await importPublicUniversityDrafts(req.user!.id);
+  await recordEvent('public_knowledge_drafts_imported', undefined, result, req.user!.id); res.json(result);
+}));
 const knowledgeSchema = z.object({ title: z.string().min(1).max(200), content: z.string().min(1).max(60000), category: z.string().min(1).max(100), language: z.enum(['uz', 'ru', 'en']), approved: z.boolean(), validUntil: z.coerce.date().nullable().optional() });
 router.post('/knowledge', asyncRoute(async (req, res) => {
   const data = knowledgeSchema.parse(req.body); if (data.approved && req.user!.role !== 'admin') { res.status(403).json({ error: 'Only admins can approve knowledge' }); return; }
@@ -127,14 +140,16 @@ router.post('/slots', asyncRoute(async (req, res) => {
 router.patch('/slots/:id', asyncRoute(async (req, res) => {
   const data = z.object({ cancelled: z.boolean().optional(), attendance: z.enum(['pending', 'attended', 'missed']).optional() }).parse(req.body);
   const slot: any = await AdmissionSlot.findById(req.params.id); if (!slot) { res.sendStatus(404); return; }
+  if (data.attendance && data.attendance !== 'pending' && (+new Date(slot.start) > Date.now() || !slot.leadId)) { res.status(409).json({ error: 'Attendance can only be recorded for a booked consultation that has started' }); return; }
   if (data.cancelled && slot.leadId) {
     const lead: any = await AdmissionLead.findById(slot.leadId);
     if (lead) { await cancelBooking(String(slot._id), lead, req.user!.id); await sendLead(lead, 'Your consultation was cancelled by the team. /book — select another time.'); }
   }
   Object.assign(slot, data); await slot.save();
+  if (data.attendance && slot.bookingId) await AdmissionBooking.updateOne({ _id: slot.bookingId, status: 'active' }, { $set: { attendance: data.attendance, attendanceRecordedAt: new Date() } });
   if (data.attendance === 'attended' && slot.leadId) {
     const lead = await AdmissionLead.findByIdAndUpdate(slot.leadId, { $set: { status: 'consultation_completed' } }, { new: true });
-    if (lead) await maybeScheduleFollowup(lead, await settings());
+    if (lead) { await markMilestone(lead, 'consultation_completed'); await maybeScheduleFollowup(lead, await settings()); }
   }
   await recordEvent('slot_updated', slot.leadId, { slotId: slot._id, ...data }, req.user!.id); res.json(slot);
 }));

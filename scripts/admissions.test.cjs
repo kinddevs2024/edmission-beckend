@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
 const express = require('express');
-const { AdmissionLead: Lead, AdmissionMessage: Message, AdmissionKnowledge: Knowledge, AdmissionSlot: Slot, AdmissionJob: Job, AdmissionEvent: Event, AdmissionState: State } = require('../dist/admissions/models');
+const { AdmissionLead: Lead, AdmissionMessage: Message, AdmissionKnowledge: Knowledge, AdmissionSlot: Slot, AdmissionBooking: Booking, AdmissionJob: Job, AdmissionEvent: Event, AdmissionState: State } = require('../dist/admissions/models');
 const { processUpdate, createSlot, bookSlot, cancelBooking, scheduleFollowup, deleteLeadData, runDueJobs, sendLead, retryOutbox } = require('../dist/admissions/service');
 const { detectLanguage, canFollowUp, rankKnowledge } = require('../dist/admissions/policy');
 const { approvedKnowledge, parseAnswer } = require('../dist/admissions/assistant');
@@ -12,11 +12,13 @@ let sequence = 0;
 let sourceId;
 let failDelivery = false;
 let externalCalls = 0; let localCalls = 0;
+let pauseDuringInference;
 global.fetch = async (url, init = {}) => {
   if (String(url).startsWith('http://127.0.0.1:') && !String(url).includes(':11434/')) return actualFetch(url, init);
   const body = JSON.parse(init.body || '{}');
   if (String(url).includes('api.telegram.org')) { if (failDelivery) { failDelivery = false; throw new Error('TELEGRAM_503'); } deliveries.push(body); return { ok: true, json: async () => ({ ok: true, result: { message_id: ++sequence } }) }; }
   if (String(url).includes('api.meta.ai')) externalCalls++; else localCalls++;
+  if (pauseDuringInference) { await Lead.updateOne({ _id: pauseDuringInference }, { $set: { aiPaused: true } }); pauseDuringInference = null; }
   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ reply: 'A consultation is available by appointment. /book', sourceIds: [sourceId], needsHuman: false, profile: { destination: 'Canada', program: 'Computer science', degree: 'Bachelor' }, summary: 'Interested in Canada and computer science.' }) } }] }) };
 };
 process.env.ADMISSIONS_TELEGRAM_TOKEN = '123:test'; process.env.LLAMA_API_KEY = 'test-placeholder';
@@ -44,6 +46,14 @@ async function main() {
   assert.equal(await Event.countDocuments({ kind: 'unanswered_question' }), 1); passed++;
   await processUpdate(update(3, 'I want consultation in Canada for computer science Bachelor'));
   let current = await Lead.findById(lead._id); check('Verified model reply and structured qualification', () => { assert.equal(current.profile.destination, 'Canada'); assert(deliveries.at(-1).text.includes('/book')); });
+  const linked = await Message.findOne({ replyToUpdateId: 3, direction: 'out' });
+  check('Delivered answer records its inquiry link for first-reply latency', () => { assert(linked.sentAt); assert(linked.inboundAt); assert.equal(linked.analyticsVersion, 1); });
+  await processUpdate({ update_id: 302, callback_query: { id: 'qa_feedback', from: { id: 10001, first_name: 'Test Student' }, message: { message_id: 3, chat: { id: 10001, type: 'private' } }, data: 'helpful:3' } });
+  const rated = await Message.findOne({ updateId: 3 }); check('Resolution is recorded only after student Helpful feedback', () => { assert.equal(rated.inquiryOutcome, 'ai_resolved'); assert(rated.feedbackAt); });
+  const beforeTakeover = deliveries.length; pauseDuringInference = lead._id;
+  await processUpdate(update(303, 'Please explain consultation booking'));
+  check('Staff takeover during inference suppresses the late AI response', () => assert.equal(deliveries.length, beforeTakeover));
+  await processUpdate(update(304, '/resume'));
   current.externalAIConsent = false; await current.save(); const beforeMeta = externalCalls;
   await processUpdate(update(301, 'How can I book a consultation?'));
   check('No external AI processing without individual student opt-in', () => { assert.equal(externalCalls, beforeMeta); assert(localCalls > 0); });
@@ -52,8 +62,13 @@ async function main() {
   await processUpdate(update(5, 'Please answer')); check('Messages wait for staff during handover', () => assert(deliveries.at(-1).text.includes('queue')));
   await processUpdate(update(6, '/resume')); await processUpdate(update(7, '/followups')); current = await Lead.findById(lead._id);
   const followup = await scheduleFollowup(current, { due: new Date(Date.now() + 86400000), text: 'Would you like help with your Canada application?' }, 'qa');
+  const sentFollowup = await Job.create({ leadId: lead._id, kind: 'followup', analyticsVersion: 1, dedupeKey: 'sent-for-response-attribution', due: new Date(Date.now() - 60000), originalDue: new Date(Date.now() - 60000), sentAt: new Date(Date.now() - 60000), status: 'sent', text: 'Previously delivered follow-up' });
+  const olderFollowup = await Job.create({ leadId: lead._id, kind: 'followup', analyticsVersion: 1, dedupeKey: 'older-unanswered-followup', due: new Date(Date.now() - 120000), originalDue: new Date(Date.now() - 120000), sentAt: new Date(Date.now() - 120000), status: 'sent', text: 'An older follow-up' });
   check('Follow-up requires recorded opt-in', () => assert.equal(current.followupConsent, true));
   await processUpdate(update(8, 'Thanks')); check('A new student response cancels pending follow-ups', () => {}); assert.equal((await Job.findById(followup._id)).status, 'cancelled');
+  const attributed = await Job.findById(sentFollowup._id); check('A real student response is attributed to the latest delivered follow-up', () => { assert(attributed.respondedAt); assert.equal(attributed.responseUpdateId, 8); });
+  await processUpdate(update(803, 'Thanks again'));
+  const notAttributed = await Job.findById(olderFollowup._id); check('Subsequent conversation messages do not fabricate responses to older follow-ups', () => assert.equal(notAttributed.respondedAt, undefined));
   check('Follow-up guard blocks closed and replied leads', () => { assert.equal(canFollowUp({ ...current.toObject(), status: 'closed' }, followup), false); assert.equal(canFollowUp({ ...current.toObject(), lastInboundAt: new Date(Date.now() + 1000) }, followup), false); });
   const start = new Date(Date.now() + 3 * 86400000); const end = new Date(+start + 1800000);
   const slot = await createSlot({ consultantId: 'qa-consultant', consultantName: 'QA counselor', start, end, mode: 'online', location: 'https://example.test/consultation' });
@@ -61,9 +76,15 @@ async function main() {
   const other = await Lead.create({ chatId: '10002', name: 'Other student', language: 'en' });
   const booking = await Promise.allSettled([bookSlot(String(slot._id), current), bookSlot(String(slot._id), other)]);
   check('Atomic booking permits exactly one student', () => assert.equal(booking.filter(r => r.status === 'fulfilled').length, 1));
+  check('Booking creates a durable historical reservation receipt', () => {}); assert.equal(await Booking.countDocuments({ slotId: slot._id, status: 'active' }), 1);
   check('Booking schedules all four reminders', () => {}); assert.equal(await Job.countDocuments({ slotId: slot._id, kind: 'reminder' }), 4);
   const booked = await Slot.findById(slot._id); const bookedLead = await Lead.findById(booked.leadId);
   await cancelBooking(String(slot._id), bookedLead); assert.equal(await Job.countDocuments({ slotId: slot._id, status: 'pending' }), 0); passed++; console.log('PASS cancellation stops reminders and releases slot');
+  const historical = await Booking.findOne({ slotId: slot._id }); check('Cancelling a reusable slot preserves its historical booking outcome', () => { assert.equal(historical.status, 'cancelled'); assert(historical.cancelledAt); });
+  const replacementLead = String(bookedLead._id) === String(current._id) ? other : current;
+  const replacement = await bookSlot(String(slot._id), replacementLead);
+  check('Rebooking a freed slot schedules fresh reminder receipts', () => {}); assert.equal(await Booking.countDocuments({ slotId: slot._id }), 2); assert.equal(await Job.countDocuments({ slotId: slot._id, status: 'pending', bookingId: replacement.bookingId }), 4);
+  await cancelBooking(String(slot._id), replacementLead);
   await processUpdate(update(9, '/stop')); current = await Lead.findById(lead._id);
   await assert.rejects(scheduleFollowup(current, { due: new Date(Date.now() + 3600000), text: 'No consent' }, 'qa'), /FOLLOWUP_NOT_PERMITTED/); passed++; console.log('PASS opt-out cannot be bypassed by staff scheduling');
   failDelivery = true;
