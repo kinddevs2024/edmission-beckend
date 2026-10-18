@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict');
+const {Types}=require('mongoose');
+const {localizeApiBody,translateApiText}=require('../dist/i18n/apiMessages');
+const id=new Types.ObjectId(),date=new Date('2030-01-01T04:00:00Z');
+const source={_id:id,start:date,nested:[{end:date,owner:id}],invalid:new Date(NaN),message:'Invalid ID',metadata:{name:'Literal name',enabled:true,count:2}};
+const result=localizeApiBody(source,'ru');let n=0;const check=(name,fn)=>{fn();console.log('PASS',name);n++;};
+check('Dates become ISO strings and invalid dates null',()=>{assert.equal(result.start,date.toISOString());assert.equal(result.invalid,null);});
+check('Nested array dates and BSON ObjectIds remain scalar JSON values',()=>{assert.equal(result._id,String(id));assert.equal(result.nested[0].owner,String(id));assert.equal(result.nested[0].end,date.toISOString());});
+check('Existing translation and unrelated scalar values preserved',()=>{assert.equal(result.message,translateApiText(source.message,'ru').text);assert.deepEqual(result.metadata,source.metadata);});
+check('Localization never mutates source instances',()=>{assert(source.start instanceof Date);assert(source._id instanceof Types.ObjectId);});
+let invoked=false;localizeApiBody({nested:{toJSON(){invoked=true;throw Error('must not execute');},value:'safe'}},'en');
+check('Arbitrary custom toJSON is not invoked',()=>assert.equal(invoked,false));
+console.log('TOTAL',n);

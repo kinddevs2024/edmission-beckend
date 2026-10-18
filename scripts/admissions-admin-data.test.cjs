@@ -29,13 +29,14 @@ async function main(){
  const {User}=require('../dist/models'),{signAccessToken}=require('../dist/utils/jwt');
  const admin=new mongoose.Types.ObjectId(),student=new mongoose.Types.ObjectId();await User.collection.insertMany([{_id:admin,email:'admin@example.test',role:'admin',tokenVersion:0},{_id:student,email:'student@example.test',role:'student',tokenVersion:0}]);
  const token=role=>signAccessToken({sub:String(role==='admin'?admin:student),email:role+'@example.test',role});
- const app=express();app.use('/admissions',require('../dist/admissions/routes').default);app.use((err,req,res,next)=>res.status(err.name==='ZodError'?400:err.statusCode||500).json({error:'Denied'}));
+ const app=express();app.use(require('../dist/middlewares/apiLocale.middleware').apiLocaleMiddleware);app.use('/admissions',require('../dist/admissions/routes').default);app.use((err,req,res,next)=>res.status(err.name==='ZodError'?400:err.statusCode||500).json({error:'Denied'}));
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const url='http://127.0.0.1:'+server.address().port+'/admissions';
  const request=(path,role)=>fetch(url+path,{headers:role?{Authorization:'Bearer '+token(role)}:{}});
  for(const path of ['/bookings','/questions','/leads/'+a._id+'/messages']){
   check('Anonymous denied '+path,()=>{});assert.equal((await request(path)).status,401);
   check('Student denied '+path,()=>{});assert.equal((await request(path,'student')).status,403);
-  check('Staff allowed '+path,()=>{});assert.equal((await request(path,'admin')).status,200);
+  const response=await request(path,'admin');check('Staff allowed '+path,()=>assert.equal(response.status,200));
+  const payload=await response.json();check('Localized HTTP dates and IDs retain JSON scalar types '+path,()=>{assert(payload.items.length);for(const item of payload.items){assert.equal(typeof item._id,'string');if(path==='/bookings'){assert.equal(typeof item.start,'string');assert(Number.isFinite(+new Date(item.start)));assert.equal(typeof item.leadId._id,'string');}else{assert.equal(typeof item.createdAt,'string');assert(Number.isFinite(+new Date(item.createdAt)));}}});
  }
  for(const path of ['/bookings?limit=0','/bookings?status=unknown','/questions?page=-1','/leads/'+a._id+'/messages?before=bad','/leads/bad/messages']){assert.equal((await request(path,'admin')).status,400);passed++;console.log('PASS invalid query rejected',path);}
  check('Unknown lead gives404',()=>{});assert.equal((await request('/leads/'+new mongoose.Types.ObjectId()+'/messages','admin')).status,404);

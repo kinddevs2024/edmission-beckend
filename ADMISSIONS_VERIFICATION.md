@@ -74,3 +74,6 @@ Added protected paginated booking receipts and inquiry/reply lists, plus cursor-
 
 ### Uzbek explicit calendar recovery
 Production audit confirmed an actual konsalting+yozil input was missed by the previous booking-intent matcher. Added Uzbek Latin/Cyrillic consulting, registration/booking and apostrophe variants, plus calendar promises using kalendar/taqvim and pastdan/quyida/tagida in either order. Negated and information-only requests remain excluded.11 new checks include full processUpdate omitted-action recovery and two-turn Uzbek clarification with actual inline date buttons;27 existing natural-answer tests also pass. Telegram and Meta transports were mocked for these regression fixtures, without production student writes.
+
+### Preserve API dates and identifiers during localization
+Fixed shared API localization recursion that spread Date and BSON ObjectId instances into generic objects before JSON serialization. Valid dates now remain ISO strings, invalid dates become null, and strict mongoose ObjectId instances become hex strings. Arbitrary custom toJSON methods are not invoked.5 scalar/translation tests and24 protected admissions API integration checks pass; HTTP tests now include the actual locale middleware and assert date/ID types. No stored business data changed.

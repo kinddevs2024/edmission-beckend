@@ -1,3 +1,5 @@
+import { Types } from 'mongoose';
+
 export const supportedApiLocales = ['en', 'ru', 'uz'] as const;
 
 export type ApiLocale = (typeof supportedApiLocales)[number];
@@ -870,6 +872,10 @@ export function localizeApiBody<T>(body: T, locale: ApiLocale): T {
     }
     if (Array.isArray(value)) return value.map((item) => visit(item, shouldTranslate));
     if (!value || typeof value !== 'object') return value;
+    // Preserve JSON's scalar representation before walking plain API objects.
+    // Spreading these instances would discard Date values and damage BSON IDs.
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null;
+    if (value instanceof Types.ObjectId) return value.toHexString();
 
     const next: Record<string, unknown> = { ...(value as Record<string, unknown>) };
     for (const [key, nested] of Object.entries(next)) {
