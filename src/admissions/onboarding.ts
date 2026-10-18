@@ -20,7 +20,10 @@ export async function askIntake(lead: any, send: Send) {
   const c = intakeCopy[lead.language as Language];
   if (lead.onboardingStage === 'language') return languagePicker(lead, send);
   if (lead.onboardingStage === 'name') return send(lead, c.name, { reply_markup: { remove_keyboard: true } });
-  if (lead.onboardingStage === 'phone') return send(lead, c.phone, { reply_markup: { keyboard: [[{ text: c.share, request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } });
+  if (lead.onboardingStage === 'phone') {
+    if (lead.channel === 'website') return send(lead, lead.language === 'ru' ? 'Введите номер телефона с кодом страны. Продолжая, вы разрешаете обработку диалога Meta AI.' : lead.language === 'uz' ? 'Telefon raqamingizni mamlakat kodi bilan yozing. Davom etsangiz, suhbat Meta AI orqali qayta ishlanadi.' : 'Enter your phone number with its country code. Continuing enables Meta AI for your chat.', { reply_markup: { remove_keyboard: true } });
+    return send(lead, c.phone, { reply_markup: { keyboard: [[{ text: c.share, request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } });
+  }
   return send(lead, c.help, { reply_markup: mainMenu(lead.language) });
 }
 export async function handleOnboarding(lead: any, text: string, update: any, send: Send): Promise<boolean> {

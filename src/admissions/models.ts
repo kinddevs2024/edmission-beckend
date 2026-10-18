@@ -6,6 +6,8 @@ const opts = { timestamps: true };
 export const leadStatuses = ['new', 'qualified', 'consultation_booked', 'consultation_completed', 'considering', 'application', 'offer', 'enrolled', 'not_interested', 'on_hold', 'closed'] as const;
 export const AdmissionLead = model('AdmissionLead', new Schema({
   chatId: { type: String, unique: true, required: true }, username: String, name: String,
+  channel: { type: String, enum: ['telegram', 'website'], default: 'telegram' }, webUserId: { type: Schema.Types.ObjectId, index: true },
+  webTypingUntil: Date,
   language: { type: String, enum: ['uz', 'ru', 'en'], default: 'en' },
   phone: String, status: { type: String, enum: leadStatuses, default: 'new' },
   studyFacts: { type: Schema.Types.Mixed, default: {} }, lastBookingOfferAt: Date, bookingOfferDeclinedAt: Date,
@@ -77,6 +79,16 @@ export const AdmissionState = model('AdmissionState', new Schema({
   key: { type: String, unique: true, required: true },
   value: { type: Schema.Types.Mixed, default: {} },
 }, opts));
+
+export const AdmissionWebDelivery = model('AdmissionWebDelivery', new Schema({
+  chatId: { type: String, required: true, index: true }, messageId: { type: Number, required: true, unique: true },
+  receiptId: { type: Schema.Types.ObjectId, unique: true, sparse: true },
+  text: String, options: Schema.Types.Mixed, editedAt: Date,
+}, opts));
+export const AdmissionWebRequest = model('AdmissionWebRequest', new Schema({
+  userId: { type: Schema.Types.ObjectId, required: true }, requestId: { type: String, required: true },
+  payloadHash: String, updateId: Number, status: { type: String, enum: ['processing', 'done', 'failed'] }, errorCode: String,
+}, opts).index({ userId: 1, requestId: 1 }, { unique: true }));
 
 export const AdmissionCalendarAnchor = model('AdmissionCalendarAnchor', new Schema({
  leadId: {type:Schema.Types.ObjectId,required:true,index:true},chatId:{type:String,required:true},rootMessageId:{type:Number,required:true},currentMessageId:Number,aliases:[Number],

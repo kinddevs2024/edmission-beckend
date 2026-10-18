@@ -1,10 +1,11 @@
+import { isWebChat, websiteTransport } from './web-transport';
 import { calendarAnchor, editCalendar, retryCalendarEdits } from './inline-calendar';
 import { bookingRequested } from './general-guidance';
 import { declinesBooking } from './readiness';
 import { createHash } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import { hostname } from 'os';
-import { AdmissionCalendarAnchor, AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState } from './models';
+import { AdmissionCalendarAnchor, AdmissionBooking, AdmissionEvent, AdmissionJob, AdmissionKnowledge, AdmissionLead, AdmissionMessage, AdmissionSlot, AdmissionState, AdmissionWebDelivery, AdmissionWebRequest } from './models';
 import { answerQuestion, settings } from './assistant';
 import { canFollowUp, copy, detectLanguage, formatSlot, Language, scoreLead } from './policy';
 import { markMilestone, trackingStartedAt } from './analytics';
@@ -15,6 +16,8 @@ import { availableSlots, dayAllowed, defaultAvailability, hourKeyboard, monthAll
 const incomingContext = new AsyncLocalStorage<{ updateId: number; inboundAt: Date; calendarAnchorId?: any }>();
 
 export async function telegram(method: string, body: Record<string, unknown> = {}, token = process.env.ADMISSIONS_TELEGRAM_TOKEN): Promise<any> {
+  if (isWebChat(body.chat_id) || (method === 'answerCallbackQuery' && String(body.callback_query_id || '').startsWith('web:'))) return websiteTransport(method, body);
+  if (String(body.chat_id || '').startsWith('web:')) throw Error('INVALID_WEBSITE_DESTINATION');
   if (!token) throw new Error('BOT_NOT_CONFIGURED');
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(method === 'getUpdates' ? 40000 : 15000) });
   const data: any = await response.json();
@@ -25,7 +28,7 @@ export async function withTyping<T>(lead: any, operation: () => Promise<T>, peri
   let stopped = false; let inflight = false;
   const notify = () => { if (!stopped && !inflight) { inflight = true; void telegram('sendChatAction', { chat_id: lead.chatId, action: 'typing' }).catch(() => {}).finally(() => { inflight = false; }); } };
   notify(); const timer = setInterval(notify, period);
-  try { return await operation(); } finally { stopped = true; clearInterval(timer); }
+  try { return await operation(); } finally { stopped = true; clearInterval(timer); if (isWebChat(lead.chatId)) await websiteTransport('sendChatAction', { chat_id: lead.chatId, action: 'cancel' }); }
 }
 export async function recordEvent(kind: string, leadId?: any, detail: any = {}, actor?: string) {
   return AdmissionEvent.create({ kind, leadId, detail, actor });
@@ -61,7 +64,8 @@ async function deliverDraft(draft: any, lead: any, options?: Record<string, unkn
   draft.deliveryAttempts = (draft.deliveryAttempts || 0) + 1;
   draft.lockedUntil = new Date(Date.now() + 45000); await draft.save();
   try {
-    const result = await telegram('sendMessage', { chat_id: lead.chatId, text: draft.text.slice(0, 4000), ...(options || draft.deliveryOptions || {}) });
+    const payload = { chat_id: lead.chatId, text: draft.text.slice(0, 4000), ...(options || draft.deliveryOptions || {}) };
+    const result = isWebChat(lead.chatId) ? await websiteTransport('sendMessage', payload, draft._id) : await telegram('sendMessage', payload);
     draft.delivered = true; draft.telegramMessageId = result.message_id; draft.sentAt = new Date(); draft.errorCode = undefined; draft.lockedUntil = null; await draft.save();
     if (draft.replyToUpdateId != null && draft.inquiryOutcome) await AdmissionMessage.updateOne({ leadId: lead._id, direction: 'in', updateId: draft.replyToUpdateId }, { $set: { inquiryOutcome: draft.inquiryOutcome, answeredAt: draft.sentAt } });
     return result;
@@ -147,7 +151,7 @@ async function showDayCalendar(lead: any, day: string, cfg: any) {
 async function showConfirmedBooking(lead: any, booking: any) {
  const lang=lead.language as Language;const id=String(booking._id);const anchorId=incomingContext.getStore()?.calendarAnchorId;
  if(anchorId)await AdmissionCalendarAnchor.updateOne({_id:anchorId,leadId:lead._id},{$set:{confirmedSlotId:id,confirmedBookingId:booking.bookingId}});
- await sendLead(lead, `${copy[lang].booked}\n${formatSlot(booking, lang)}`, { reply_markup: { inline_keyboard: [[{ text: lang === 'ru' ? 'Изменить время' : lang === 'uz' ? 'Vaqtni o‘zgartirish' : 'Change time', callback_data: 'cal:reschedule' }, { text: lang === 'ru' ? 'Отменить' : lang === 'uz' ? 'Bekor qilish' : 'Cancel booking', callback_data: `cancel:${id}` }], [{ text: lang === 'ru' ? 'Помогло ✓' : lang === 'uz' ? 'Foydali ✓' : 'Helpful ✓', callback_data: `booking-helpful:${booking.bookingId}` }]] } }, 'out', { slotId: booking._id });
+ await sendLead(lead, `${copy[lang].booked}\n${formatSlot(booking, lang)}`, { reply_markup: { inline_keyboard: [[{ text: lang === 'ru' ? 'Изменить время' : lang === 'uz' ? 'Vaqtni o‘zgartirish' : 'Change time', callback_data: 'cal:reschedule' }, { text: lang === 'ru' ? 'Отменить' : lang === 'uz' ? 'Bekor qilish' : 'Cancel booking', callback_data: `cancel:${id}` }]] } }, 'out', { slotId: booking._id });
 }
 async function calendarChoice(lead: any, text: string, cfg: any): Promise<boolean> {
   if (!cfg.bookings) return false;
@@ -196,7 +200,8 @@ export async function deleteLeadData(lead: any) {
   await AdmissionState.updateOne({ key: `deleted:${hash}` }, { $set: { value: { lastUpdate: largest } } }, { upsert: true });
   await Promise.all([
     AdmissionMessage.deleteMany({ leadId: lead._id }), AdmissionJob.deleteMany({ leadId: lead._id }),
-    AdmissionEvent.deleteMany({ leadId: lead._id }), AdmissionCalendarAnchor.deleteMany({ leadId: lead._id }), AdmissionSlot.updateMany({ leadId: lead._id }, { $set: { leadId: null, confirmedAt: null } }),
+    AdmissionEvent.deleteMany({ leadId: lead._id }), AdmissionWebDelivery.deleteMany({ chatId: lead.chatId }),
+    ...(lead.webUserId ? [AdmissionWebRequest.deleteMany({ userId: lead.webUserId }), AdmissionState.deleteMany({ key: { $in: [`web-lock:${lead.webUserId}`, `web-welcome:${lead._id}`] } })] : []), AdmissionCalendarAnchor.deleteMany({ leadId: lead._id }), AdmissionSlot.updateMany({ leadId: lead._id }, { $set: { leadId: null, confirmedAt: null } }),
     AdmissionBooking.deleteMany({ leadId: lead._id }),
   ]);
   await AdmissionLead.deleteOne({ _id: lead._id });
@@ -234,7 +239,7 @@ async function processUpdateInternal(update: any) {
   if (update.callback_query && String(sender.id) !== chatId) return;
   if (await AdmissionMessage.exists({ updateId: update.update_id })) return;
   const deleted: any = await AdmissionState.findOne({ key: `deleted:${createHash('sha256').update(chatId).digest('hex')}` }).lean();
-  if (deleted?.value?.lastUpdate >= update.update_id) return;
+  if (!isWebChat(chatId) && deleted?.value?.lastUpdate >= update.update_id) return;
   let text = String(update.message?.text || (update.message?.contact ? `+${update.message.contact.phone_number.replace(/^\+/, '')}` : update.callback_query?.data || (update.message?.document ? '[Document received: staff review requested]' : '[Unsupported message]'))).trim().slice(0, 8000);
   const lead: any = await AdmissionLead.findOneAndUpdate({ chatId }, { $setOnInsert: { chatId, username: sender.username, name: [sender.first_name, sender.last_name].filter(Boolean).join(' '), analyticsVersion: 1, milestones: { new: new Date() }, language: detectLanguage(text, sender.language_code === 'ru' ? 'ru' : sender.language_code === 'uz' ? 'uz' : 'en') } }, { upsert: true, new: true });
   const rawText = text; text = commandFromButton(text, lead.language);
@@ -256,7 +261,13 @@ async function processUpdateInternal(update: any) {
   if (rawText === menuCopy[lang].language) { await languagePicker(lead, sendLead); return; }
   if (await handleOnboarding(lead, text, update, sendLead)) return;
   const bookingFeedback = /^booking-helpful:([a-f\d]{24})$/i.exec(text)?.[1];
-  if (bookingFeedback) { const reservation: any = await AdmissionBooking.findOne({ _id: bookingFeedback, leadId: lead._id, status: 'active' }); if (!reservation) return; if (!reservation.feedbackAt) { const recorded = await AdmissionBooking.updateOne({ _id: reservation._id, leadId: lead._id, status: 'active', feedbackAt: { $exists: false } }, { $set: { feedbackAt: new Date() } }); if (recorded.modifiedCount) await recordEvent('booking_helpful', lead._id, { bookingId: reservation._id }); } const thanks = lang === 'ru' ? 'Спасибо за отзыв! 😊' : lang === 'uz' ? 'Fikringiz uchun rahmat! 😊' : 'Thanks for your feedback! 😊'; const anchorId = incomingContext.getStore()?.calendarAnchorId; const current: any = anchorId ? await AdmissionCalendarAnchor.findOne({ _id: anchorId, leadId: lead._id }).lean() : null; await sendLead(lead, current?.displayText ? current.displayText.includes(thanks) ? current.displayText : current.displayText + '\n\n' + thanks : thanks, current?.displayOptions || {}); return; }
+  if (bookingFeedback) {
+    // Retire buttons from old confirmations without recording new feedback.
+    const reservation: any = await AdmissionBooking.findOne({ _id: bookingFeedback, leadId: lead._id, status: 'active' });
+    const slot: any = reservation ? await AdmissionSlot.findOne({ _id: reservation.slotId, leadId: lead._id, bookingId: reservation._id }) : null;
+    if (slot) await showConfirmedBooking(lead, slot);
+    return;
+  }
   if (/^(?:helpful|human):\d+$/.test(text)) { await sendLead(lead, intakeCopy[lang].help); return; }
   const menu = menuCopy[lang];
   if (rawText === menu.language) { await languagePicker(lead, sendLead); return; }
@@ -266,7 +277,7 @@ async function processUpdateInternal(update: any) {
   if (text === 'data:delete-confirm') text = '/delete';
   if (rawText === menu.mine) { const rows: any[] = await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).sort({ start: 1 }).lean(); if (!rows.length) await sendLead(lead, lang === 'ru' ? 'Предстоящих записей пока нет.' : lang === 'uz' ? 'Hozircha kelgusi yozilishlar yo‘q.' : 'No upcoming bookings yet.'); for (const row of rows) await sendLead(lead, formatSlot(row,lang), { reply_markup: { inline_keyboard: [[{ text: menu.reschedule, callback_data: 'cal:reschedule' }, { text: menu.cancel, callback_data: 'cancel:'+row._id }]] } }); return; }
   if (/^\/delete\b/.test(text)) { await telegram('sendMessage', { chat_id: chatId, text: c.deleted }); await deleteLeadData(lead); return; }
-  if (/^\/privacy\b/.test(text)) { await sendLead(lead, c.privacy); return; }
+  if (/^\/privacy\b/.test(text)) { await sendLead(lead, isWebChat(lead.chatId) ? c.privacy.replace('Telegram chat ID', 'website account ID').replace('ID Telegram', 'ID аккаунта сайта').replace('Telegram ID', 'sayt hisobingiz ID') : c.privacy); return; }
   if (/^\/external_ai\b/.test(text) || text === 'ai:consent') {
     lead.externalAIConsent = true; await lead.save();
     await sendLead(lead, lang === 'ru' ? 'Вы разрешили передавать текст этого диалога в Meta для ответов ИИ, если этот провайдер включён администратором. Отозвать разрешение: /local_ai.' : lang === 'uz' ? 'AI javoblari uchun suhbat matnini Meta xizmatiga yuborishga ruxsat berdingiz (agar administrator yoqqan bo‘lsa). Bekor qilish: /local_ai.' : 'You allowed conversation text to be sent to Meta for AI answers when enabled by staff. Revoke with /local_ai.'); return;

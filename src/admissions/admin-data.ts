@@ -9,7 +9,7 @@ const leadLookup = () => [
 const studentSearch = (q: string, includeText = false) => q ? [{ $match: { $or: [
   ...['student.name', 'student.username', 'student.phone', ...(includeText ? ['text'] : [])].map(field => ({ [field]: { $regex: escaped(q), $options: 'i' } })),
 ] } }] : [];
-const studentFields = { _id: '$student._id', name: '$student.name', username: '$student.username', phone: '$student.phone', language: '$student.language', profile: '$student.profile' };
+const studentFields = { _id: '$student._id', name: '$student.name', username: '$student.username', phone: '$student.phone', language: '$student.language', profile: '$student.profile', channel: { $cond: [{ $eq: [{ $substrCP: [{ $ifNull: ['$student.chatId', ''] }, 0, 4] }, 'web:'] }, 'website', 'telegram'] } };
 
 export async function listStaffBookings(page: number, limit: number, q = '', status = 'all') {
   const [result] = await AdmissionBooking.aggregate([

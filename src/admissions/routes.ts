@@ -13,8 +13,10 @@ import { cancelBooking, createSlot, deleteLeadData, maybeScheduleFollowup, recor
 import { admissionAnalytics, markMilestone } from './analytics';
 import { importPublicUniversityDrafts } from './public-knowledge';
 import { listStaffBookings, listStaffQuestions, staffConversationPage } from './admin-data';
+import websiteRouter from './web-routes';
 
 const router = Router();
+router.use('/web', websiteRouter);
 const asyncRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
 router.get('/console', (_req, res) => res.sendFile(path.resolve(__dirname, '../../public/admissions/index.html')));
 router.get('/console.js', (_req, res) => res.sendFile(path.resolve(__dirname, '../../public/admissions/console.js')));
