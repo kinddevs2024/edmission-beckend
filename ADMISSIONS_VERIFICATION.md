@@ -71,3 +71,6 @@ Calendar-related callbacks now edit the original bot message through month/day/t
 
 ### Staff history and booking read APIs
 Added protected paginated booking receipts and inquiry/reply lists, plus cursor-based complete per-student message history. Cancelled receipts retain their original student after a slot is reused. Replies join only the same student and exact nonempty inquiry update ID. Calendar anchors expose the current edited text and revisions without duplicating AI history. Query limits/IDs/statuses are validated; search treats metacharacters literally. Build and21 dedicated isolated integration checks passed, including161-message traversal and401/403/400/404 access contracts.
+
+### Uzbek explicit calendar recovery
+Production audit confirmed an actual konsalting+yozil input was missed by the previous booking-intent matcher. Added Uzbek Latin/Cyrillic consulting, registration/booking and apostrophe variants, plus calendar promises using kalendar/taqvim and pastdan/quyida/tagida in either order. Negated and information-only requests remain excluded.11 new checks include full processUpdate omitted-action recovery and two-turn Uzbek clarification with actual inline date buttons;27 existing natural-answer tests also pass. Telegram and Meta transports were mocked for these regression fixtures, without production student writes.

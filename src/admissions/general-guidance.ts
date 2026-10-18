@@ -12,21 +12,21 @@ const content = {
 };
 export function generalPreparationReference(language: Language) { return { _id: `public-study-preparation-${language}-v1`, title: 'Public-source general study preparation; not Edmission policy or universal requirements', language, content: content[language], sourceUrls: generalPreparationSources }; }
 export function bookingRequested(text: string, history: any[] = []) {
- const normalized = text.toLowerCase().replace(/[’‘ʻ‘]/g, "'");
- if (/не\s+(?:хочу|надо|нужно|буду)|не\s+запис|don['’]?t want|do not want|not interested|xohlam|istamay|kerak emas|yozilmay/i.test(normalized)) return false;
+ const normalized = text.toLowerCase().replace(/[’‘ʻʼ`]/g, "'");
+ if (/не\s+(?:хочу|надо|нужно|буду)|не\s+запис|don['’]?t want|do not want|not interested|xohlam|istamay|kerak emas|yozilmay|ёзилмай|хоҳлам|истамай|керак эмас/i.test(normalized)) return false;
  if (/what.*need|что.*нуж|каки.*документ|nima.*kerak|qanday.*hujjat|requirements|talablar/i.test(normalized)) return false;
  if (/хочу\s+(?:узнать|понять)|что такое|want to (?:know|learn|understand)|how.*consultation.*work|bilmoqchiman/i.test(normalized) && !/available|slots|свободн|bo'sh/.test(normalized)) return false;
- const target = /consultation|appointment|consulting|консультац|консалтинг|встреч|maslahat|uchrashuv/;
- const intent = /book|schedule|reserve|want|would like|need|запис|хочу|yozil|band qil|xohla|istay|vaqt|available|свободн|время|qachon/;
+ const target = /consultation|appointment|consulting|консультац|консалт|консулт|встреч|konsalt|konsult|maslahat|uchrashuv|маслаҳат|маслахат|учрашув/;
+ const intent = /book|schedule|reserve|want|would like|need|запис|хочу|yozil|yozdir|bron|band|ro'yxat|ёзил|ёздир|брон|банд|рўйхат|xohla|istay|vaqt|available|свободн|время|qachon/;
  if (target.test(normalized) && intent.test(normalized)) return true;
  const previous = [...history].reverse().find(m => m.direction === 'out');
  const previousUser = [...history].reverse().find(m => m.direction === 'in');
- const clarification = /на что|куда.*запис|какую.*(?:встреч|консультац)|what.*book|which.*appointment|nimaga|qaysi.*(?:uchrash|maslahat)/i.test(previous?.text || '');
- if (target.test(normalized) && clarification && /book|schedule|запис|yozil|band qil/i.test(previousUser?.text || '')) return true;
- if (/book|schedule|запис|yozil|band qil/i.test(normalized) && target.test((previous?.text || '').toLowerCase())) return true;
+ const clarification = /на что|куда.*запис|какую.*(?:встреч|консультац)|what.*book|which.*appointment|nimaga|нимага|qaysi.*(?:uchrash|maslahat|kons)|қайси.*(?:учраш|маслаҳат|конс)/i.test(previous?.text || '');
+ if (target.test(normalized) && clarification && /book|schedule|запис|yozil|yozdir|bron|band|ro'yxat|ёзил|ёздир|брон|банд|рўйхат/i.test(previousUser?.text || '')) return true;
+ if (/book|schedule|запис|yozil|yozdir|bron|band|ro'yxat|ёзил|ёздир|брон|банд|рўйхат/i.test(normalized) && target.test((previous?.text || '').toLowerCase())) return true;
  const accepted = /^(yes|yes please|sure|okay|ok|да|давайте|хорошо|ha|albatta|mayli)[!.\s]*$/i.test(normalized.trim());
- return Boolean(accepted && previous && /(?:book.*consultation|запис.*консультац|maslahat.*yozil)/i.test(previous.text || ''));
+ return Boolean(accepted && previous && /(?:book.*consultation|запис.*консультац|(?:maslahat|konsalt|konsult|uchrashuv).*(?:yozil|bron|band)|(?:yozil|bron|band).*(?:maslahat|konsalt|konsult|uchrashuv))/i.test(previous.text || ''));
 }
 
-export function claimsVisibleCalendar(text: string) { return /calendar[\s\S]{0,80}below|календар[ьяе][\s\S]{0,80}ниже|(?:quyidagi|pastdagi)[\s\S]{0,50}taqvim|taqvim[\s\S]{0,50}(?:quyida|pastda)/i.test(text); }
+export function claimsVisibleCalendar(text: string) { return /calendar[\s\S]{0,80}below|below[\s\S]{0,80}calendar|календар[\s\S]{0,80}(?:ниже|пастда|қуйида)|(?:ниже|пастда|қуйида)[\s\S]{0,80}календар|(?:quyida\w*|pastda\w*|tagida\w*)[\s\S]{0,80}(?:taqvim|kalendar)|(?:taqvim|kalendar)[\s\S]{0,80}(?:quyida\w*|pastda\w*|tagida\w*)|(?:тақвим|таквим)[\s\S]{0,80}(?:қуйида|пастда|тагида)|(?:қуйида|пастда|тагида)[\s\S]{0,80}(?:тақвим|таквим)/i.test(text); }
 export function safeProactiveOffer(text: string, language: Language) { if(!claimsVisibleCalendar(text))return text;const safe=text.split(/(?<=[.!?])\s+|\n+/).filter(sentence=>!claimsVisibleCalendar(sentence)).join(' ').trim();return safe || (language==='ru'?'Для записи нажмите кнопку ниже.':language==='uz'?'Yozilish uchun quyidagi tugmani bosing.':'Use the button below to choose a consultation time.'); }
