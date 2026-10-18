@@ -43,7 +43,11 @@ export async function modelCompletion(messages: { role: string; content: string 
       headers: { 'Content-Type': 'application/json', ...(useMeta ? { Authorization: `Bearer ${process.env.MODEL_API_KEY || process.env.LLAMA_API_KEY}` } : {}) },
       body: JSON.stringify(useMeta ? (responses ? { model: cfg.model, input: messages, reasoning: { effort: cfg.reasoningEffort || 'high', summary: 'auto' }, max_output_tokens: 4096, stream: false, store: false } : { model: cfg.model, messages, max_completion_tokens: 4096, stream: false }) : { model: process.env.ADMISSIONS_OLLAMA_MODEL || 'qwen3:0.6b', messages: [messages[0], ...messages.slice(1).slice(-5)].map((message, index) => ({ ...message, content: message.content.slice(0, index === 0 ? 5500 : 600) })), stream: false, think: false, options: { temperature: 0, num_predict: 500, num_ctx: 4096 } }),
     });
-    if (!response.ok) throw new Error(`AI_HTTP_${response.status}`);
+    if (!response.ok) {
+      let failure: any; try { failure = await response.json(); } catch {}
+      if (useMeta && response.status === 404 && failure?.error?.code === 'model_not_found' && !cfg.metaModelRetry) return await modelCompletion(messages, { ...cfg, metaModelRetry: true });
+      throw new Error(`AI_HTTP_${response.status}`);
+    }
     const result: any = await response.json();
     const outputText = typeof result.output_text === 'string' ? result.output_text : result.output?.filter((item: any) => item.type === 'message').flatMap((item: any) => item.content || []).filter((item: any) => item.type === 'output_text').map((item: any) => item.text || '').join('');
     const content = outputText || result.choices?.[0]?.message?.content || result.message?.content || result.completion_message?.content?.text;
