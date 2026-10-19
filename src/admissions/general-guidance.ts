@@ -19,6 +19,11 @@ export function bookingRequested(text: string, history: any[] = []) {
  const target = /consultation|appointment|consulting|консультац|консалт|консулт|встреч|konsalt|konsult|maslahat|uchrashuv|маслаҳат|маслахат|учрашув/;
  const intent = /book|schedule|reserve|want|would like|need|запис|хочу|yozil|yozdir|bron|band|ro'yxat|ёзил|ёздир|брон|банд|рўйхат|xohla|istay|vaqt|available|свободн|время|qachon/;
  if (target.test(normalized) && intent.test(normalized)) return true;
+ // In an admissions chat, an unqualified request to make a booking means a
+ // consultation. Do not require the student to repeat the word consultation.
+ if (!/\b(?:hotel|flight|restaurant|table|ticket|textbook)s?\b/.test(normalized) &&
+   (/\b(?:make|create|place)\s+(?:(?:a|an|my|the)\s+)?(?:booking|reservation)\b/.test(normalized) ||
+    /\b(?:can|could|may)\s+i\s+(?:book|reserve)[?!.\s]*$/.test(normalized))) return true;
  const previous = [...history].reverse().find(m => m.direction === 'out');
  const previousUser = [...history].reverse().find(m => m.direction === 'in');
  const clarification = /на что|куда.*запис|какую.*(?:встреч|консультац)|what.*book|which.*appointment|nimaga|нимага|qaysi.*(?:uchrash|maslahat|kons)|қайси.*(?:учраш|маслаҳат|конс)/i.test(previous?.text || '');

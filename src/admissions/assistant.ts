@@ -1,5 +1,5 @@
 import { mayOfferConsultation, validatedStudyFacts } from './readiness';
-import { bookingRequested, claimsVisibleCalendar, safeProactiveOffer, generalPreparationReference } from './general-guidance';
+import { bookingRequested, safeProactiveOffer, generalPreparationReference } from './general-guidance';
 import { request as httpsRequest } from 'https';
 import { AdmissionKnowledge, AdmissionState } from './models';
 import { copy, Language, rankKnowledge } from './policy';
@@ -141,7 +141,7 @@ ${entries.map(e => `[${e._id}] ${e.title}\n${e.content.slice(0, 5000)}`).join('\
   try {
     const completion = await modelCompletion(messages, cfg);
     const result = parseAnswer(completion.text, entries);
-    if (allowBooking && !result.action && claimsVisibleCalendar(result.reply)) { result.action = { type: 'show_booking_calendar' }; result.needsHuman = false; }
+    if (allowBooking && !result.action) { result.action = { type: 'show_booking_calendar' }; result.needsHuman = false; }
     if (!allowBooking && result.action) result.reply = safeProactiveOffer(result.reply, language);
     const studyFacts = validatedStudyFacts(result.profile, result.profileEvidence, lead, text, history);
     const proactive = cfg.bookings && result.readyForConsultation && mayOfferConsultation(lead, studyFacts, text, result.reply, hasBooking);
