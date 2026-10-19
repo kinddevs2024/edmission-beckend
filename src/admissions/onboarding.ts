@@ -1,4 +1,3 @@
-import { mainMenu } from './menu';
 import { Language } from './policy';
 
 export const intakeCopy = {
@@ -24,7 +23,7 @@ export async function askIntake(lead: any, send: Send) {
     if (lead.channel === 'website') return send(lead, lead.language === 'ru' ? 'Введите номер телефона с кодом страны. Продолжая, вы разрешаете обработку диалога Meta AI.' : lead.language === 'uz' ? 'Telefon raqamingizni mamlakat kodi bilan yozing. Davom etsangiz, suhbat Meta AI orqali qayta ishlanadi.' : 'Enter your phone number with its country code. Continuing enables Meta AI for your chat.', { reply_markup: { remove_keyboard: true } });
     return send(lead, c.phone, { reply_markup: { keyboard: [[{ text: c.share, request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } });
   }
-  return send(lead, c.help, { reply_markup: mainMenu(lead.language) });
+  return send(lead, c.help);
 }
 export async function handleOnboarding(lead: any, text: string, update: any, send: Send): Promise<boolean> {
   // Existing, fully supplied CRM profiles are preserved during this release.

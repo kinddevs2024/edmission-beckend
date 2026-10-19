@@ -46,7 +46,7 @@ export async function sendLead(lead: any, text: string, options: Record<string, 
   options = cleanOptions(options);
   const editContext = incomingContext.getStore();
   if (editContext?.calendarAnchorId && direction === 'out' && !metadata.jobId) return editCalendar(lead, editContext.calendarAnchorId, text, options, telegram, editContext.updateId);
-  if (!options.reply_markup && lead.onboardingStage === 'complete') options.reply_markup = mainMenu(lead.language, lead.aiPaused);
+  if (!options.reply_markup && lead.onboardingStage === 'complete') options.reply_markup = mainMenu(lead.language, lead.aiPaused, Boolean(await AdmissionSlot.exists({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } })));
   const deliveryKey = metadata.jobId ? `job:${metadata.jobId}` : undefined;
   let draft: any = deliveryKey ? await AdmissionMessage.findOne({ deliveryKey }) : null;
   if (draft?.delivered) return { message_id: draft.telegramMessageId };
@@ -153,6 +153,15 @@ async function showConfirmedBooking(lead: any, booking: any) {
  if(anchorId)await AdmissionCalendarAnchor.updateOne({_id:anchorId,leadId:lead._id},{$set:{confirmedSlotId:id,confirmedBookingId:booking.bookingId}});
  await sendLead(lead, `${copy[lang].booked}\n${formatSlot(booking, lang)}`, { reply_markup: { inline_keyboard: [[{ text: lang === 'ru' ? 'Изменить время' : lang === 'uz' ? 'Vaqtni o‘zgartirish' : 'Change time', callback_data: 'cal:reschedule' }, { text: lang === 'ru' ? 'Отменить' : lang === 'uz' ? 'Bekor qilish' : 'Cancel booking', callback_data: `cancel:${id}` }]] } }, 'out', { slotId: booking._id });
 }
+async function refreshBookingMenu(lead: any) {
+  // Telegram cannot replace a persistent reply keyboard by editing an inline
+  // calendar. Send one short status message only when a booking changes.
+  const lang = lead.language as Language;
+  const hasBookings = Boolean(await AdmissionSlot.exists({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }));
+  const text = hasBookings ? (lang === 'ru' ? 'Ваши записи — в меню «Мои записи».' : lang === 'uz' ? 'Yozilishlaringiz menyudagi «Yozilishlarim» bo‘limida.' : 'Your appointments are in My bookings.') : (lang === 'ru' ? 'Для новой записи нажмите «Записаться».' : lang === 'uz' ? 'Yangi yozilish uchun «Maslahatga yozilish» tugmasini bosing.' : 'Choose Book consultation to make an appointment.');
+  const context = incomingContext.getStore();
+  return incomingContext.run({ updateId: context?.updateId || 0, inboundAt: context?.inboundAt || new Date() }, () => sendLead(lead, text, { reply_markup: mainMenu(lang, false, hasBookings) }));
+}
 async function calendarChoice(lead: any, text: string, cfg: any): Promise<boolean> {
   if (!cfg.bookings) return false;
   const lang = lead.language as Language;
@@ -189,6 +198,7 @@ async function calendarChoice(lead: any, text: string, cfg: any): Promise<boolea
     for (const old of previous) if (old !== id) await cancelBooking(old, lead).catch(() => {});
     lead.status = 'consultation_booked'; await lead.save();
     await showConfirmedBooking(lead, booking);
+    await refreshBookingMenu(lead);
   } catch { await sendLead(lead, copy[lang].unavailable); await showDayCalendar(lead, candidateDay, cfg); }
   return true;
 }
@@ -272,10 +282,10 @@ async function processUpdateInternal(update: any) {
   const menu = menuCopy[lang];
   if (rawText === menu.language) { await languagePicker(lead, sendLead); return; }
   if (rawText === menu.help || text === 'cal:back') { await sendLead(lead, intakeCopy[lang].help); return; }
-  if (rawText === menu.preferences) { await sendLead(lead, menu.preferences, { reply_markup: { inline_keyboard: [[{ text: menu.privacy, callback_data: '/privacy' }], [{ text: menu.follow, callback_data: '/followups' }, { text: menu.stop, callback_data: '/stop' }], [{ text: menu.external, callback_data: '/external_ai' }, { text: menu.local, callback_data: '/local_ai' }], [{ text: menu.remove, callback_data: 'data:delete-request' }], [{ text: menu.back, callback_data: 'cal:back' }]] } }); return; }
+  if (rawText === menu.preferences) { await sendLead(lead, menu.preferences, { reply_markup: { inline_keyboard: [[{ text: menu.privacy, callback_data: '/privacy' }], [{ text: menu.follow, callback_data: '/followups' }, { text: menu.stop, callback_data: '/stop' }], [{ text: menu.remove, callback_data: 'data:delete-request' }], [{ text: menu.back, callback_data: 'cal:back' }]] } }); return; }
   if (text === 'data:delete-request' || rawText === menu.remove) { await sendLead(lead, menu.remove + '?', { reply_markup: { inline_keyboard: [[{ text: menu.confirmDelete, callback_data: 'data:delete-confirm' }], [{ text: menu.back, callback_data: 'cal:back' }]] } }); return; }
   if (text === 'data:delete-confirm') text = '/delete';
-  if (rawText === menu.mine) { const rows: any[] = await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).sort({ start: 1 }).lean(); if (!rows.length) await sendLead(lead, lang === 'ru' ? 'Предстоящих записей пока нет.' : lang === 'uz' ? 'Hozircha kelgusi yozilishlar yo‘q.' : 'No upcoming bookings yet.'); for (const row of rows) await sendLead(lead, formatSlot(row,lang), { reply_markup: { inline_keyboard: [[{ text: menu.reschedule, callback_data: 'cal:reschedule' }, { text: menu.cancel, callback_data: 'cancel:'+row._id }]] } }); return; }
+  if (rawText === menu.mine) { const rows: any[] = await AdmissionSlot.find({ leadId: lead._id, cancelled: false, start: { $gt: new Date() } }).sort({ start: 1 }).lean(); if (!rows.length) { await showMonthCalendar(lead, undefined, cfg); return; } for (const row of rows) await sendLead(lead, formatSlot(row,lang), { reply_markup: { inline_keyboard: [[{ text: menu.reschedule, callback_data: 'cal:reschedule' }, { text: menu.cancel, callback_data: 'cancel:'+row._id }]] } }); return; }
   if (/^\/delete\b/.test(text)) { await telegram('sendMessage', { chat_id: chatId, text: c.deleted }); await deleteLeadData(lead); return; }
   if (/^\/privacy\b/.test(text)) { await sendLead(lead, isWebChat(lead.chatId) ? c.privacy.replace('Telegram chat ID', 'website account ID').replace('ID Telegram', 'ID аккаунта сайта').replace('Telegram ID', 'sayt hisobingiz ID') : c.privacy); return; }
   if (/^\/external_ai\b/.test(text) || text === 'ai:consent') {
@@ -294,7 +304,7 @@ async function processUpdateInternal(update: any) {
   if (await calendarChoice(lead, text, cfg)) return;
   if (text.startsWith('cancel:')) {
     const id = text.slice(7); if (!/^[a-f\d]{24}$/i.test(id)) return;
-    try { await cancelBooking(id, lead); await sendLead(lead, c.cancelled); } catch { await sendLead(lead, c.unavailable); } return;
+    try { const existed = await AdmissionSlot.exists({ _id: id, leadId: lead._id, cancelled: false }); await cancelBooking(id, lead); await sendLead(lead, c.cancelled); if (existed) await refreshBookingMenu(lead); } catch { await sendLead(lead, c.unavailable); } return;
   }
   if (text.startsWith('confirm:')) {
     const slot = await AdmissionSlot.findOne({ _id: text.slice(8), leadId: lead._id, cancelled: false });

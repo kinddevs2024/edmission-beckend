@@ -24,6 +24,9 @@ export function bookingRequested(text: string, history: any[] = []) {
  if (!/\b(?:hotel|flight|restaurant|table|ticket|textbook)s?\b/.test(normalized) &&
    (/\b(?:make|create|place)\s+(?:(?:a|an|my|the)\s+)?(?:booking|reservation)\b/.test(normalized) ||
     /\b(?:can|could|may)\s+i\s+(?:book|reserve)[?!.\s]*$/.test(normalized))) return true;
+ // Recognize direct consultation requests, including common spelling mistakes.
+ if (/(?:^|\s)запис(?:аться|атся|атса|аца)(?:[.!?,\s]|$)/.test(normalized) &&
+     !/курс|школ|университет|вуз|экзамен|врач|парикмах|салон/.test(normalized)) return true;
  const previous = [...history].reverse().find(m => m.direction === 'out');
  const previousUser = [...history].reverse().find(m => m.direction === 'in');
  const clarification = /на что|куда.*запис|какую.*(?:встреч|консультац)|what.*book|which.*appointment|nimaga|нимага|qaysi.*(?:uchrash|maslahat|kons)|қайси.*(?:учраш|маслаҳат|конс)/i.test(previous?.text || '');
