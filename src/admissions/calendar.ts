@@ -1,19 +1,29 @@
 import { AdmissionSlot, AdmissionState } from './models';
 import { Language } from './policy';
 
-export const defaultAvailability = { enabled: true, consultantId: 'admissions-default', consultantName: 'Edmission consultant', startHour: 9, lastStartHour: 17, monthsAhead: 6, weekdays: [0, 1, 2, 3, 4, 5, 6], closedDates: [] as string[], mode: 'office', location: 'Edmission consultation — our team will confirm the meeting details.' };
+export const defaultAvailability = { enabled: true, consultantId: 'admissions-default', consultantName: 'Edmission consultant', startHour: 14, lastStartHour: 18, slotMinutes: 30, monthsAhead: 6, weekdays: [0, 1, 2, 3, 4, 5, 6], closedDates: [] as string[], mode: 'office', location: 'Edmission consultation — our team will confirm the meeting details.' };
 export function tashkentDay(date = new Date()) { return new Date(+date + 5 * 3600000).toISOString().slice(0, 10); }
 export function monthShift(month: string, delta: number) { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m - 1 + delta, 1)).toISOString().slice(0, 7); }
 export function monthAllowed(month: string, cfg: any, now = new Date()) {
   const current = tashkentDay(now).slice(0, 7); const count = cfg.availability?.monthsAhead || 6;
   return /^\d{4}-(?:0[1-9]|1[0-2])$/.test(month) && month >= current && month < monthShift(current, count);
 }
-export function dayDate(day: string, hour = 0) { const [y, m, d] = day.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d, hour - 5)); }
+export function dayDate(day: string, hour = 0, minute = 0) { const [y, m, d] = day.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d, hour - 5, minute)); }
 export function dayAllowed(day: string, cfg: any, now = new Date()) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !monthAllowed(day.slice(0, 7), cfg, now) || day < tashkentDay(now)) return false;
   if (tashkentDay(dayDate(day)) !== day) return false;
   const availability = { ...defaultAvailability, ...(cfg.availability || {}) };
   return availability.enabled && !availability.closedDates.includes(day) && availability.weekdays.includes(new Date(`${day}T00:00:00Z`).getUTCDay());
+}
+export function scheduleMinutes(availability: any): number[] {
+  const step = availability.slotMinutes === 60 ? 60 : 30;
+  const minutes: number[] = [];
+  for (let time = availability.startHour * 60; time <= availability.lastStartHour * 60; time += step) minutes.push(time);
+  return minutes;
+}
+export function isScheduledStart(start: Date, availability: any) {
+  const local = new Date(+start + 5 * 3600000);
+  return local.getUTCSeconds() === 0 && local.getUTCMilliseconds() === 0 && scheduleMinutes(availability).includes(local.getUTCHours() * 60 + local.getUTCMinutes());
 }
 export async function ensureMonthSlots(month: string, cfg: any, now = new Date()) {
   if (!monthAllowed(month, cfg, now)) return;
@@ -24,13 +34,22 @@ export async function ensureMonthSlots(month: string, cfg: any, now = new Date()
   if (!lease) throw new Error('CALENDAR_BUSY');
   try {
   const first = dayDate(month + '-01'); const last = dayDate(monthShift(month, 1) + '-01');
-  const existing: any[] = await AdmissionSlot.find({ consultantId: a.consultantId, start: { $lt: last }, end: { $gt: first } }).select('start end').lean();
+  const monthFilter = { consultantId: a.consultantId, start: { $lt: last }, end: { $gt: first } };
+  let existing: any[] = await AdmissionSlot.find(monthFilter).select('start end leadId cancelled').lean();
+  // Convert only unreserved legacy hourly slots. Confirmed appointments retain their duration.
+  if (a.slotMinutes === 30) {
+    const legacy = existing.filter(slot => !slot.leadId && !slot.cancelled && +new Date(slot.start) > +now && isScheduledStart(new Date(slot.start), a) && +new Date(slot.end) - +new Date(slot.start) === 3600000);
+    if (legacy.length) {
+      await AdmissionSlot.bulkWrite(legacy.map(slot => ({ updateOne: { filter: { _id: slot._id, leadId: null, cancelled: false, end: slot.end }, update: { $set: { end: new Date(+new Date(slot.start) + 30 * 60000) } } } })));
+      existing = await AdmissionSlot.find(monthFilter).select('start end leadId cancelled').lean();
+    }
+  }
   const [year, monthNo] = month.split('-').map(Number); const days = new Date(Date.UTC(year, monthNo, 0)).getUTCDate();
   const operations: any[] = [];
   for (let n = 1; n <= days; n++) {
     const day = `${month}-${String(n).padStart(2, '0')}`; if (!dayAllowed(day, cfg, now)) continue;
-    for (let hour = a.startHour; hour <= a.lastStartHour; hour++) {
-      const start = dayDate(day, hour); const end = new Date(+start + 3600000); if (+start <= +now) continue;
+    for (const minute of scheduleMinutes(a)) {
+      const start = dayDate(day, Math.floor(minute / 60), minute % 60); const end = new Date(+start + a.slotMinutes * 60000); if (+start <= +now) continue;
       if (existing.some(slot => +new Date(slot.start) < +end && +new Date(slot.end) > +start)) continue;
       operations.push({ updateOne: { filter: { consultantId: a.consultantId, start }, update: { $setOnInsert: { consultantId: a.consultantId, consultantName: a.consultantName, start, end, mode: a.mode, location: a.location, leadId: null, cancelled: false, attendance: 'pending' } }, upsert: true } });
     }
@@ -43,7 +62,9 @@ export async function availableSlots(month: string, cfg: any, now = new Date()) 
   await ensureMonthSlots(month, cfg, now);
   const a = { ...defaultAvailability, ...(cfg.availability || {}) };
   const slots: any[] = await AdmissionSlot.find({ consultantId: a.consultantId, leadId: null, cancelled: false, start: { $gt: now, $gte: dayDate(month + '-01'), $lt: dayDate(monthShift(month, 1) + '-01') } }).sort({ start: 1 }).lean();
-  return slots.filter(slot => { const day = tashkentDay(new Date(slot.start)); const local = new Date(+new Date(slot.start) + 5 * 3600000); return dayAllowed(day, cfg, now) && local.getUTCMinutes() === 0 && local.getUTCHours() >= a.startHour && local.getUTCHours() <= a.lastStartHour; });
+  const booked: any[] = await AdmissionSlot.find({ consultantId: a.consultantId, leadId: { $ne: null }, cancelled: false, start: { $lt: dayDate(monthShift(month, 1) + '-01') }, end: { $gt: dayDate(month + '-01') } }).select('start end').lean();
+  return slots.filter(slot => dayAllowed(tashkentDay(new Date(slot.start)), cfg, now) && isScheduledStart(new Date(slot.start), a) && +new Date(slot.end) - +new Date(slot.start) === a.slotMinutes * 60000 && !booked.some(booking => +new Date(booking.start) < +new Date(slot.end) && +new Date(booking.end) > +new Date(slot.start)));
+
 }
 export function monthKeyboard(month: string, slots: any[], cfg: any, language: Language, now = new Date()) {
   const locale = language === 'ru' ? 'ru-RU' : language === 'uz' ? 'uz-UZ' : 'en-GB';
