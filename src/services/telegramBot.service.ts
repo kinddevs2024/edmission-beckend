@@ -15,7 +15,7 @@ export type TelegramUpdate = {
     text?: string;
     contact?: { phone_number?: string; user_id?: number };
     from?: { id?: number; username?: string; first_name?: string; last_name?: string };
-    chat?: { id?: number | string };
+    chat?: { id?: number | string; type?: string };
     reply_to_message?: { message_id?: number };
   };
 };
@@ -713,6 +713,30 @@ async function showLanguageMenuLocalized(chatId: string): Promise<void> {
   ]);
 }
 
+// Like Logic Coin, use the Telegram profile name and request only the user's own contact.
+async function promptTelegramRegistrationContact(
+  chatId: string,
+  state: BotState,
+  sessionId: string,
+  username?: string,
+  firstName?: string,
+  lastName?: string
+): Promise<void> {
+  await setSession(chatId, {
+    mode: 'await_telegram_auth_contact',
+    pendingEmail: undefined,
+    telegramAuthSessionId: sessionId,
+    telegramAuthPhone: undefined,
+    telegramAuthFirstName: firstName,
+    telegramAuthLastName: lastName,
+    username,
+  });
+  await sendTelegramKeyboard(chatId, t(state, 'sharePhonePrompt'), [
+    [{ text: t(state, 'sharePhoneButton'), request_contact: true }],
+    [{ text: t(state, 'back') }],
+  ]);
+}
+
 async function beginTelegramWebsiteRegistrationFlow(
   chatId: string,
   username?: string,
@@ -743,26 +767,7 @@ async function beginTelegramWebsiteRegistrationFlow(
     return;
   }
 
-  await setSession(chatId, {
-    mode: 'await_telegram_auth_name',
-    pendingEmail: undefined,
-    telegramAuthSessionId: started.sessionId,
-    telegramAuthPhone: undefined,
-    telegramAuthFirstName: undefined,
-    telegramAuthLastName: undefined,
-    username,
-  });
-  const suggestedName = [String(firstName ?? '').trim(), String(lastName ?? '').trim()]
-    .filter(Boolean)
-    .join(' ')
-    .trim();
-  await sendTelegramKeyboard(
-    chatId,
-    suggestedName
-      ? `${t(state, 'askNamePrompt')}\n${tr(state, 'forExample', { name: suggestedName })}`
-      : t(state, 'askNamePrompt'),
-    [[{ text: t(state, 'back') }]]
-  );
+  await promptTelegramRegistrationContact(chatId, state, started.sessionId, username, firstName, lastName);
 }
 
 async function syncUserLanguage(chatId: string): Promise<BotState> {
@@ -911,26 +916,7 @@ async function handleStart(
     }
 
 
-    await setSession(chatId, {
-      mode: 'await_telegram_auth_name',
-      pendingEmail: undefined,
-      telegramAuthSessionId: sessionId,
-      telegramAuthPhone: undefined,
-      telegramAuthFirstName: undefined,
-      telegramAuthLastName: undefined,
-      username,
-    });
-    const suggestedName = [String(firstName ?? '').trim(), String(lastName ?? '').trim()]
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-    await sendTelegramKeyboard(
-      chatId,
-      suggestedName
-        ? `${t(state, 'askNamePrompt')}\n${tr(state, 'forExample', { name: suggestedName })}`
-        : t(state, 'askNamePrompt'),
-      [[{ text: t(state, 'back') }]]
-    );
+    await promptTelegramRegistrationContact(chatId, state, sessionId, username, firstName, lastName);
     return;
   }
 
@@ -1767,7 +1753,7 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
   const lastName = update.message?.from?.last_name;
   const replyToMessageId = update.message?.reply_to_message?.message_id;
   const chatId = chatIdRaw != null ? String(chatIdRaw).trim() : '';
-  if (!chatId) return;
+  if (!chatId || update.message?.chat?.type !== 'private' || String(update.message?.from?.id ?? '') !== chatId) return;
 
   if (typeof phone === 'string' && phone.trim()) {
     if (contactUserId == null || String(contactUserId) !== chatId) {
@@ -1855,6 +1841,7 @@ async function pollUpdates(): Promise<void> {
     const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(35000),
       body: JSON.stringify({
         timeout: 25,
         offset: updateOffset,
@@ -1904,6 +1891,7 @@ async function clearTelegramWebhookForPolling(token: string): Promise<void> {
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
       method: 'POST',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drop_pending_updates: false }),
     });
