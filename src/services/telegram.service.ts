@@ -60,7 +60,7 @@ async function telegramGet(method: string, query: Record<string, string | number
   const token = config.telegram.botToken;
   const url = new URL(`https://api.telegram.org/bot${token}/${method}`);
   Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, String(v)));
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(35000) });
   return res.json();
 }
 
@@ -68,6 +68,7 @@ async function telegramPost(method: string, body: Record<string, unknown>): Prom
   const token = config.telegram.botToken;
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
+    signal: AbortSignal.timeout(10000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -565,6 +566,7 @@ async function callTelegram(method: string, payload: Record<string, unknown>): P
   }
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
+    signal: AbortSignal.timeout(10000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });

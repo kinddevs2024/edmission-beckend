@@ -22,6 +22,8 @@ let workersStarted = false;
 let reconnectInProgress = false;
 
 async function initializeAfterDbConnected() {
+  // Consume Telegram updates only after session storage is available.
+  if (config.nodeEnv !== 'test') startTelegramBotPolling();
   if (!dbReady) {
     await ensureDefaultAdmin();
     logger.info('Default admin ensured');
@@ -71,7 +73,6 @@ async function start() {
       'External HTTP protection: npm packages active (see app.ts + perimeter.middleware.ts)'
     );
   });
-  startTelegramBotPolling();
 
   try {
     await connectDatabase();
